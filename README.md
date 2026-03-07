@@ -1,0 +1,35 @@
+# Named Tuple Parser Extract
+
+This is a small standalone Scala project that extracts the minimum parser shape needed to parse a single declaration of the form:
+
+```scala
+val data = (
+  x = (
+    ls = Vector("abc" + "def", 'b', 123, 3.1, 4.1f, 23L),
+  ),
+  y = null
+)
+```
+
+Supported subset:
+
+- one top-level `val` declaration
+- nested Vectors and named tuples of arbitrary depth
+- literals: `null`, booleans, strings, chars, integers, longs, floats, doubles
+- string concatenation with `+`
+- trailing commas inside tuples
+
+Not supported:
+
+- general Scala expressions
+- arbitrary declarations
+- type syntax
+- comments and interpolation-heavy string syntax beyond standard string and char escapes
+
+Run:
+
+```bash
+cd sandbox/named-tuple-parser
+sbt test
+sbt "runMain miniparser.Main examples/sample.scala"
+```
