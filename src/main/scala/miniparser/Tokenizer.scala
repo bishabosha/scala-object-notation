@@ -1,0 +1,197 @@
+package miniparser
+
+import scala.collection.mutable
+
+final class ParseException(message: String) extends RuntimeException(message)
+
+final class Tokenizer(input: String):
+  private var index = 0
+  private var line = 1
+  private var column = 1
+
+  private val namesCache = mutable.HashMap.empty[String, String]
+  def nameCached(str: String): String = namesCache.getOrElseUpdate(str, str)
+
+  val Seq(KW_val @ _, KW_true @ _, KW_false @ _, KW_null @ _, KW_Vector @ _) =
+    Seq("val","true","false","null","Vector").map(nameCached(_)).runtimeChecked
+
+  def tokenize(): List[Token] =
+    val tokens = mutable.ListBuffer.empty[Token]
+    while !isAtEnd do
+      skipWhitespace()
+      if !isAtEnd then tokens += nextToken()
+    tokens += Token.Eof(currentSpan())
+    tokens.toList
+
+  private def nextToken(): Token =
+    val start = currentSpan()
+    currentChar() match
+      case '(' => advance(); Token.LParen(start)
+      case ')' => advance(); Token.RParen(start)
+      case '=' => advance(); Token.Equals(start)
+      case '+' => advance(); Token.Plus(start)
+      case '-' => advance(); Token.Minus(start)
+      case ',' => advance(); Token.Comma(start)
+      case '"' => scanString(start)
+      case '\'' => scanChar(start)
+      case ch if isIdentifierStart(ch) => scanIdentifier(start)
+      case ch if ch.isDigit => scanNumber(start)
+      case ch => fail(s"Unexpected character '$ch'", start)
+
+  private def scanIdentifier(start: Span): Token =
+    val builder = new StringBuilder
+    while !isAtEnd && isIdentifierPart(currentChar()) do builder += advance()
+    nameCached(builder.result()) match
+      case KW_val => Token.ValKw(start)
+      case KW_true => Token.TrueKw(start)
+      case KW_false => Token.FalseKw(start)
+      case KW_null => Token.NullKw(start)
+      case KW_Vector => Token.VectorId(start)
+      case name => Token.Identifier(name, start)
+
+  private def scanNumber(start: Span): Token =
+    val builder = new StringBuilder
+    var hasDot = false
+    var hasExponent = false
+
+    def takeDigits(): Unit =
+      while !isAtEnd && (currentChar().isDigit || currentChar() == '_') do builder += advance()
+
+    takeDigits()
+    if !isAtEnd && currentChar() == '.' && peekChar().exists(_.isDigit) then
+      hasDot = true
+      builder += advance()
+      takeDigits()
+
+    if !isAtEnd && (currentChar() == 'e' || currentChar() == 'E') then
+      hasExponent = true
+      builder += advance()
+      if !isAtEnd && (currentChar() == '+' || currentChar() == '-') then builder += advance()
+      if isAtEnd || !currentChar().isDigit then fail("Exponent requires at least one digit", start)
+      takeDigits()
+
+    val suffix =
+      if !isAtEnd && "lLfFdD".contains(currentChar()) then Some(advance())
+      else None
+
+    val raw = builder.result() + suffix.fold("")(_.toString)
+    val normalizedDigits = builder.result().replace("_", "")
+
+    suffix match
+      case Some('l' | 'L') =>
+        if hasDot || hasExponent then fail("Long literals cannot contain a decimal point or exponent", start)
+        normalizedDigits.toLongOption match
+          case Some(value) =>
+            Token.LongLit(raw, value, start)
+          case None =>
+            fail("numeric literal is too large to fit in a Long.", start)
+      case Some('f' | 'F') =>
+        normalizedDigits.toFloatOption match
+          case Some(value) =>
+            Token.FloatLit(raw, value, start)
+          case None =>
+            fail("numeric literal is too large to fit in a Float.", start)
+      case Some('d' | 'D') =>
+        normalizedDigits.toDoubleOption match
+          case Some(value) =>
+            Token.DoubleLit(raw, value, start)
+          case None =>
+            fail("numeric literal is too large to fit in a Double.", start)
+      case Some(other) =>
+        fail(s"unrecognised numeric literal suffix '${other}'", start)
+      case None if hasDot || hasExponent =>
+        normalizedDigits.toDoubleOption match
+          case Some(value) =>
+            Token.DoubleLit(raw, value, start)
+          case None =>
+            fail("numeric literal is too large to fit in a Double.", start)
+      case None =>
+        normalizedDigits.toIntOption match
+          case Some(value) =>
+            Token.IntLit(raw, value, start)
+          case None =>
+            fail("numeric literal is too large to fit in an Int.", start)
+
+
+  private def scanString(start: Span): Token =
+    val raw = new StringBuilder
+    val value = new StringBuilder
+    raw += advance()
+    while !isAtEnd && currentChar() != '"' do
+      if currentChar() == '\\' then
+        raw += advance()
+        if isAtEnd then fail("Unterminated string literal", start)
+        val escaped = advance()
+        raw += escaped
+        value += decodeEscape(escaped, start)
+      else
+        val ch = advance()
+        raw += ch
+        value += ch
+    if isAtEnd then fail("Unterminated string literal", start)
+    raw += advance()
+    Token.StringLit(raw.result(), value.result(), start)
+
+  private def scanChar(start: Span): Token =
+    val raw = new StringBuilder
+    raw += advance()
+    if isAtEnd then fail("Unterminated character literal", start)
+    val value =
+      if currentChar() == '\\' then
+        raw += advance()
+        if isAtEnd then fail("Unterminated character literal", start)
+        val escaped = advance()
+        raw += escaped
+        decodeEscape(escaped, start)
+      else
+        val ch = advance()
+        raw += ch
+        ch
+    if isAtEnd || currentChar() != '\'' then fail("Character literal must contain exactly one character", start)
+    raw += advance()
+    Token.CharLit(raw.result(), value, start)
+
+  private def decodeEscape(ch: Char, start: Span): Char =
+    ch match
+      case 'n' => '\n'
+      case 'r' => '\r'
+      case 't' => '\t'
+      case 'b' => '\b'
+      case 'f' => '\f'
+      case '\\' => '\\'
+      case '\'' => '\''
+      case '"' => '"'
+      case other => fail(s"Unsupported escape sequence \\$other", start)
+
+  private def skipWhitespace(): Unit =
+    while !isAtEnd && currentChar().isWhitespace do advance()
+
+  private def isAtEnd: Boolean = index >= input.length
+
+  private def currentChar(): Char = input.charAt(index)
+
+  private def peekChar(): Option[Char] =
+    val nextIndex = index + 1
+    if nextIndex < input.length then Some(input.charAt(nextIndex)) else None
+
+  private def advance(): Char =
+    val ch = input.charAt(index)
+    index += 1
+    if ch == '\n' then
+      line += 1
+      column = 1
+    else
+      column += 1
+    ch
+
+  private def currentSpan(): Span = Span(index, line, column)
+
+  private def isIdentifierStart(ch: Char): Boolean = ch.isLetter || ch == '_'
+
+  private def isIdentifierPart(ch: Char): Boolean = ch.isLetterOrDigit || ch == '_'
+
+  private def fail(message: String, span: Span): Nothing =
+    throw ParseException(s"$message at ${span.line}:${span.column}")
+
+object Tokenizer:
+  def tokenize(input: String): List[Token] = new Tokenizer(input).tokenize()
