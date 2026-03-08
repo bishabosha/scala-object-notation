@@ -26,6 +26,20 @@ Not supported:
 - type syntax
 - comments and interpolation-heavy string syntax beyond standard string and char escapes
 
+Typed deserialization:
+
+- AST values can be decoded directly into a Scala 3 named tuple type.
+- Supported target field types are nested named tuples, `Vector[T]`, `String`, `Char`, `Int`, `Long`, `Float`, `Double`, `Boolean`, and `Null`.
+- Schemas are derived implicitly from the target type and validated before the result is cast to the requested named tuple type.
+
+Example:
+
+```scala
+type Data = (x: (label: String, ys: Vector[Int]), y: Null, ok: Boolean)
+
+val decoded = Parser.parseNamedTupleAs[Data](input)
+```
+
 Run:
 
 ```bash

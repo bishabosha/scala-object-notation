@@ -1,6 +1,7 @@
 package miniparser
 
 import munit.FunSuite
+import scala.compiletime.testing.typeCheckErrors
 
 class ParserSuite extends FunSuite:
   test("parse the sample named tuple file"):
@@ -60,3 +61,62 @@ class ParserSuite extends FunSuite:
 
     val Expr.NamedTupleExpr(_, elements) = parsed.declaration.value: @unchecked
     assertEquals(elements.length, 4)
+
+  test("decode directly into a typed named tuple"):
+    type Data =
+      (x: (label: String, ys: Vector[Int]), y: Null, ok: Boolean)
+
+    val input =
+      """val data = (
+        |  ok = true,
+        |  y = null,
+        |  x = (
+        |    ys = Vector(-1, -0b0000_0011, -0x00_1A),
+        |    label = "abc" + "def"
+        |  )
+        |)
+        |""".stripMargin
+
+    val decoded = Parser.parseNamedTupleAs[Data](input)
+    val expected: Data =
+      (x = (label = "abcdef", ys = Vector(-1, -3, -26)), y = null, ok = true)
+
+    assertEquals(decoded, Right(expected))
+
+  test("decode vectors of nested named tuples"):
+    type Entry = (name: String, value: Int)
+    type Data = (items: Vector[Entry], total: Long)
+
+    val input =
+      """val data = (
+        |  total = 2L,
+        |  items = Vector(
+        |    (value = 1, name = "a"),
+        |    (name = "b", value = 2)
+        |  )
+        |)
+        |""".stripMargin
+
+    val decoded = Parser.parseNamedTupleAs[Data](input)
+    val expected: Data =
+      (items = Vector((name = "a", value = 1), (name = "b", value = 2)), total = 2L)
+
+    assertEquals(decoded, Right(expected))
+
+  test("report schema mismatches during decoding"):
+    type Data = (x: Int)
+
+    val input = "val data = (x = true)"
+
+    assertEquals(
+      Parser.parseNamedTupleAs[Data](input),
+      Left(DecodeError.FieldError("x", DecodeError.ExpectedInt(Expr.BooleanConstant(true))))
+    )
+
+  test("no decoder is derived for Any"):
+    val errors = typeCheckErrors("summon[miniparser.AstDecoder[Any]]")
+    assert(errors.nonEmpty)
+
+  test("no decoder is derived for Vector[Any]"):
+    val errors = typeCheckErrors("summon[miniparser.AstDecoder[Vector[Any]]]")
+    assert(errors.nonEmpty)
