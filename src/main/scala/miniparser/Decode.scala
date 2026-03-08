@@ -1,6 +1,7 @@
 package miniparser
 
 import scala.collection.mutable
+import NamedTuple.NamedTuple
 
 enum DecodeError:
   case ExpectedNamedTuple(found: Expr)
@@ -13,6 +14,8 @@ enum DecodeError:
   case ExpectedDouble(found: Expr)
   case ExpectedBoolean(found: Expr)
   case ExpectedNull(found: Expr)
+  case FieldCountMismatch(expected: Int, actual: Int)
+  case FieldOrderMismatch(index: Int, expected: String, actual: String)
   case MissingField(fieldName: String)
   case UnexpectedField(fieldName: String)
   case DuplicateField(fieldName: String)
@@ -36,38 +39,20 @@ enum Schema:
       case Schema.NamedTuple(fields) =>
         expr match
           case Expr.NamedTupleExpr(names, elements) =>
-            val byName = mutable.HashMap.empty[String, Expr]
+            if names.length != fields.length then
+              return Left(DecodeError.FieldCountMismatch(fields.length, names.length))
+
             var index = 0
-            while index < names.length do
-              val fieldName = names(index)
-              if byName.contains(fieldName) then
-                return Left(DecodeError.DuplicateField(fieldName))
-              byName.put(fieldName, elements(index))
-              index += 1
-
-            index = 0
-            while index < names.length do
-              val fieldName = names(index)
-              var found = false
-              var fieldIndex = 0
-              while fieldIndex < fields.length && !found do
-                found = fields(fieldIndex).name == fieldName
-                fieldIndex += 1
-              if !found then
-                return Left(DecodeError.UnexpectedField(fieldName))
-              index += 1
-
             val values = IArray.newBuilder[Any]
-            index = 0
             while index < fields.length do
               val field = fields(index)
-              byName.get(field.name) match
-                case Some(valueExpr) =>
-                  field.schema.validate(valueExpr) match
-                    case Right(value) => values += Checked.unwrap(value)
-                    case Left(error) => return Left(DecodeError.FieldError(field.name, error))
-                case None =>
-                  return Left(DecodeError.MissingField(field.name))
+              val fieldName = names(index)
+              if fieldName != field.name then
+                return Left(DecodeError.FieldOrderMismatch(index, field.name, fieldName))
+
+              field.schema.validate(elements(index)) match
+                case Right(value) => values += Checked.unwrap(value)
+                case Left(error) => return Left(DecodeError.FieldError(field.name, error))
               index += 1
 
             Right(Checked(Tuple.fromIArray(values.result())))
@@ -179,7 +164,7 @@ object AstDecoder:
   given [T](using elementDecoder: AstDecoder[T]): AstDecoder[Vector[T]] with
     val schema: Schema = Schema.Vector(elementDecoder.schema)
 
-  inline given [Names <: Tuple, Values <: Tuple]: AstDecoder[_root_.scala.NamedTuple.NamedTuple[Names, Values]] =
+  inline given [Names <: Tuple, Values <: Tuple]: AstDecoder[NamedTuple[Names, Values]] =
     ${DecodeMacros.namedTupleDecoderImpl[Names, Values]}
 
 extension (expr: Expr)

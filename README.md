@@ -31,6 +31,7 @@ Typed deserialization:
 - AST values can be decoded directly into a Scala 3 named tuple type.
 - Supported target field types are nested named tuples, `Vector[T]`, `String`, `Char`, `Int`, `Long`, `Float`, `Double`, `Boolean`, and `Null`.
 - Schemas are derived implicitly from the target type and validated before the result is cast to the requested named tuple type.
+- Named tuple field order must match the target type exactly.
 
 Example:
 

@@ -68,12 +68,12 @@ class ParserSuite extends FunSuite:
 
     val input =
       """val data = (
-        |  ok = true,
-        |  y = null,
         |  x = (
-        |    ys = Vector(-1, -0b0000_0011, -0x00_1A),
-        |    label = "abc" + "def"
-        |  )
+        |    label = "abc" + "def",
+        |    ys = Vector(-1, -0b0000_0011, -0x00_1A)
+        |  ),
+        |  y = null,
+        |  ok = true
         |)
         |""".stripMargin
 
@@ -89,11 +89,11 @@ class ParserSuite extends FunSuite:
 
     val input =
       """val data = (
-        |  total = 2L,
         |  items = Vector(
-        |    (value = 1, name = "a"),
+        |    (name = "a", value = 1),
         |    (name = "b", value = 2)
-        |  )
+        |  ),
+        |  total = 2L
         |)
         |""".stripMargin
 
@@ -111,6 +111,16 @@ class ParserSuite extends FunSuite:
     assertEquals(
       Parser.parseNamedTupleAs[Data](input),
       Left(DecodeError.FieldError("x", DecodeError.ExpectedInt(Expr.BooleanConstant(true))))
+    )
+
+  test("reject swapped named tuple field order"):
+    type Data = (x: Int, y: Boolean)
+
+    val input = "val data = (y = true, x = 1)"
+
+    assertEquals(
+      Parser.parseNamedTupleAs[Data](input),
+      Left(DecodeError.FieldOrderMismatch(0, "x", "y"))
     )
 
   test("no decoder is derived for Any"):
