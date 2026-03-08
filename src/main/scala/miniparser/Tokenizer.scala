@@ -50,6 +50,53 @@ final class Tokenizer(input: String):
       case name => Token.Identifier(name, start)
 
   private def scanNumber(start: Span): Token =
+    if currentChar() == '0' && peekChar().exists(ch => ch == 'x' || ch == 'X' || ch == 'b' || ch == 'B') then
+      scanPrefixedInteger(start)
+    else
+      scanDecimalNumber(start)
+
+  private def scanPrefixedInteger(start: Span): Token =
+    val prefix = new StringBuilder
+    prefix += advance()
+    val marker = advance()
+    prefix += marker
+
+    val base =
+      if marker == 'x' || marker == 'X' then 16
+      else 2
+
+    val digits = new StringBuilder
+    var sawDigit = false
+    while !isAtEnd && isDigitForBase(currentChar(), base) do
+      digits += advance()
+      sawDigit = true
+
+    while !isAtEnd && currentChar() == '_' do
+      digits += advance()
+      if isAtEnd || !isDigitForBase(currentChar(), base) then
+        fail(s"Expected a base-$base digit after numeric separator", start)
+      while !isAtEnd && isDigitForBase(currentChar(), base) do
+        digits += advance()
+        sawDigit = true
+
+    if !sawDigit then fail(s"Expected at least one base-$base digit after numeric prefix", start)
+
+    if !isAtEnd && currentChar().isLetterOrDigit && currentChar() != 'l' && currentChar() != 'L' then
+      fail(s"Invalid digit '${currentChar()}' for base-$base literal", start)
+
+    val suffix =
+      if !isAtEnd && (currentChar() == 'l' || currentChar() == 'L') then Some(advance())
+      else None
+
+    val rawDigits = digits.result()
+    val raw = prefix.result() + rawDigits + suffix.fold("")(_.toString)
+    val normalizedDigits = rawDigits.replace("_", "")
+
+    suffix match
+      case Some(_) => Token.LongLit(raw, parseLongLiteral(normalizedDigits, raw, start, base), start)
+      case None => Token.IntLit(raw, parseIntLiteral(normalizedDigits, raw, start, base), start)
+
+  private def scanDecimalNumber(start: Span): Token =
     val builder = new StringBuilder
     var hasDot = false
     var hasExponent = false
@@ -80,37 +127,17 @@ final class Tokenizer(input: String):
     suffix match
       case Some('l' | 'L') =>
         if hasDot || hasExponent then fail("Long literals cannot contain a decimal point or exponent", start)
-        normalizedDigits.toLongOption match
-          case Some(value) =>
-            Token.LongLit(raw, value, start)
-          case None =>
-            fail("numeric literal is too large to fit in a Long.", start)
+        Token.LongLit(raw, parseLongLiteral(normalizedDigits, raw, start), start)
       case Some('f' | 'F') =>
-        normalizedDigits.toFloatOption match
-          case Some(value) =>
-            Token.FloatLit(raw, value, start)
-          case None =>
-            fail("numeric literal is too large to fit in a Float.", start)
+        Token.FloatLit(raw, parseFloatLiteral(normalizedDigits, raw, start), start)
       case Some('d' | 'D') =>
-        normalizedDigits.toDoubleOption match
-          case Some(value) =>
-            Token.DoubleLit(raw, value, start)
-          case None =>
-            fail("numeric literal is too large to fit in a Double.", start)
-      case Some(other) =>
-        fail(s"unrecognised numeric literal suffix '${other}'", start)
+        Token.DoubleLit(raw, parseDoubleLiteral(normalizedDigits, raw, start), start)
+      case Some(_) =>
+        fail(s"unrecognised numeric literal suffix '${suffix.get}'", start)
       case None if hasDot || hasExponent =>
-        normalizedDigits.toDoubleOption match
-          case Some(value) =>
-            Token.DoubleLit(raw, value, start)
-          case None =>
-            fail("numeric literal is too large to fit in a Double.", start)
+        Token.DoubleLit(raw, parseDoubleLiteral(normalizedDigits, raw, start), start)
       case None =>
-        normalizedDigits.toIntOption match
-          case Some(value) =>
-            Token.IntLit(raw, value, start)
-          case None =>
-            fail("numeric literal is too large to fit in an Int.", start)
+        Token.IntLit(raw, parseIntLiteral(normalizedDigits, raw, start), start)
 
 
   private def scanString(start: Span): Token =
@@ -189,6 +216,42 @@ final class Tokenizer(input: String):
   private def isIdentifierStart(ch: Char): Boolean = ch.isLetter || ch == '_'
 
   private def isIdentifierPart(ch: Char): Boolean = ch.isLetterOrDigit || ch == '_'
+
+  private def parseIntLiteral(digits: String, raw: String, span: Span, base: Int = 10): Int =
+    try Integer.parseInt(digits, base)
+    catch
+      case _: NumberFormatException =>
+        fail(s"Invalid Int literal '$raw'", span)
+
+  private def parseLongLiteral(digits: String, raw: String, span: Span, base: Int = 10): Long =
+    try java.lang.Long.parseLong(digits, base)
+    catch
+      case _: NumberFormatException =>
+        fail(s"Invalid Long literal '$raw'", span)
+
+  private def parseFloatLiteral(digits: String, raw: String, span: Span): Float =
+    try
+      val value = java.lang.Float.parseFloat(digits)
+      if !java.lang.Float.isFinite(value) then fail(s"Invalid Float literal '$raw'", span)
+      value
+    catch
+      case _: NumberFormatException =>
+        fail(s"Invalid Float literal '$raw'", span)
+
+  private def parseDoubleLiteral(digits: String, raw: String, span: Span): Double =
+    try
+      val value = java.lang.Double.parseDouble(digits)
+      if !java.lang.Double.isFinite(value) then fail(s"Invalid Double literal '$raw'", span)
+      value
+    catch
+      case _: NumberFormatException =>
+        fail(s"Invalid Double literal '$raw'", span)
+
+  private def isDigitForBase(ch: Char, base: Int): Boolean =
+    (base == 2 && (ch == '0' || ch == '1'))
+    || (base == 16 && ch.isDigit)
+    || (base == 16 && (ch >= 'a' && ch <= 'f'))
+    || (base == 16 && (ch >= 'A' && ch <= 'F'))
 
   private def fail(message: String, span: Span): Nothing =
     throw ParseException(s"$message at ${span.line}:${span.column}")

@@ -8,7 +8,7 @@ class ParserSuite extends FunSuite:
       """val data = (
         |  x = (
         |    ls = Vector("abc" + "def", 'b', 123, 3.1, 4.1f, 23L),
-        |    ys = Vector(-1),
+        |    ys = Vector(-1, -0b0000_0011, -0x00_1A),
         |  ),
         |  y = null
         |)
@@ -39,6 +39,8 @@ class ParserSuite extends FunSuite:
                   Expr.VectorExpr(
                     IArray(
                       Expr.IntConstant(-1),
+                      Expr.IntConstant(-0b0000_0011),
+                      Expr.IntConstant(-0x00_1A)
                     )
                   )
                 )
