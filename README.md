@@ -39,7 +39,8 @@ Example:
 ```scala
 type Data = (x: (label: String, ys: Vector[Int]), y: Null, ok: Boolean)
 
-val decoded = Parser.parseNamedTupleAs[Data](input)
+// for a file with a root val called `data`:
+val decoded = Parser.parseValueAs[Data](input, name = "data")
 ```
 
 Run:

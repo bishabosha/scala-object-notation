@@ -18,6 +18,7 @@ enum DecodeError:
   case FieldOrderMismatch(index: Int, expected: String, actual: String)
   case MissingField(fieldName: String)
   case UnexpectedField(fieldName: String)
+  case UnexpectedRoot(rootName: String)
   case DuplicateField(fieldName: String)
   case FieldError(fieldName: String, cause: DecodeError)
   case IndexError(index: Int, cause: DecodeError)
@@ -175,8 +176,8 @@ extension (expr: Expr)
     decoder.checked(expr)
 
 extension (sourceFile: SourceFile)
-  def decodeValueAs[T](using decoder: AstDecoder[T]): Either[DecodeError, T] =
-    sourceFile.declaration.value.decodeAs[T]
-
-  def decodeNamedTupleAs[T <: NamedTuple.AnyNamedTuple](using decoder: AstDecoder[T]): Either[DecodeError, T] =
-    sourceFile.declaration.value.decodeAs[T]
+  def decodeValueAs[T](name: String)(using decoder: AstDecoder[T]): Either[DecodeError, T] =
+    if sourceFile.declaration.name != name then
+      Left(DecodeError.UnexpectedRoot(sourceFile.declaration.name))
+    else
+      sourceFile.declaration.value.decodeAs[T]

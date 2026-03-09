@@ -107,11 +107,16 @@ class ParserSuite extends FunSuite:
     type Data =
       (x: (label: String, ys: Vector[Int]), y: Null, ok: Boolean)
 
-    val decoded = Parser.parseNamedTupleAs[Data](input)
+    val decoded = Parser.parseValueAs[Data](input, name = "data")
     val expected: Data =
       (x = (label = "abc", ys = Vector(1, 2)), y = null, ok = true)
 
     assertEquals(decoded, Right(expected))
+
+  test("reject wrong root declaration name"):
+    val input = "val data = (x = 1)"
+    val decoded = Parser.parseValueAs[Int](input, name = "other")
+    assertEquals(decoded, Left(DecodeError.UnexpectedRoot("data")))
 
   test("decode directly into a typed named tuple"):
     type Data =
@@ -128,7 +133,7 @@ class ParserSuite extends FunSuite:
         |)
         |""".stripMargin
 
-    val decoded = Parser.parseNamedTupleAs[Data](input)
+    val decoded = Parser.parseValueAs[Data](input, name = "data")
     val expected: Data =
       (x = (label = "abcdef", ys = Vector(-1, -3, -26)), y = null, ok = true)
 
@@ -148,7 +153,7 @@ class ParserSuite extends FunSuite:
         |)
         |""".stripMargin
 
-    val decoded = Parser.parseNamedTupleAs[Data](input)
+    val decoded = Parser.parseValueAs[Data](input, name = "data")
     val expected: Data =
       (items = Vector((name = "a", value = 1), (name = "b", value = 2)), total = 2L)
 
@@ -160,7 +165,7 @@ class ParserSuite extends FunSuite:
     val input = "val data = (x = true)"
 
     assertEquals(
-      Parser.parseNamedTupleAs[Data](input),
+      Parser.parseValueAs[Data](input, name = "data"),
       Left(DecodeError.FieldError("x", DecodeError.ExpectedInt(Expr.BooleanConstant(true))))
     )
 
@@ -170,7 +175,7 @@ class ParserSuite extends FunSuite:
     val input = "val data = (y = true, x = 1)"
 
     assertEquals(
-      Parser.parseNamedTupleAs[Data](input),
+      Parser.parseValueAs[Data](input, name = "data"),
       Left(DecodeError.FieldOrderMismatch(0, "x", "y"))
     )
 
