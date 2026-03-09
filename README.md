@@ -18,18 +18,36 @@ Supported subset:
 - literals: `null`, booleans, strings, chars, integers, longs, floats, doubles
 - string concatenation with `+`
 - trailing commas inside tuples
+- Scala comments: `// ...` and `/* ... */` (including nested block comments)
 
 Not supported:
 
 - general Scala expressions
 - arbitrary declarations
 - type syntax
-- comments and interpolation-heavy string syntax beyond standard string and char escapes
+- interpolation-heavy string syntax beyond standard string and char escapes
+
+Typed deserialization:
+
+- AST values can be decoded directly into a Scala 3 named tuple type.
+- Supported target field types are nested named tuples, `Vector[T]`, `String`, `Char`, `Int`, `Long`, `Float`, `Double`, `Boolean`, and `Null`.
+- Schemas are derived implicitly from the target type and validated before the result is cast to the requested named tuple type.
+- Named tuple field order must match the target type exactly.
+
+Example:
+
+```scala
+type Data = (x: (label: String, ys: Vector[Int]), y: Null, ok: Boolean)
+
+val decoded = Parser.parseNamedTupleAs[Data](input)
+```
 
 Run:
 
 ```bash
 cd sandbox/named-tuple-parser
 sbt test
-sbt "runMain miniparser.Main examples/sample.scala"
+sbt "demo/runMain miniparser.Main examples/sample.scala"
+sbt "demo/runMain miniparser.Main examples/sample.scala --name data --json"
+sbt "demo/runMain miniparser.Main examples/sample.scala --name data --yaml"
 ```
