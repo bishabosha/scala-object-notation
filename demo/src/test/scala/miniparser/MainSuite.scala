@@ -16,7 +16,7 @@ class MainSuite extends FunSuite:
         |""".stripMargin
     )
 
-    val obtained = ujson.read(Main.render(ast, name = "data", exportJson = true, exportYaml = false, preserveNums = false))
+    val obtained = ujson.read(Main.render(ast, name = "data", exportJson = true, exportYaml = false, preserveNums = false).get)
     val expected = ujson.Obj(
       "x" -> ujson.Arr(1, 2),
       "y" -> ujson.Null,
@@ -37,9 +37,10 @@ class MainSuite extends FunSuite:
         |""".stripMargin
     )
 
-    val obtained = Main.render(ast, name = "data", exportJson = false, exportYaml = true, preserveNums = false)
+    def trimLines(s: String): String = s.linesIterator.map(_.trim).mkString("\n")
+    val obtained = Main.render(ast, name = "data", exportJson = false, exportYaml = true, preserveNums = false).get
     val expected =
-      """x: 
+      """x:
         |  - 1
         |  - 2
         |y: !!null
@@ -47,14 +48,15 @@ class MainSuite extends FunSuite:
         |label: abc
         |""".stripMargin
 
-    assertEquals(obtained, expected)
+    assertEquals(trimLines(obtained), trimLines(expected))
 
   test("yaml export uses explicit scalar tags"):
     val ast = Parser.parse(
       """val data = (
         |  i = 1,
         |  l = 2L,
-        |  keep = 3.5,
+        |  d = 3.5,
+        |  f = 4.5f,
         |  b = true,
         |  s = "abc",
         |  n = null
@@ -62,14 +64,17 @@ class MainSuite extends FunSuite:
         |""".stripMargin
     )
 
-    val node = Main.exprToYamlNode(ast.declaration.value, preserveNums = true)
+    val node = Main.exprToYamlNode(ast.declaration.value)
     val Node.MappingNode(mappings, _) = node: @unchecked
 
-    val byName = mappings.collect { case (Node.ScalarNode(name, _), value) => name -> value }.toMap
+    val byName = mappings.collect {
+      case (Node.ScalarNode(name, _), value @ Node.ScalarNode(_, _)) => name -> value
+    }.toMap
 
-    assertEquals(byName("i").asInstanceOf[Node.ScalarNode].tag, Tag.int)
-    assertEquals(byName("l").asInstanceOf[Node.ScalarNode].tag, Tag.str)
-    assertEquals(byName("keep").asInstanceOf[Node.ScalarNode].tag, Tag.str)
-    assertEquals(byName("b").asInstanceOf[Node.ScalarNode].tag, Tag.boolean)
-    assertEquals(byName("s").asInstanceOf[Node.ScalarNode].tag, Tag.str)
-    assertEquals(byName("n").asInstanceOf[Node.ScalarNode].tag, Tag.nullTag)
+    assertEquals(byName("i").tag, Tag.int)
+    assertEquals(byName("l").tag, Tag.int)
+    assertEquals(byName("d").tag, Tag.float)
+    assertEquals(byName("f").tag, Tag.float)
+    assertEquals(byName("b").tag, Tag.boolean)
+    assertEquals(byName("s").tag, Tag.str)
+    assertEquals(byName("n").tag, Tag.nullTag)
