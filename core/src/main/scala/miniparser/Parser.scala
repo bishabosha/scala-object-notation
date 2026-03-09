@@ -188,8 +188,5 @@ object Parser:
     val tokens = Tokenizer.tokenize(input)
     new Parser(tokens).parseSourceFile()
 
-  def parseValueAs[T](input: String)(using decoder: AstDecoder[T]): Either[DecodeError, T] =
-    parse(input).decodeValueAs[T]
-
-  def parseNamedTupleAs[T <: NamedTuple.AnyNamedTuple](input: String)(using decoder: AstDecoder[T]): Either[DecodeError, T] =
-    parse(input).decodeNamedTupleAs[T]
+  def parseValueAs[T](input: String, name: String)(using decoder: AstDecoder[T]): Either[DecodeError, T] =
+    parse(input).decodeValueAs[T](name)
