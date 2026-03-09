@@ -2,6 +2,10 @@ package miniparser
 
 import java.nio.file.Files
 import java.nio.file.Path
+import scala.collection.immutable.ListMap
+
+import org.virtuslab.yaml.*
+import org.virtuslab.yaml.Node
 import ujson.Arr
 import ujson.Bool
 import ujson.Null
@@ -13,13 +17,18 @@ import ujson.Value
 object Main:
   def main(args: Array[String]): Unit =
     if args.isEmpty then
-      System.err.println("Usage: miniparser.Main <path> --name <name> [--tokens] [--json]")
+      System.err.println("Usage: miniparser.Main <path> --name <name> [--tokens] [--json | --yaml] [--safe-nums]")
       System.exit(1)
 
     val showTokens = args.contains("--tokens")
     val exportJson = args.contains("--json")
+    val exportYaml = args.contains("--yaml")
     val preserveNums = args.contains("--safe-nums")
-    val path = Path.of(args.find(arg => arg != "--tokens" && arg != "--json" && arg != "--safe-nums" && arg != "--name").getOrElse(args.head))
+    if exportJson && exportYaml then
+      System.err.println("Error: choose only one of --json or --yaml")
+      System.exit(1)
+
+    val path = Path.of(args.find(arg => arg != "--tokens" && arg != "--json" && arg != "--yaml" && arg != "--safe-nums" && arg != "--name").getOrElse(args.head))
     val nameIdx = args.indexOf("--name")
     if nameIdx == -1 || nameIdx == args.length - 1 then
       System.err.println("Error: --name flag must be followed by a name")
@@ -32,31 +41,25 @@ object Main:
       tokens.foreach(println)
 
     val ast = Parser(tokens).parseSourceFile()
-    println(render(ast, name, exportJson, preserveNums))
+    println(render(ast, name, exportJson, exportYaml, preserveNums))
 
-  private[miniparser] def render(sourceFile: SourceFile, name: String, exportJson: Boolean, preserveNums: Boolean): String =
+  private[miniparser] def render(sourceFile: SourceFile, name: String, exportJson: Boolean, exportYaml: Boolean, preserveNums: Boolean): String =
     if sourceFile.declaration.name != name then
       throw new IllegalArgumentException(s"Expected declaration name '$name' but found '${sourceFile.declaration.name}'")
     val value = sourceFile.declaration.value
     if exportJson then ujson.write(exprToJson(value, preserveNums), indent = 2)
+    else if exportYaml then exprToYamlNode(value, preserveNums).asYaml
     else value.toString
 
   private def exprToJson(expr: Expr, preserveNums: Boolean): Value =
     expr match
       case Expr.NamedTupleExpr(names, elements) =>
-        val fields = Vector.newBuilder[(String, Value)]
-        var index = 0
-        while index < names.length do
-          fields += names(index) -> exprToJson(elements(index), preserveNums)
-          index += 1
-        Obj.from(fields.result())
+        val fields = names.view.zip(elements.view).map {
+          (name, element) => name -> exprToJson(element, preserveNums)
+        }
+        Obj.from(fields)
       case Expr.VectorExpr(elements) =>
-        val values = Vector.newBuilder[Value]
-        var index = 0
-        while index < elements.length do
-          values += exprToJson(elements(index), preserveNums)
-          index += 1
-        Arr.from(values.result())
+        Arr.from(elements.map(exprToJson(_, preserveNums)))
       case Expr.StringConstant(value) => Str(value)
       case Expr.CharConstant(value) => Str(value.toString)
       case Expr.IntConstant(value) => Num(value.toDouble)
@@ -65,3 +68,22 @@ object Main:
       case Expr.DoubleConstant(value) => if value.isNaN || value.isInfinity then Str(value.toString) else Num(value)
       case Expr.BooleanConstant(value) => Bool(value)
       case Expr.NullConstant => Null
+
+  private[miniparser] def exprToYamlNode(expr: Expr, preserveNums: Boolean): Node =
+    expr match
+      case Expr.NamedTupleExpr(names, elements) =>
+        val fields = names.view.zip(elements.view).map {
+          (name, element) => Node.ScalarNode(name) -> exprToYamlNode(element, preserveNums)
+        }
+        Node.MappingNode(ListMap.from(fields))
+      case Expr.VectorExpr(elements) =>
+        val values = elements.map(exprToYamlNode(_, preserveNums))
+        Node.SequenceNode(values*)
+      case Expr.StringConstant(value) => Node.ScalarNode(value)
+      case Expr.CharConstant(value) => Node.ScalarNode(value.toString)
+      case Expr.IntConstant(value) => Node.ScalarNode(value.toString)
+      case Expr.LongConstant(value) => Node.ScalarNode(value.toString)
+      case Expr.FloatConstant(value) => Node.ScalarNode(value.toString)
+      case Expr.DoubleConstant(value) => Node.ScalarNode(value.toString)
+      case Expr.BooleanConstant(value) => Node.ScalarNode(value.toString)
+      case Expr.NullConstant => Node.ScalarNode("null")

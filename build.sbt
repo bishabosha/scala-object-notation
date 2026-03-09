@@ -15,6 +15,7 @@ lazy val demo = project
     libraryDependencies ++= Seq(
       "com.lihaoyi" %% "upickle" % "4.3.2",
       "com.lihaoyi" %% "ujson" % "4.3.2",
+      "org.virtuslab" %% "scala-yaml" % "0.3.1",
       "org.scalameta" %% "munit" % "1.1.0" % Test
     )
   )

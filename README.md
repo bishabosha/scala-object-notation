@@ -48,5 +48,6 @@ Run:
 cd sandbox/named-tuple-parser
 sbt test
 sbt "demo/runMain miniparser.Main examples/sample.scala"
-sbt "demo/runMain miniparser.Main examples/sample.scala --json"
+sbt "demo/runMain miniparser.Main examples/sample.scala --name data --json"
+sbt "demo/runMain miniparser.Main examples/sample.scala --name data --yaml"
 ```
