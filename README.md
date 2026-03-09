@@ -45,7 +45,6 @@ val decoded = Parser.parseNamedTupleAs[Data](input)
 Run:
 
 ```bash
-cd sandbox/named-tuple-parser
 sbt --client test
 sbt --client "demo/runMain miniparser.Main example/config.scala" --name conf
 sbt --client "demo/runMain miniparser.Main example/config.scala" --name conf --tokens
