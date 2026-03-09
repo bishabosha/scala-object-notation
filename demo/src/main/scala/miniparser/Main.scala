@@ -37,19 +37,22 @@ object Main:
     val input = Files.readString(path)
     val tokens = Tokenizer.tokenize(input)
 
-    if showTokens then
-      tokens.foreach(println)
-
     val ast = Parser(tokens).parseSourceFile()
-    println(render(ast, name, exportJson, exportYaml, preserveNums))
+    render(ast, name, exportJson, exportYaml, preserveNums) match
+      case Some(value) => println(value)
+      case None =>
+        if showTokens then
+          tokens.foreach(println)
+        else
+          println(s"Parsed declaration '${name}' successfully")
 
-  private[miniparser] def render(sourceFile: SourceFile, name: String, exportJson: Boolean, exportYaml: Boolean, preserveNums: Boolean): String =
+  private[miniparser] def render(sourceFile: SourceFile, name: String, exportJson: Boolean, exportYaml: Boolean, preserveNums: Boolean): Option[String] =
     if sourceFile.declaration.name != name then
       throw new IllegalArgumentException(s"Expected declaration name '$name' but found '${sourceFile.declaration.name}'")
     val value = sourceFile.declaration.value
-    if exportJson then ujson.write(exprToJson(value, preserveNums), indent = 2)
-    else if exportYaml then exprToYamlNode(value, preserveNums).asYaml
-    else value.toString
+    if exportJson then Some(ujson.write(exprToJson(value, preserveNums), indent = 2))
+    else if exportYaml then Some(exprToYamlNode(value).asYaml)
+    else None
 
   private def exprToJson(expr: Expr, preserveNums: Boolean): Value =
     expr match
@@ -69,15 +72,15 @@ object Main:
       case Expr.BooleanConstant(value) => Bool(value)
       case Expr.NullConstant => Null
 
-  private[miniparser] def exprToYamlNode(expr: Expr, preserveNums: Boolean): Node =
+  private[miniparser] def exprToYamlNode(expr: Expr): Node =
     expr match
       case Expr.NamedTupleExpr(names, elements) =>
         val fields = names.view.zip(elements.view).map {
-          (name, element) => Node.ScalarNode(name) -> exprToYamlNode(element, preserveNums)
+          (name, element) => Node.ScalarNode(name) -> exprToYamlNode(element)
         }
         Node.MappingNode(ListMap.from(fields))
       case Expr.VectorExpr(elements) =>
-        val values = elements.map(exprToYamlNode(_, preserveNums))
+        val values = elements.map(exprToYamlNode(_))
         Node.SequenceNode(values*)
       case Expr.StringConstant(value) => Node.ScalarNode(value)
       case Expr.CharConstant(value) => Node.ScalarNode(value.toString)

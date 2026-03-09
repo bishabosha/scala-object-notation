@@ -1,0 +1,42 @@
+package build
+
+import mill.*
+import mill.api.Discover
+import mill.scalalib.*
+import mill.api.daemon.internal.bsp.BspBuildTarget
+import mainargs.Flag
+import mill.javalib.publish.PomSettings
+import mill.javalib.publish.VersionControl
+import mill.javalib.publish.Developer
+import mill.util.JarManifest
+import mill.api.ModuleRef
+
+trait ScalaObjectNotationModule extends SbtModule:
+  def scalaVersion = "3.8.1"
+  object test extends SbtTests with TestModule.Munit:
+    override def munitVersion = "1.1.0"
+
+trait PublishSettings extends PublishModule, mill.util.VcsVersionModule:
+  def projectDesc: String
+  def pomSettings = PomSettings(
+    description = projectDesc,
+    organization = "io.github.bishabosha",
+    url = "https://github.com/bishabosha/scala-object-notation",
+    licenses = Seq(/*no licence yet!*/),
+    versionControl = VersionControl.github("bishabosha", "scala-object-notation"),
+    developers = Seq(Developer("bishabosha", "Jamie Thompson", "https://github.com/bishabosha"))
+  )
+
+object core extends ScalaObjectNotationModule, PublishSettings:
+  def projectDesc = "parser for a subset of Scala syntax for interpreting directly to data"
+  def artifactName = "scala-object-notation"
+
+object demo extends ScalaObjectNotationModule:
+  def artifactName = "scala-object-notation-demo"
+  def moduleDeps = Seq(core)
+  def mvnDeps = super.mvnDeps() ++ Seq(
+    mvn"com.lihaoyi::upickle:4.3.2",
+    mvn"com.lihaoyi::ujson:4.3.2",
+    mvn"org.virtuslab::scala-yaml:0.3.1"
+  )
+  def mainClass = Some("miniparser.Main")

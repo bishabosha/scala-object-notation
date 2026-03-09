@@ -1,5 +1,6 @@
 .DS_Store
 target/
+out/
 .bsp/
 .metals/
 metals.sbt
