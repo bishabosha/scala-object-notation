@@ -18,7 +18,7 @@ final class Tokenizer(input: String):
   def tokenize(): List[Token] =
     val tokens = mutable.ListBuffer.empty[Token]
     while !isAtEnd do
-      skipWhitespace()
+      skipTrivia()
       if !isAtEnd then tokens += nextToken()
     tokens += Token.Eof(currentSpan())
     tokens.toList
@@ -190,8 +190,44 @@ final class Tokenizer(input: String):
       case '"' => '"'
       case other => fail(s"Unsupported escape sequence \\$other", start)
 
+  private def skipTrivia(): Unit =
+    var keepGoing = true
+    while keepGoing && !isAtEnd do
+      skipWhitespace()
+      if isAtEnd then
+        keepGoing = false
+      else if currentChar() == '/' && peekChar().contains('/') then
+        skipLineComment()
+      else if currentChar() == '/' && peekChar().contains('*') then
+        skipBlockComment()
+      else
+        keepGoing = false
+
   private def skipWhitespace(): Unit =
     while !isAtEnd && currentChar().isWhitespace do advance()
+
+  private def skipLineComment(): Unit =
+    advance()
+    advance()
+    while !isAtEnd && currentChar() != '\n' do advance()
+
+  private def skipBlockComment(): Unit =
+    val start = currentSpan()
+    advance()
+    advance()
+    var depth = 1
+    while depth > 0 do
+      if isAtEnd then fail("Unterminated block comment", start)
+      else if currentChar() == '/' && peekChar().contains('*') then
+        advance()
+        advance()
+        depth += 1
+      else if currentChar() == '*' && peekChar().contains('/') then
+        advance()
+        advance()
+        depth -= 1
+      else
+        advance()
 
   private def isAtEnd: Boolean = index >= input.length
 

@@ -62,6 +62,57 @@ class ParserSuite extends FunSuite:
     val Expr.NamedTupleExpr(_, elements) = parsed.declaration.value: @unchecked
     assertEquals(elements.length, 4)
 
+  test("skip single-line comments"):
+    val input =
+      """// leading comment
+        |val data = ( // comment after opening
+        |  x = 1, // trailing field comment
+        |  // comment between fields
+        |  y = true
+        |)
+        |// trailing comment
+        |""".stripMargin
+
+    val parsed = Parser.parse(input)
+
+    val expected: PartialFunction[SourceFile, Unit] = {
+      case SourceFile(
+            ValDecl(
+              "data",
+              Expr.NamedTupleExpr(
+                IArray("x", "y"),
+                IArray(Expr.IntConstant(1), Expr.BooleanConstant(true))
+              )
+            )
+          ) => ()
+    }
+
+    assert(expected.isDefinedAt(parsed))
+
+  test("skip nested block comments"):
+    val input =
+      """/* leading block comment
+        |   /* nested block comment */
+        |*/
+        |val data = (
+        |  x = /* before nested tuple */ (
+        |    label = "abc",
+        |    ys = Vector(1, /* inside vector */ 2)
+        |  ),
+        |  y = null,
+        |  ok = /* trailing value comment */ true
+        |)
+        |""".stripMargin
+
+    type Data =
+      (x: (label: String, ys: Vector[Int]), y: Null, ok: Boolean)
+
+    val decoded = Parser.parseNamedTupleAs[Data](input)
+    val expected: Data =
+      (x = (label = "abc", ys = Vector(1, 2)), y = null, ok = true)
+
+    assertEquals(decoded, Right(expected))
+
   test("decode directly into a typed named tuple"):
     type Data =
       (x: (label: String, ys: Vector[Int]), y: Null, ok: Boolean)
