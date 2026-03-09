@@ -166,8 +166,31 @@ class ParserSuite extends FunSuite:
 
     assertEquals(
       Parser.parseValueAs[Data](input, name = "data"),
-      Left(DecodeError.FieldError("x", DecodeError.ExpectedInt(Expr.BooleanConstant(true))))
+      Left(DecodeError.AtPath("x", DecodeError.ExpectedInt(Expr.BooleanConstant(true))))
     )
+
+  test("report full nested decode path through vectors"):
+    type Data = (items: Vector[(value: Int)])
+
+    val input =
+      """val data = (
+        |  items = Vector((value = true))
+        |)
+        |""".stripMargin
+
+    val obtained = Parser.parseValueAs[Data](input, name = "data")
+    val expected =
+      Left(
+        DecodeError.AtPath(
+          "items",
+          DecodeError.AtPath(
+            "[0]",
+            DecodeError.AtPath("value", DecodeError.ExpectedInt(Expr.BooleanConstant(true)))
+          )
+        )
+      )
+
+    assertEquals(obtained, expected)
 
   test("reject swapped named tuple field order"):
     type Data = (x: Int, y: Boolean)

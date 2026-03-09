@@ -20,8 +20,19 @@ enum DecodeError:
   case UnexpectedField(fieldName: String)
   case UnexpectedRoot(rootName: String)
   case DuplicateField(fieldName: String)
-  case FieldError(fieldName: String, cause: DecodeError)
-  case IndexError(index: Int, cause: DecodeError)
+  case AtPath(segment: String, cause: DecodeError)
+
+  def atPath(segment: String): DecodeError = DecodeError.AtPath(segment, this)
+
+  def path: List[String] =
+    this match
+      case DecodeError.AtPath(segment, cause) => segment :: cause.path
+      case _ => Nil
+
+  def rootCause: DecodeError =
+    this match
+      case DecodeError.AtPath(_, cause) => cause.rootCause
+      case other => other
 
 enum Schema:
   case NamedTuple(fields: IArray[Schema.Field])
@@ -53,7 +64,7 @@ enum Schema:
 
               field.schema.validate(elements(index)) match
                 case Right(value) => values += Checked.unwrap(value)
-                case Left(error) => return Left(DecodeError.FieldError(field.name, error))
+                case Left(error) => return Left(error.atPath(field.name))
               index += 1
 
             Right(Checked(Tuple.fromIArray(values.result())))
@@ -68,7 +79,7 @@ enum Schema:
             while index < elements.length do
               elementSchema.validate(elements(index)) match
                 case Right(value) => values += Checked.unwrap(value)
-                case Left(error) => return Left(DecodeError.IndexError(index, error))
+                case Left(error) => return Left(error.atPath(s"[$index]"))
               index += 1
             Right(Checked(values.result()))
           case other =>
