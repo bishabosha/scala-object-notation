@@ -209,3 +209,21 @@ class ParserSuite extends FunSuite:
   test("no decoder is derived for Vector[Any]"):
     val errors = typeCheckErrors("summon[miniparser.AstDecoder[Vector[Any]]]")
     assert(errors.nonEmpty)
+
+  test("compile-time derivation error includes nested field path"):
+    val errors = typeCheckErrors(
+      "type Data = (outer: (bad: List[Int]))\nsummon[miniparser.AstDecoder[Data]]"
+    )
+
+    assert(errors.nonEmpty)
+    assert(clue(errors.head.message).contains("outer.bad"))
+    assert(clue(errors.head.message).contains("scala.collection.immutable.List[scala.Int]"))
+
+  test("compile-time derivation error includes vector path segment"):
+    val errors = typeCheckErrors(
+      "type Data = (items: Vector[(bad: List[Int])])\nsummon[miniparser.AstDecoder[Data]]"
+    )
+
+    assert(errors.nonEmpty)
+    assert(clue(errors.head.message).contains("items.[].bad"))
+    assert(clue(errors.head.message).contains("scala.collection.immutable.List[scala.Int]"))

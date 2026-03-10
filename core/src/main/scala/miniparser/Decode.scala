@@ -173,8 +173,10 @@ object AstDecoder:
   given AstDecoder[Null] with
     val schema: Schema = Schema.Null
 
-  given [T](using elementDecoder: AstDecoder[T]): AstDecoder[Vector[T]] with
+  given VectorDecoder[T](using elementDecoder: AstDecoder[T]): AstDecoder[Vector[T]] with
     val schema: Schema = Schema.Vector(elementDecoder.schema)
+
+  class RawDecoder(val schema: Schema) extends AstDecoder[Any]
 
   inline given [Names <: Tuple, Values <: Tuple]: AstDecoder[NamedTuple[Names, Values]] =
     ${DecodeMacros.namedTupleDecoderImpl[Names, Values]}
