@@ -170,11 +170,14 @@ class ParserSuite extends FunSuite:
     type Data = (x: Int)
 
     val input = "val data = (x = true)"
+    val obtained = Parser.parseValueAs[Data](input, name = "data")
 
-    assertEquals(
-      Parser.parseValueAs[Data](input, name = "data"),
-      Left(DecodeError.AtPath("x", DecodeError.ExpectedInt(Expr.BooleanConstant(true))))
-    )
+    obtained match
+      case Left(error) =>
+        assertEquals(error.path, List("x"))
+        assertEquals(error.rootCause, DecodeError.ExpectedInt(Expr.BooleanConstant(true)))
+        assertEquals(error.span.map(span => (span.line, span.column)), Some((1, 17)))
+      case Right(value) => fail(s"Expected a decode failure, got $value")
 
   test("report full nested decode path through vectors"):
     type Data = (items: Vector[(value: Int)])
@@ -186,28 +189,24 @@ class ParserSuite extends FunSuite:
         |""".stripMargin
 
     val obtained = Parser.parseValueAs[Data](input, name = "data")
-    val expected =
-      Left(
-        DecodeError.AtPath(
-          "items",
-          DecodeError.AtPath(
-            "[0]",
-            DecodeError.AtPath("value", DecodeError.ExpectedInt(Expr.BooleanConstant(true)))
-          )
-        )
-      )
-
-    assertEquals(obtained, expected)
+    obtained match
+      case Left(error) =>
+        assertEquals(error.path, List("items", "[0]", "value"))
+        assertEquals(error.rootCause, DecodeError.ExpectedInt(Expr.BooleanConstant(true)))
+        assertEquals(error.span.map(span => span.line), Some(2))
+      case Right(value) => fail(s"Expected a decode failure, got $value")
 
   test("reject swapped named tuple field order"):
     type Data = (x: Int, y: Boolean)
 
     val input = "val data = (y = true, x = 1)"
 
-    assertEquals(
-      Parser.parseValueAs[Data](input, name = "data"),
-      Left(DecodeError.FieldOrderMismatch(0, "x", "y"))
-    )
+    val obtained = Parser.parseValueAs[Data](input, name = "data")
+    obtained match
+      case Left(error) =>
+        assertEquals(error.rootCause, DecodeError.FieldOrderMismatch(0, "x", "y"))
+        assertEquals(error.span.map(span => (span.line, span.column)), Some((1, 13)))
+      case Right(value) => fail(s"Expected a decode failure, got $value")
 
   test("no decoder is derived for Any"):
     val errors = typeCheckErrors("summon[miniparser.AstDecoder[Any]]")

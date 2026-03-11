@@ -37,7 +37,7 @@ object Main:
     val input = Files.readString(path)
     val tokens = Tokenizer.tokenize(input)
 
-    val ast = Parser(tokens).parseSourceFile()
+    val ast = Parser.parse(tokens)
     render(ast, name, exportJson, exportYaml, preserveNums) match
       case Some(value) => println(value)
       case None =>

@@ -15,13 +15,13 @@ final class Tokenizer(input: String):
   val Seq(KW_val @ _, KW_true @ _, KW_false @ _, KW_null @ _, KW_Vector @ _) =
     Seq("val","true","false","null","Vector").map(nameCached(_)).runtimeChecked
 
-  def tokenize(): List[Token] =
-    val tokens = mutable.ListBuffer.empty[Token]
+  def tokenize(): IArray[Token] =
+    val tokens = IArray.newBuilder[Token]
     while !isAtEnd do
       skipTrivia()
       if !isAtEnd then tokens += nextToken()
     tokens += Token.Eof(currentSpan())
-    tokens.toList
+    tokens.result()
 
   private def nextToken(): Token =
     val start = currentSpan()
@@ -293,4 +293,4 @@ final class Tokenizer(input: String):
     throw ParseException(s"$message at ${span.line}:${span.column}")
 
 object Tokenizer:
-  def tokenize(input: String): List[Token] = new Tokenizer(input).tokenize()
+  def tokenize(input: String): IArray[Token] = new Tokenizer(input).tokenize()
