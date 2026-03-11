@@ -13,6 +13,7 @@ import ujson.Num
 import ujson.Obj
 import ujson.Str
 import ujson.Value
+import steps.result.Result
 
 object Main:
   def main(args: Array[String]): Unit =
@@ -35,22 +36,21 @@ object Main:
       System.exit(1)
     val name = args(nameIdx + 1)
     val input = Files.readString(path)
-    val tokens = Tokenizer.tokenize(input).fold(
-      { error =>
+    val tokens = Tokenizer.tokenize(input) match
+      case Result.Ok(value) => value
+      case Result.Err(error) =>
         System.err.println(error.format)
         sys.exit(1)
-      },
-      identity
-    )
+
     if showTokens then
       tokens.foreach(println)
-    val ast = Parser.parseAs[Expr](tokens).fold(
-      { error =>
+
+    val ast = Parser.parseAs[Expr](tokens) match
+      case Result.Ok(value) => value
+      case Result.Err(error) =>
         System.err.println(error.format)
         sys.exit(1)
-      },
-      identity
-    )
+
     render(ast, name, exportJson, exportYaml, preserveNums) match
       case Some(value) => println(value)
       case None =>

@@ -2,8 +2,9 @@ package scalanotation
 
 import scala.collection.mutable
 import Tokenizer.TokenError
+import steps.result.Result
 
-final class Tokenizer(input: String):
+private final class Tokenizer(input: String):
   private var index = 0
   private var line = 1
   private var column = 1
@@ -17,16 +18,14 @@ final class Tokenizer(input: String):
   private class ParseException(val message: String, val span: Span)
     extends Exception with scala.util.control.NoStackTrace
 
-  def tokenize(): Either[TokenError, IArray[Token]] =
-    try
+  def tokenize(): Result[IArray[Token], TokenError] =
+    Result.catchException({ case e: ParseException => TokenError(e.message, e.span) }):
       val tokens = IArray.newBuilder[Token]
       while !isAtEnd do
         skipTrivia()
         if !isAtEnd then tokens += nextToken()
       tokens += Token.Eof(currentSpan())
-      Right(tokens.result())
-    catch case e: ParseException =>
-      Left(TokenError(e.getMessage, e.span))
+      tokens.result()
 
   private def nextToken(): Token =
     val start = currentSpan()
@@ -301,5 +300,5 @@ object Tokenizer:
   case class TokenError(message: String, span: Span):
     def format: String = s"$message at ${span.line}:${span.column}"
 
-  def tokenize(input: String): Either[TokenError, IArray[Token]] =
+  def tokenize(input: String): Result[IArray[Token], TokenError] =
     new Tokenizer(input).tokenize()

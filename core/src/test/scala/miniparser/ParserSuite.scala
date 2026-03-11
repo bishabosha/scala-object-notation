@@ -1,5 +1,6 @@
 package scalanotation
 
+import steps.result.Result
 import munit.FunSuite
 import scala.compiletime.testing.typeCheckErrors
 
@@ -118,12 +119,12 @@ class ParserSuite extends FunSuite:
     val expected: Data =
       (x = (label = "abc", ys = Vector(1, 2)), y = null, ok = true)
 
-    assertEquals(decoded, Right(expected))
+    assertEquals(decoded, Result.Ok(expected))
 
   test("reject wrong root declaration name"):
     val input = "val data = (x = 1)"
     val decoded = Parser.parseValueAs[Int](input, name = "other")
-    assertEquals(decoded, Left(DecodeError.UnexpectedRoot("data")))
+    assertEquals(decoded, Result.Err(DecodeError.UnexpectedRoot("data")))
 
   test("decode directly into a typed named tuple"):
     type Data =
@@ -144,7 +145,7 @@ class ParserSuite extends FunSuite:
     val expected: Data =
       (x = (label = "abcdef", ys = Vector(-1, -3, -26)), y = null, ok = true)
 
-    assertEquals(decoded, Right(expected))
+    assertEquals(decoded, Result.Ok(expected))
 
   test("decode vectors of nested named tuples"):
     type Entry = (name: String, value: Int)
@@ -164,7 +165,7 @@ class ParserSuite extends FunSuite:
     val expected: Data =
       (items = Vector((name = "a", value = 1), (name = "b", value = 2)), total = 2L)
 
-    assertEquals(decoded, Right(expected))
+    assertEquals(decoded, Result.Ok(expected))
 
   test("report schema mismatches during decoding"):
     type Data = (x: Int)
@@ -173,11 +174,11 @@ class ParserSuite extends FunSuite:
     val obtained = Parser.parseValueAs[Data](input, name = "data")
 
     obtained match
-      case Left(error) =>
+      case Result.Err(error) =>
         assertEquals(error.path, List("x"))
         assertEquals(error.rootCause, DecodeError.ExpectedInt(Token.TrueKw(Span(16, 1, 17))))
         assertEquals(error.span.map(span => (span.line, span.column)), Some((1, 17)))
-      case Right(value) => fail(s"Expected a decode failure, got $value")
+      case Result.Ok(value) => fail(s"Expected a decode failure, got $value")
 
   test("report full nested decode path through vectors"):
     type Data = (items: Vector[(value: Int)])
@@ -190,11 +191,24 @@ class ParserSuite extends FunSuite:
 
     val obtained = Parser.parseValueAs[Data](input, name = "data")
     obtained match
-      case Left(error) =>
+      case Result.Err(error) =>
         assertEquals(error.path, List("items", "[0]", "value"))
         assertEquals(error.rootCause, DecodeError.ExpectedInt(Token.TrueKw(Span(39, 2, 27))))
         assertEquals(error.span.map(span => span.line), Some(2))
-      case Right(value) => fail(s"Expected a decode failure, got $value")
+      case Result.Ok(value) => fail(s"Expected a decode failure, got $value")
+
+  test("nest Expr inside of structured type"):
+    type Data = (x: Int, y: (q: Vector[Expr]))
+
+    val input = "val data = (x = 23, y = (q = Vector(41)))"
+    val obtained = Parser.parseValueAs[Data](input, name = "data")
+    val expected: PartialFunction[Data, Unit] = {
+      case (
+        x = 23,
+        y = (q = Vector(Expr.IntConstant(41)))
+      ) => ()
+    }
+    assert(expected.isDefinedAt(obtained.getOrElse(fail(s"Expected successful decode, got $obtained"))))
 
   test("reject swapped named tuple field order"):
     type Data = (x: Int, y: Boolean)
@@ -203,10 +217,10 @@ class ParserSuite extends FunSuite:
 
     val obtained = Parser.parseValueAs[Data](input, name = "data")
     obtained match
-      case Left(error) =>
+      case Result.Err(error) =>
         assertEquals(error.rootCause, DecodeError.FieldOrderMismatch(0, "x", "y"))
         assertEquals(error.span.map(span => (span.line, span.column)), Some((1, 13)))
-      case Right(value) => fail(s"Expected a decode failure, got $value")
+      case Result.Ok(value) => fail(s"Expected a decode failure, got $value")
 
   test("no decoder is derived for Any"):
     val errors = typeCheckErrors("summon[scalanotation.TaggedSchema[Any]]")
