@@ -310,20 +310,6 @@ object TaggedSchema:
       import quotes.reflect.*
       QExpr(Type.show[T])
 
-extension (expr: Expr)
-  def decodeAs[T](using decoder: TaggedSchema[T]): Result[T, DecodeError] =
-    decoder.decode(expr)
-
-  def checkedAs[T](using decoder: TaggedSchema[T]): Result[Checked[T], DecodeError] =
-    decoder.checked(expr)
-
-extension (sourceFile: SourceFile[Expr])
-  def decodeValueAs[T](name: String)(using decoder: TaggedSchema[T]): Result[T, DecodeError] =
-    if sourceFile.declaration.name != name then
-      Result.Err(DecodeError.UnexpectedRoot(sourceFile.declaration.name))
-    else
-      sourceFile.declaration.value.decodeAs[T]
-
 private[scalanotation] object SchemaTokenDecoder:
   def decode[T](tokens: IArray[Token], rootName: String, decoder: TaggedSchema[T]): Result[T, DecodeError] =
     val parser = new SchemaTokenDecoder(tokens)
@@ -722,7 +708,7 @@ private final class SchemaTokenDecoder(tokens: IArray[Token]):
       case other =>
         raise(DecodeError.ExpectedNull(other).atToken(other.span))
 
-  private val PFTombStone: PartialFunction[Any, Any] = {
+  private val PFTombStone: Function[Any, Any] = {
     case _ => PFTombStone
   }
   private def decodeSigned[T, A](
