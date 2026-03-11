@@ -113,11 +113,11 @@ class ParserSuite extends FunSuite:
         |""".stripMargin
 
     type Data =
-      (x: (label: String, ys: Vector[Int]), y: Null, ok: Boolean)
+      (x: (label: String, ys: Vector[Int]), y: Option[String], ok: Boolean)
 
     val decoded = Parser.parseValueAs[Data](input, name = "data")
     val expected: Data =
-      (x = (label = "abc", ys = Vector(1, 2)), y = null, ok = true)
+      (x = (label = "abc", ys = Vector(1, 2)), y = None, ok = true)
 
     assertEquals(decoded, Result.Ok(expected))
 
@@ -128,7 +128,7 @@ class ParserSuite extends FunSuite:
 
   test("decode directly into a typed named tuple"):
     type Data =
-      (x: (label: String, ys: Vector[Int]), y: Null, ok: Boolean)
+      (x: (label: String, ys: Vector[Int]), y: Option[Int], ok: Boolean)
 
     val input =
       """val data = (
@@ -136,16 +136,43 @@ class ParserSuite extends FunSuite:
         |    label = "abc" + "def",
         |    ys = Vector(-1, -0b0000_0011, -0x00_1A)
         |  ),
-        |  y = null,
+        |  y = 23,
         |  ok = true
         |)
         |""".stripMargin
 
     val decoded = Parser.parseValueAs[Data](input, name = "data")
     val expected: Data =
-      (x = (label = "abcdef", ys = Vector(-1, -3, -26)), y = null, ok = true)
+      (x = (label = "abcdef", ys = Vector(-1, -3, -26)), y = Some(23), ok = true)
 
     assertEquals(decoded, Result.Ok(expected))
+
+  test("decode null as None and values as Some"):
+    type Data = (missing: Option[Int], present: Option[Int])
+
+    val input =
+      """val data = (
+        |  missing = null,
+        |  present = 41
+        |)
+        |""".stripMargin
+
+    val decoded = Parser.parseValueAs[Data](input, name = "data")
+    val expected: Data = (missing = None, present = Some(41))
+
+    assertEquals(decoded, Result.Ok(expected))
+
+  test("report inner schema mismatches for Option values"):
+    type Data = (x: Option[Int])
+
+    val input = "val data = (x = true)"
+    val obtained = Parser.parseValueAs[Data](input, name = "data")
+
+    obtained match
+      case Result.Err(error) =>
+        assertEquals(error.path, List(".x"))
+        assertEquals(error.rootCause, DecodeError.ExpectedInt(Token.TrueKw(Span(16, 1, 17))))
+      case Result.Ok(value) => fail(s"Expected a decode failure, got $value")
 
   test("decode vectors of nested named tuples"):
     type Entry = (name: String, value: Int)
@@ -249,6 +276,15 @@ class ParserSuite extends FunSuite:
   test("no decoder is derived for Vector[Any]"):
     val errors = typeCheckErrors("summon[scalanotation.TaggedSchema[Vector[Any]]]")
     assert(errors.nonEmpty)
+
+  test("no decoder is derived for nested Option"):
+    val errors = typeCheckErrors(
+      "type Data = (x: Option[Option[Int]])\nsummon[scalanotation.TaggedSchema[Data]]"
+    )
+
+    assert(errors.nonEmpty)
+    assert(clue(errors.head.message).contains(".x"))
+    assert(clue(errors.head.message).contains("AstDecoder[Option[Option[?]]] is not supported"))
 
   test("compile-time derivation error includes nested field path"):
     val errors = typeCheckErrors(

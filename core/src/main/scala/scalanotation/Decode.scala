@@ -2,6 +2,7 @@ package scalanotation
 
 import scala.annotation.implicitNotFound
 import scala.collection.mutable
+import scala.util.NotGiven
 import steps.result.Result
 import steps.result.Result.eval.{ok, raise, break}
 
@@ -118,7 +119,7 @@ enum Schema:
   case Float
   case Double
   case Boolean
-  case Null
+  case Option(inner: Schema)
 
   def validate(expr: Expr): Result[Checked[Any], DecodeError] =
     this match
@@ -197,10 +198,10 @@ enum Schema:
           case Expr.BooleanConstant(value) => Result.Ok(Checked(value))
           case other => Result.Err(DecodeError.ExpectedBoolean(other))
 
-      case Schema.Null =>
+      case Schema.Option(inner) =>
         expr match
-          case Expr.NullConstant => Result.Ok(Checked(null))
-          case other => Result.Err(DecodeError.ExpectedNull(other))
+          case Expr.NullConstant => Result.Ok(Checked(None))
+          case other => inner.validate(other).map(value => Checked(Some(value.value)))
 
 object Schema:
   final case class Field(name: String, schema: Schema)
@@ -244,8 +245,8 @@ object TaggedSchema:
   given TaggedSchema[Boolean]:
     val schema: Schema = Schema.Boolean
 
-  given TaggedSchema[Null]:
-    val schema: Schema = Schema.Null
+  given OptionDecoder: [T] => (atPath: AtPath["", Option[T]]) => TaggedSchema[Option[T]]:
+    val schema = atPath.schema
 
   given VectorDecoder: [T] => (atPath: AtPath["", Vector[T]]) => TaggedSchema[Vector[T]]:
     val schema = atPath.schema
@@ -257,6 +258,16 @@ object TaggedSchema:
     import Helpers.showType
 
     opaque type AtPath[Path <: String, T] = Schema | List[Schema.Field]
+
+    @implicitNotFound("at path '${Path}': Option[T] cannot be nested inside another Option.")
+    trait NonNestedOption[Path <: String, T]
+
+    object NonNestedOption:
+      case object DefaultNonNestedOption extends NonNestedOption[?, ?]
+      inline given [Path <: String, T]: NonNestedOption[Path, T] = compiletime.summonFrom{
+        case _: NotGiven[T <:< Option[?]] => DefaultNonNestedOption.asInstanceOf[NonNestedOption[Path, T]]
+        case _ => compiletime.error("at path '" + compiletime.constValue[Path] + "': AstDecoder[Option[Option[?]]] is not supported.")
+      }
 
     object AtPath:
       import compiletime.ops.string.+
@@ -274,6 +285,9 @@ object TaggedSchema:
 
       given [Path <: String, T](using wrapped: AtPath[Path + "[]", T]): AtPath[Path, Vector[T]] =
         Schema.Vector(wrapped.schema)
+
+      given [Path <: String, T](using wrapped: AtPath[Path, T], nonNested: NonNestedOption[Path, T]): AtPath[Path, Option[T]] =
+        Schema.Option(wrapped.schema)
 
       given [Path <: String, N <: String, V, Ns <: Tuple, Vs <: Tuple](using
           vn: ValueOf[N],
@@ -366,6 +380,7 @@ private final class SchemaTokenDecoder(tokens: IArray[Token]):
   private trait DecodingVisitor[A]:
     def onNamedTuple(fields: IArray[Schema.Field]): Result[A, DecodeError]
     def onVector(element: Schema): Result[A, DecodeError]
+    def onOption(inner: Schema): Result[A, DecodeError]
     def onString(): Result[A, DecodeError]
     def onChar(): Result[A, DecodeError]
     def onInt(): Result[A, DecodeError]
@@ -387,7 +402,7 @@ private final class SchemaTokenDecoder(tokens: IArray[Token]):
         case Schema.Float => onFloat()
         case Schema.Double => onDouble()
         case Schema.Boolean => onBoolean()
-        case Schema.Null => onNull()
+        case Schema.Option(inner) => onOption(inner)
         case Schema.AnyExpr =>
           // possible to decode some parts to typed, and have a nested part that is Expr
           exprVisitor.inferExpr()
@@ -429,6 +444,16 @@ private final class SchemaTokenDecoder(tokens: IArray[Token]):
         }.ok
         Checked(values.result())
       }
+
+    def onOption(inner: Schema): Result[Checked[Option[Any]], DecodeError] = Result {
+      currentToken() match
+        case Token.NullKw(_) =>
+          advance()
+          Checked(None)
+        case _ =>
+          val value = decodeChecked(inner).ok
+          Checked(Some(value.value))
+    }
 
     def onString(): Result[Checked[String], DecodeError] = decodeString(Checked(_))
     def onChar(): Result[Checked[Char], DecodeError] = decodeChar(Checked(_))
@@ -482,6 +507,8 @@ private final class SchemaTokenDecoder(tokens: IArray[Token]):
           elements += inferExpr().ok.value
       }.ok
       Checked(Expr.VectorExpr(elements.result()))
+
+    def onOption(inner: Schema): Result[Checked[Expr], DecodeError] = inferExpr()
 
     def onString(): Result[Checked[Expr], DecodeError] = decodeString(s => Checked(Expr.StringConstant(s)))
     def onChar(): Result[Checked[Expr], DecodeError] = decodeChar(c => Checked(Expr.CharConstant(c)))
