@@ -1,7 +1,11 @@
 package miniparser
 
+import scala.annotation.implicitNotFound
 import scala.collection.mutable
+
 import NamedTuple.NamedTuple
+import NamedTuple.NamedTuple as SNamedTuple
+import AstDecoder.Builders.AtPath
 
 enum DecodeError:
   case ExpectedNamedTuple(found: Expr)
@@ -74,7 +78,7 @@ enum Schema:
       case Schema.Vector(elementSchema) =>
         expr match
           case Expr.VectorExpr(elements) =>
-            val values = _root_.scala.Vector.newBuilder[Any]
+            val values = scala.Vector.newBuilder[Any]
             var index = 0
             while index < elements.length do
               elementSchema.validate(elements(index)) match
@@ -128,58 +132,94 @@ enum Schema:
 object Schema:
   final case class Field(name: String, schema: Schema)
 
-  inline def namedTupleSchema[Names <: Tuple, Values <: Tuple]: Schema =
-    ${DecodeMacros.namedTupleSchemaImpl[Names, Values]}
-
 opaque type Checked[+T] = Any
 object Checked:
   private[miniparser] def apply[T](value: Any): Checked[T] = value
   private[miniparser] def unwrap[T](value: Checked[T]): Any = value
-  def cast[T](value: Checked[T]): T = value.asInstanceOf[T]
+  extension [T](value: Checked[T]) def value: T = value.asInstanceOf[T]
 
 trait AstDecoder[T]:
   def schema: Schema
 
   final def checked(expr: Expr): Either[DecodeError, Checked[T]] =
-    schema.validate(expr).asInstanceOf[Either[DecodeError, Checked[T]]]
+    schema.validate(expr).map(_.asInstanceOf[Checked[T]])
 
   final def decode(expr: Expr): Either[DecodeError, T] =
-    checked(expr) match
-      case Right(value) => Right(Checked.cast(value))
-      case Left(error) => Left(error)
+    schema.validate(expr).map(_.value.asInstanceOf[T])
 
 object AstDecoder:
-  given AstDecoder[String] with
+  given AstDecoder[String]:
     val schema: Schema = Schema.String
 
-  given AstDecoder[Char] with
+  given AstDecoder[Char]:
     val schema: Schema = Schema.Char
 
-  given AstDecoder[Int] with
+  given AstDecoder[Int]:
     val schema: Schema = Schema.Int
 
-  given AstDecoder[Long] with
+  given AstDecoder[Long]:
     val schema: Schema = Schema.Long
 
-  given AstDecoder[Float] with
+  given AstDecoder[Float]:
     val schema: Schema = Schema.Float
 
-  given AstDecoder[Double] with
+  given AstDecoder[Double]:
     val schema: Schema = Schema.Double
 
-  given AstDecoder[Boolean] with
+  given AstDecoder[Boolean]:
     val schema: Schema = Schema.Boolean
 
-  given AstDecoder[Null] with
+  given AstDecoder[Null]:
     val schema: Schema = Schema.Null
 
-  given VectorDecoder[T](using elementDecoder: AstDecoder[T]): AstDecoder[Vector[T]] with
-    val schema: Schema = Schema.Vector(elementDecoder.schema)
+  given VectorDecoder: [T] => (atPath: AtPath["", Vector[T]]) => AstDecoder[Vector[T]]:
+    val schema = atPath.schema
 
-  class RawDecoder(val schema: Schema) extends AstDecoder[Any]
+  given NamedTupleDecoder: [NT <: NamedTuple.AnyNamedTuple] => (atPath: AtPath["", NT]) => AstDecoder[NT]:
+    val schema = atPath.schema
 
-  inline given [Names <: Tuple, Values <: Tuple]: AstDecoder[NamedTuple[Names, Values]] =
-    ${DecodeMacros.namedTupleDecoderImpl[Names, Values]}
+  object Builders:
+    import Helpers.showType
+
+    opaque type AtPath[Path <: String, T] = Schema | List[Schema.Field]
+
+    object AtPath:
+      import compiletime.ops.string.+
+
+      extension [Path <: String, T](schema: AtPath[Path, T])
+        def schema: Schema = schema match
+          case s: Schema => s
+          case ls: List[Schema.Field] => Schema.NamedTuple(IArray.from(ls))
+
+      inline given atPath[Path <: String, T]: AtPath[Path, T] =
+        compiletime.summonFrom {
+          case d: AstDecoder[T] => d.schema
+          case _ => compiletime.error("at path '" + compiletime.constValue[Path] + "': Could not find AstDecoder[" + showType[T] + "].")
+        }
+
+      given [Path <: String, T](using wrapped: AtPath[Path + "[]", T]): AtPath[Path, Vector[T]] =
+        Schema.Vector(wrapped.schema)
+
+      given [Path <: String, N <: String, V, Ns <: Tuple, Vs <: Tuple](using
+          vn: ValueOf[N],
+          ap: AtPath[Path + "." + N, V],
+          rest: AtPath[Path, NamedTuple[Ns, Vs]]
+      ): AtPath[Path, NamedTuple[N *: Ns, V *: Vs]] =
+        rest match
+          case fs: List[Schema.Field] =>
+            Schema.Field(vn.value, ap.schema) :: fs
+          case _ =>
+            throw IllegalArgumentException("Expected the rest of the named tuple to be a NamedTuple schema")
+
+      given [Path <: String]: AtPath[Path, NamedTuple.Empty] =
+        Nil
+
+  object Helpers:
+    import quoted.{Expr as QExpr, *}
+    inline def showType[T] = ${showTypeImpl[T]}
+    def showTypeImpl[T: Type](using Quotes): QExpr[String] =
+      import quotes.reflect.*
+      QExpr(Type.show[T])
 
 extension (expr: Expr)
   def decodeAs[T](using decoder: AstDecoder[T]): Either[DecodeError, T] =

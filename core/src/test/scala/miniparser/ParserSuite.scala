@@ -62,6 +62,13 @@ class ParserSuite extends FunSuite:
     val Expr.NamedTupleExpr(_, elements) = parsed.declaration.value: @unchecked
     assertEquals(elements.length, 4)
 
+  test("top level Vector"):
+    val input = "val data = Vector(true)"
+    val parsed = Parser.parse(input)
+
+    val Expr.VectorExpr(elements) = parsed.declaration.value: @unchecked
+    assertEquals(elements.length, 1)
+
   test("skip single-line comments"):
     val input =
       """// leading comment
@@ -219,11 +226,29 @@ class ParserSuite extends FunSuite:
     assert(clue(errors.head.message).contains("outer.bad"))
     assert(clue(errors.head.message).contains("scala.collection.immutable.List[scala.Int]"))
 
+  test("compile-time derivation error includes nested field path Vector"):
+    val errors = typeCheckErrors(
+      "type Data = (outer: (inner: Vector[(sub1: (bad: List[Int]))]))\nsummon[miniparser.AstDecoder[Data]]"
+    )
+
+    assert(errors.nonEmpty)
+    assert(clue(errors.head.message).contains(".outer.inner[].sub1.bad"))
+    assert(clue(errors.head.message).contains("scala.collection.immutable.List[scala.Int]"))
+
+  test("compile-time derivation error includes nested field path Vector root"):
+    val errors = typeCheckErrors(
+      "type Data = Vector[(sub1: (bad: List[Int]))]\nsummon[miniparser.AstDecoder[Data]]"
+    )
+
+    assert(errors.nonEmpty)
+    assert(clue(errors.head.message).contains("'[].sub1.bad'"))
+    assert(clue(errors.head.message).contains("scala.collection.immutable.List[scala.Int]"))
+
   test("compile-time derivation error includes vector path segment"):
     val errors = typeCheckErrors(
       "type Data = (items: Vector[(bad: List[Int])])\nsummon[miniparser.AstDecoder[Data]]"
     )
 
     assert(errors.nonEmpty)
-    assert(clue(errors.head.message).contains("items.[].bad"))
+    assert(clue(errors.head.message).contains("'.items[].bad'"))
     assert(clue(errors.head.message).contains("scala.collection.immutable.List[scala.Int]"))
