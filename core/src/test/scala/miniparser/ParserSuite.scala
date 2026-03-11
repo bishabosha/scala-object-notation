@@ -175,7 +175,7 @@ class ParserSuite extends FunSuite:
 
     obtained match
       case Result.Err(error) =>
-        assertEquals(error.path, List("x"))
+        assertEquals(error.path, List(".x"))
         assertEquals(error.rootCause, DecodeError.ExpectedInt(Token.TrueKw(Span(16, 1, 17))))
         assertEquals(error.span.map(span => (span.line, span.column)), Some((1, 17)))
       case Result.Ok(value) => fail(s"Expected a decode failure, got $value")
@@ -192,9 +192,29 @@ class ParserSuite extends FunSuite:
     val obtained = Parser.parseValueAs[Data](input, name = "data")
     obtained match
       case Result.Err(error) =>
-        assertEquals(error.path, List("items", "[0]", "value"))
+        assertEquals(error.path, List(".items", "[0]", ".value"))
+        assertEquals(true, error.format.contains("'.items[0].value'"))
         assertEquals(error.rootCause, DecodeError.ExpectedInt(Token.TrueKw(Span(39, 2, 27))))
         assertEquals(error.span.map(span => span.line), Some(2))
+      case Result.Ok(value) => fail(s"Expected a decode failure, got $value")
+
+  test("report full nested decode path through vectors, validated"):
+    type Data = (items: Vector[(value: Int)])
+
+    val input =
+      """val data = (
+        |  items = Vector((value = true))
+        |)
+        |""".stripMargin
+
+    val obtained = Parser.parseValueAs[Expr](input, name = "data").get
+    val validated = obtained.decodeAs[Data]
+    validated match
+      case Result.Err(error) =>
+        assertEquals(error.path, List(".items", "[0]", ".value"))
+        assertEquals(true, error.format.contains("'.items[0].value'"))
+        assertEquals(error.rootCause, DecodeError.ExpectedInt(Expr.BooleanConstant(true)))
+        assertEquals(error.span, None)
       case Result.Ok(value) => fail(s"Expected a decode failure, got $value")
 
   test("nest Expr inside of structured type"):
@@ -218,7 +238,7 @@ class ParserSuite extends FunSuite:
     val obtained = Parser.parseValueAs[Data](input, name = "data")
     obtained match
       case Result.Err(error) =>
-        assertEquals(error.rootCause, DecodeError.FieldOrderMismatch(0, "x", "y"))
+        assertEquals(error.rootCause, DecodeError.FieldOrderMismatch("x", "y"))
         assertEquals(error.span.map(span => (span.line, span.column)), Some((1, 13)))
       case Result.Ok(value) => fail(s"Expected a decode failure, got $value")
 

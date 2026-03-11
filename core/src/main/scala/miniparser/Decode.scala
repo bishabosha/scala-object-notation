@@ -37,7 +37,7 @@ enum DecodeError:
   case ExpectedIdentifier(found: Token)
   case ExpectedEof(found: Token)
   case FieldCountMismatch(expected: Int, actual: Int)
-  case FieldOrderMismatch(index: Int, expected: String, actual: String)
+  case FieldOrderMismatch(expected: String, actual: String)
   case MissingField(fieldName: String)
   case UnexpectedField(fieldName: String)
   case UnexpectedRoot(rootName: String)
@@ -89,13 +89,23 @@ enum DecodeError:
       case DecodeError.ExpectedIdentifier(found) => s"Expected an identifier but found ${describe(found)}"
       case DecodeError.ExpectedEof(found) => s"Expected end of input but found ${describe(found)}"
       case DecodeError.FieldCountMismatch(expected, actual) => s"Expected $expected fields but found $actual"
-      case DecodeError.FieldOrderMismatch(index, expected, actual) => s"Field #$index was expected to be '$expected' but was '$actual'"
+      case DecodeError.FieldOrderMismatch(expected, actual) => s"Field was expected to be '$expected' but was '$actual'"
       case DecodeError.MissingField(fieldName) => s"Missing required field '$fieldName'"
       case DecodeError.UnexpectedField(fieldName) => s"Unexpected field '$fieldName'"
       case DecodeError.UnexpectedRoot(rootName) => s"Unexpected root declaration '$rootName'"
       case DecodeError.DuplicateField(fieldName) => s"Duplicate field '$fieldName'"
-      case DecodeError.AtPath(segment, cause) => s"In path '${segment}': ${cause.format}"
-      case DecodeError.AtToken(tokenSpan, cause) => s"${cause.format} at ${tokenSpan.line}:${tokenSpan.column}"
+      case DecodeError.AtPath(segment, cause) =>
+        def loop(cause: DecodeError, acc: List[String]): String =
+          cause match
+            case DecodeError.AtPath(segment, innerCause) =>
+              loop(innerCause, segment :: acc)
+            case DecodeError.AtToken(tokenSpan, innerCause) =>
+              s"${tokenSpan.line}:${tokenSpan.column}: In path '${acc.reverseIterator.mkString}': ${innerCause.format}"
+            case other =>
+              s"In path '${acc.reverseIterator.mkString}': ${other.format}"
+
+        loop(cause, List(segment))
+      case DecodeError.AtToken(tokenSpan, cause) => s"${tokenSpan.line}:${tokenSpan.column}: ${cause.format}"
 
 enum Schema:
   case NamedTuple(fields: IArray[Schema.Field])
@@ -124,11 +134,11 @@ enum Schema:
               val field = fields(index)
               val fieldName = names(index)
               if fieldName != field.name then
-                return Result.Err(DecodeError.FieldOrderMismatch(index, field.name, fieldName))
+                return Result.Err(DecodeError.FieldOrderMismatch(field.name, fieldName))
 
               field.schema.validate(elements(index)) match
                 case Result.Ok(value) => values += value.value
-                case Result.Err(error) => return Result.Err(error.atPath(field.name))
+                case Result.Err(error) => return Result.Err(error.atPath(s".${field.name}"))
               index += 1
 
             Result.Ok(Checked(Tuple.fromIArray(values.result())))
@@ -379,8 +389,8 @@ private final class SchemaTokenDecoder(tokens: IArray[Token]):
         case Schema.Boolean => onBoolean()
         case Schema.Null => onNull()
         case Schema.AnyExpr =>
-           // possible to decode some parts to typed, and have a nested part that is Expr
-           exprVisitor.inferExpr()
+          // possible to decode some parts to typed, and have a nested part that is Expr
+          exprVisitor.inferExpr()
 
     def onNamedTuple(fields: IArray[Schema.Field]): Result[Checked[AnyNamedTuple], DecodeError] = Result {
       val values = new Array[AnyRef](fields.length)
@@ -391,10 +401,10 @@ private final class SchemaTokenDecoder(tokens: IArray[Token]):
           else
             val expectedField = fields(fieldIndex)
             if actualName != expectedField.name then
-              raise(DecodeError.FieldOrderMismatch(fieldIndex, expectedField.name, actualName).atToken(nameSpan))
+              raise(DecodeError.FieldOrderMismatch(expectedField.name, actualName).atToken(nameSpan))
             else
               val value = decodeChecked(expectedField.schema)
-                .mapErr(_.atPath(expectedField.name))
+                .mapErr(_.atPath(s".${expectedField.name}"))
                 .ok
               values(fieldIndex) = value.value.asInstanceOf[AnyRef]
         }
