@@ -8,6 +8,7 @@ import mainargs.Flag
 import mill.javalib.publish.PomSettings
 import mill.javalib.publish.VersionControl
 import mill.javalib.publish.Developer
+import mill.javalib.publish.License
 import mill.util.JarManifest
 import mill.api.ModuleRef
 import mill.api.Task.Simple
@@ -23,7 +24,7 @@ trait PublishSettings extends PublishModule, mill.util.VcsVersionModule:
     description = projectDesc,
     organization = "io.github.bishabosha",
     url = "https://github.com/bishabosha/scala-object-notation",
-    licenses = Seq(/*no licence yet!*/),
+    licenses = Seq(License.`Apache-2.0`),
     versionControl = VersionControl.github("bishabosha", "scala-object-notation"),
     developers = Seq(Developer("bishabosha", "Jamie Thompson", "https://github.com/bishabosha"))
   )
