@@ -39,4 +39,4 @@ object demo extends ScalaObjectNotationModule:
     mvn"com.lihaoyi::ujson:4.3.2",
     mvn"org.virtuslab::scala-yaml:0.3.1"
   )
-  def mainClass = Some("miniparser.Main")
+  def mainClass = Some("scalanotation.Main")

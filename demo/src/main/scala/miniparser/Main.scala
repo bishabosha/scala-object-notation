@@ -1,4 +1,4 @@
-package miniparser
+package scalanotation
 
 import java.nio.file.Files
 import java.nio.file.Path
@@ -17,7 +17,7 @@ import ujson.Value
 object Main:
   def main(args: Array[String]): Unit =
     if args.isEmpty then
-      System.err.println("Usage: miniparser.Main <path> --name <name> [--tokens] [--json | --yaml] [--safe-nums]")
+      System.err.println("Usage: scalanotation.Main <path> --name <name> [--tokens] [--json | --yaml] [--safe-nums]")
       System.exit(1)
 
     val showTokens = args.contains("--tokens")
@@ -46,7 +46,7 @@ object Main:
         else
           println(s"Parsed declaration '${name}' successfully")
 
-  private[miniparser] def render(sourceFile: SourceFile, name: String, exportJson: Boolean, exportYaml: Boolean, preserveNums: Boolean): Option[String] =
+  private[scalanotation] def render(sourceFile: SourceFile, name: String, exportJson: Boolean, exportYaml: Boolean, preserveNums: Boolean): Option[String] =
     if sourceFile.declaration.name != name then
       throw new IllegalArgumentException(s"Expected declaration name '$name' but found '${sourceFile.declaration.name}'")
     val value = sourceFile.declaration.value
@@ -72,7 +72,7 @@ object Main:
       case Expr.BooleanConstant(value) => Bool(value)
       case Expr.NullConstant => Null
 
-  private[miniparser] def exprToYamlNode(expr: Expr): Node =
+  private[scalanotation] def exprToYamlNode(expr: Expr): Node =
     expr match
       case Expr.NamedTupleExpr(names, elements) =>
         val fields = names.view.zip(elements.view).map {

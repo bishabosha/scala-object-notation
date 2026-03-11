@@ -1,4 +1,4 @@
-package miniparser
+package scalanotation
 
 import munit.FunSuite
 import org.virtuslab.yaml.Node

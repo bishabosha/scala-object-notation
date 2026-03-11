@@ -1,4 +1,4 @@
-package miniparser
+package scalanotation
 
 import scala.NamedTuple
 
@@ -14,6 +14,6 @@ object Parser:
       case Right(sourceFile) => sourceFile
       case Left(error) => throw ParseException(s"$error")
 
-  def parseValueAs[T](input: String, name: String)(using decoder: AstDecoder[T]): Either[DecodeError, T] =
+  def parseValueAs[T](input: String, name: String)(using decoder: TaggedSchema[T]): Either[DecodeError, T] =
     val tokens = Tokenizer.tokenize(input)
     decoder.decodeTokens(tokens, name)

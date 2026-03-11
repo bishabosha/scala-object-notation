@@ -1,4 +1,4 @@
-package miniparser
+package scalanotation
 
 import scala.annotation.implicitNotFound
 import scala.collection.mutable
@@ -6,7 +6,7 @@ import scala.collection.mutable
 import NamedTuple.NamedTuple
 import NamedTuple.AnyNamedTuple
 import NamedTuple.NamedTuple as SNamedTuple
-import AstDecoder.Builders.AtPath
+import TaggedSchema.Builders.AtPath
 
 enum DecodeError:
   case ExpectedNamedTuple(found: Expr)
@@ -149,10 +149,10 @@ object Schema:
 
 opaque type Checked[+T] = T
 object Checked:
-  private[miniparser] def apply[T](value: T): Checked[T] = value
+  private[scalanotation] def apply[T](value: T): Checked[T] = value
   extension [T](value: Checked[T]) def value: T = value
 
-trait AstDecoder[T]:
+trait TaggedSchema[T]:
   def schema: Schema
 
   final def checked(expr: Expr): Either[DecodeError, Checked[T]] =
@@ -161,41 +161,41 @@ trait AstDecoder[T]:
   final def decode(expr: Expr): Either[DecodeError, T] =
     schema.validate(expr).map(_.value.asInstanceOf[T])
 
-  final private[miniparser] def decodeTokens(tokens: IArray[Token], rootName: String): Either[DecodeError, T] =
+  final private[scalanotation] def decodeTokens(tokens: IArray[Token], rootName: String): Either[DecodeError, T] =
     SchemaTokenDecoder.decode(tokens, rootName, this)
 
-object AstDecoder:
-  given AstDecoder[Expr]:
+object TaggedSchema:
+  given TaggedSchema[Expr]:
     val schema: Schema = Schema.AnyExpr
 
-  given AstDecoder[String]:
+  given TaggedSchema[String]:
     val schema: Schema = Schema.String
 
-  given AstDecoder[Char]:
+  given TaggedSchema[Char]:
     val schema: Schema = Schema.Char
 
-  given AstDecoder[Int]:
+  given TaggedSchema[Int]:
     val schema: Schema = Schema.Int
 
-  given AstDecoder[Long]:
+  given TaggedSchema[Long]:
     val schema: Schema = Schema.Long
 
-  given AstDecoder[Float]:
+  given TaggedSchema[Float]:
     val schema: Schema = Schema.Float
 
-  given AstDecoder[Double]:
+  given TaggedSchema[Double]:
     val schema: Schema = Schema.Double
 
-  given AstDecoder[Boolean]:
+  given TaggedSchema[Boolean]:
     val schema: Schema = Schema.Boolean
 
-  given AstDecoder[Null]:
+  given TaggedSchema[Null]:
     val schema: Schema = Schema.Null
 
-  given VectorDecoder: [T] => (atPath: AtPath["", Vector[T]]) => AstDecoder[Vector[T]]:
+  given VectorDecoder: [T] => (atPath: AtPath["", Vector[T]]) => TaggedSchema[Vector[T]]:
     val schema = atPath.schema
 
-  given NamedTupleDecoder: [NT <: NamedTuple.AnyNamedTuple] => (atPath: AtPath["", NT]) => AstDecoder[NT]:
+  given NamedTupleDecoder: [NT <: NamedTuple.AnyNamedTuple] => (atPath: AtPath["", NT]) => TaggedSchema[NT]:
     val schema = atPath.schema
 
   object Builders:
@@ -213,8 +213,8 @@ object AstDecoder:
 
       inline given atPath[Path <: String, T]: AtPath[Path, T] =
         compiletime.summonFrom {
-          case d: AstDecoder[T] => d.schema
-          case _ => compiletime.error("at path '" + compiletime.constValue[Path] + "': Could not find AstDecoder[" + showType[T] + "].")
+          case d: TaggedSchema[T] => d.schema
+          case _ => compiletime.error("at path '" + compiletime.constValue[Path] + "': Could not find TaggedSchema[" + showType[T] + "].")
         }
 
       given [Path <: String, T](using wrapped: AtPath[Path + "[]", T]): AtPath[Path, Vector[T]] =
@@ -242,21 +242,21 @@ object AstDecoder:
       QExpr(Type.show[T])
 
 extension (expr: Expr)
-  def decodeAs[T](using decoder: AstDecoder[T]): Either[DecodeError, T] =
+  def decodeAs[T](using decoder: TaggedSchema[T]): Either[DecodeError, T] =
     decoder.decode(expr)
 
-  def checkedAs[T](using decoder: AstDecoder[T]): Either[DecodeError, Checked[T]] =
+  def checkedAs[T](using decoder: TaggedSchema[T]): Either[DecodeError, Checked[T]] =
     decoder.checked(expr)
 
 extension (sourceFile: SourceFile)
-  def decodeValueAs[T](name: String)(using decoder: AstDecoder[T]): Either[DecodeError, T] =
+  def decodeValueAs[T](name: String)(using decoder: TaggedSchema[T]): Either[DecodeError, T] =
     if sourceFile.declaration.name != name then
       Left(DecodeError.UnexpectedRoot(sourceFile.declaration.name))
     else
       sourceFile.declaration.value.decodeAs[T]
 
-private[miniparser] object SchemaTokenDecoder:
-  def decode[T](tokens: IArray[Token], rootName: String, decoder: AstDecoder[T]): Either[DecodeError, T] =
+private[scalanotation] object SchemaTokenDecoder:
+  def decode[T](tokens: IArray[Token], rootName: String, decoder: TaggedSchema[T]): Either[DecodeError, T] =
     val parser = new SchemaTokenDecoder(tokens)
     parser.decodeRoot(decoder.schema, rootName).map(_.value.asInstanceOf[T])
   def decodeAnyRoot(tokens: IArray[Token]): Either[DecodeError, SourceFile] =

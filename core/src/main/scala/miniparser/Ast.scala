@@ -1,4 +1,4 @@
-package miniparser
+package scalanotation
 
 final case class SourceFile(declaration: ValDecl)
 

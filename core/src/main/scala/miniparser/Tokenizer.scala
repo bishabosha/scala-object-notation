@@ -1,4 +1,4 @@
-package miniparser
+package scalanotation
 
 import scala.collection.mutable
 

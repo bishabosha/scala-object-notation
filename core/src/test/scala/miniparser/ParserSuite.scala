@@ -1,4 +1,4 @@
-package miniparser
+package scalanotation
 
 import munit.FunSuite
 import scala.compiletime.testing.typeCheckErrors
@@ -209,16 +209,16 @@ class ParserSuite extends FunSuite:
       case Right(value) => fail(s"Expected a decode failure, got $value")
 
   test("no decoder is derived for Any"):
-    val errors = typeCheckErrors("summon[miniparser.AstDecoder[Any]]")
+    val errors = typeCheckErrors("summon[scalanotation.TaggedSchema[Any]]")
     assert(errors.nonEmpty)
 
   test("no decoder is derived for Vector[Any]"):
-    val errors = typeCheckErrors("summon[miniparser.AstDecoder[Vector[Any]]]")
+    val errors = typeCheckErrors("summon[scalanotation.TaggedSchema[Vector[Any]]]")
     assert(errors.nonEmpty)
 
   test("compile-time derivation error includes nested field path"):
     val errors = typeCheckErrors(
-      "type Data = (outer: (bad: List[Int]))\nsummon[miniparser.AstDecoder[Data]]"
+      "type Data = (outer: (bad: List[Int]))\nsummon[scalanotation.TaggedSchema[Data]]"
     )
 
     assert(errors.nonEmpty)
@@ -227,7 +227,7 @@ class ParserSuite extends FunSuite:
 
   test("compile-time derivation error includes nested field path Vector"):
     val errors = typeCheckErrors(
-      "type Data = (outer: (inner: Vector[(sub1: (bad: List[Int]))]))\nsummon[miniparser.AstDecoder[Data]]"
+      "type Data = (outer: (inner: Vector[(sub1: (bad: List[Int]))]))\nsummon[scalanotation.TaggedSchema[Data]]"
     )
 
     assert(errors.nonEmpty)
@@ -236,7 +236,7 @@ class ParserSuite extends FunSuite:
 
   test("compile-time derivation error includes nested field path Vector root"):
     val errors = typeCheckErrors(
-      "type Data = Vector[(sub1: (bad: List[Int]))]\nsummon[miniparser.AstDecoder[Data]]"
+      "type Data = Vector[(sub1: (bad: List[Int]))]\nsummon[scalanotation.TaggedSchema[Data]]"
     )
 
     assert(errors.nonEmpty)
@@ -245,7 +245,7 @@ class ParserSuite extends FunSuite:
 
   test("compile-time derivation error includes vector path segment"):
     val errors = typeCheckErrors(
-      "type Data = (items: Vector[(bad: List[Int])])\nsummon[miniparser.AstDecoder[Data]]"
+      "type Data = (items: Vector[(bad: List[Int])])\nsummon[scalanotation.TaggedSchema[Data]]"
     )
 
     assert(errors.nonEmpty)
