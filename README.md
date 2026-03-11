@@ -71,7 +71,7 @@ Parse and decode directly into a Scala 3 named tuple:
 import scalanotation.*
 
 type Data =
-  (x: (label: String, ys: Vector[Int]), y: Null, ok: Boolean)
+  (x: (label: String, ys: Vector[Int]), y: Option[Int], ok: Boolean)
 
 val decoded = Parser.parseValueAs[Data](input, name = "conf")
 ```
@@ -91,8 +91,9 @@ Supported typed decoding targets currently include:
 
 - nested Scala 3 named tuples
 - `Vector[T]`
+- `Option[T]` for nullable values
 - `Expr`
-- `String`, `Char`, `Int`, `Long`, `Float`, `Double`, `Boolean`, and `Null`
+- `String`, `Char`, `Int`, `Long`, `Float`, `Double`, and `Boolean`
 
 Typed decoding is strict:
 
