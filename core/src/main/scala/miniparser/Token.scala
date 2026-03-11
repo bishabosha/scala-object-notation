@@ -1,4 +1,4 @@
-package miniparser
+package scalanotation
 
 final case class Span(offset: Int, line: Int, column: Int)
 

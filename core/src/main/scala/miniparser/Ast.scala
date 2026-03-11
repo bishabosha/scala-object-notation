@@ -1,8 +1,8 @@
-package miniparser
+package scalanotation
 
-final case class SourceFile(declaration: ValDecl)
+final case class SourceFile[T](declaration: ValDecl[T])
 
-final case class ValDecl(name: String, value: Expr)
+final case class ValDecl[T](name: String, value: T)
 
 opaque type TupleOf[T] = Tuple
 object TupleOf:
