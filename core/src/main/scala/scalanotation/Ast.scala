@@ -1,22 +1,18 @@
 package scalanotation
 
+import steps.result.Result
+
 final case class SourceFile[T](declaration: ValDecl[T])
 
+object SourceFile:
+  extension (sourceFile: SourceFile[Expr])
+    def decodeValueAs[T: TaggedSchema as decoder](name: String): Result[T, DecodeError] =
+      if sourceFile.declaration.name != name then
+        Result.Err(DecodeError.UnexpectedRoot(sourceFile.declaration.name))
+      else
+        sourceFile.declaration.value.decodeAs[T]
+
 final case class ValDecl[T](name: String, value: T)
-
-opaque type TupleOf[T] = Tuple
-object TupleOf:
-  def apply[T](data: IArray[T]): TupleOf[T] = Tuple.fromIArray(data)
-  def unapplySeq[T](ts: TupleOf[T]): UnapplySeqWrapper[T] = UnapplySeqWrapper(ts)
-
-  final class UnapplySeqWrapper[T](private val a: TupleOf[T]) extends AnyVal {
-    def isEmpty: false = false
-    def get: UnapplySeqWrapper[T] = this
-    def lengthCompare(len: Int): Int = a.productArity.compareTo(len)
-    def apply(i: Int): T = a.productElement(i).asInstanceOf[T]
-    def drop(n: Int): scala.Seq[T] = toSeq.drop(n)
-    def toSeq: scala.Seq[T] = (a.toIArray: scala.Seq[Object]).asInstanceOf[scala.Seq[T]] // clones the array
-  }
 
 enum Expr:
   case NamedTupleExpr(names: IArray[String], elements: IArray[Expr])
@@ -29,3 +25,11 @@ enum Expr:
   case DoubleConstant(value: Double)
   case BooleanConstant(value: Boolean)
   case NullConstant
+
+object Expr:
+  extension (expr: Expr)
+    def decodeAs[T: TaggedSchema as decoder]: Result[T, DecodeError] =
+      decoder.decode(expr)
+
+    def checkedAs[T: TaggedSchema as decoder]: Result[Checked[T], DecodeError] =
+      decoder.checked(expr)
