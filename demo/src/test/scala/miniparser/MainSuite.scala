@@ -6,7 +6,7 @@ import org.virtuslab.yaml.Tag
 
 class MainSuite extends FunSuite:
   test("render json export"):
-    val ast = Parser.parse(
+    val ast = Parser.quick.parse(
       """val data = (
         |  x = Vector(1, 2),
         |  y = null,
@@ -27,7 +27,7 @@ class MainSuite extends FunSuite:
     assertEquals(obtained, expected)
 
   test("render yaml export"):
-    val ast = Parser.parse(
+    val ast = Parser.quick.parse(
       """val data = (
         |  x = Vector(1, 2),
         |  y = null,
@@ -51,7 +51,7 @@ class MainSuite extends FunSuite:
     assertEquals(trimLines(obtained), trimLines(expected))
 
   test("yaml export uses explicit scalar tags"):
-    val ast = Parser.parse(
+    val ast = Parser.quick.parse(
       """val data = (
         |  i = 1,
         |  l = 2L,

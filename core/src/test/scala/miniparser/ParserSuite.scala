@@ -15,9 +15,9 @@ class ParserSuite extends FunSuite:
         |)
         |""".stripMargin
 
-    val parsed = Parser.parse(input)
+    val parsed = Parser.quick.parse(input)
 
-    val expected: PartialFunction[SourceFile, Unit] = {
+    val expected: PartialFunction[SourceFile[Expr], Unit] = {
       case SourceFile(
         ValDecl(
           "data",
@@ -57,14 +57,14 @@ class ParserSuite extends FunSuite:
 
   test("tokenize booleans and negative numbers"):
     val input = "val data = (a = true, b = false, c = -12, d = -1.5f)"
-    val parsed = Parser.parse(input)
+    val parsed = Parser.quick.parse(input)
 
     val Expr.NamedTupleExpr(_, elements) = parsed.declaration.value: @unchecked
     assertEquals(elements.length, 4)
 
   test("top level Vector"):
     val input = "val data = Vector(true)"
-    val parsed = Parser.parse(input)
+    val parsed = Parser.quick.parse(input)
 
     val Expr.VectorExpr(elements) = parsed.declaration.value: @unchecked
     assertEquals(elements.length, 1)
@@ -80,9 +80,9 @@ class ParserSuite extends FunSuite:
         |// trailing comment
         |""".stripMargin
 
-    val parsed = Parser.parse(input)
+    val parsed = Parser.quick.parse(input)
 
-    val expected: PartialFunction[SourceFile, Unit] = {
+    val expected: PartialFunction[SourceFile[Expr], Unit] = {
       case SourceFile(
             ValDecl(
               "data",
@@ -175,7 +175,7 @@ class ParserSuite extends FunSuite:
     obtained match
       case Left(error) =>
         assertEquals(error.path, List("x"))
-        assertEquals(error.rootCause, DecodeError.ExpectedInt(Expr.BooleanConstant(true)))
+        assertEquals(error.rootCause, DecodeError.ExpectedInt(Token.TrueKw(Span(16, 1, 17))))
         assertEquals(error.span.map(span => (span.line, span.column)), Some((1, 17)))
       case Right(value) => fail(s"Expected a decode failure, got $value")
 
@@ -192,7 +192,7 @@ class ParserSuite extends FunSuite:
     obtained match
       case Left(error) =>
         assertEquals(error.path, List("items", "[0]", "value"))
-        assertEquals(error.rootCause, DecodeError.ExpectedInt(Expr.BooleanConstant(true)))
+        assertEquals(error.rootCause, DecodeError.ExpectedInt(Token.TrueKw(Span(39, 2, 27))))
         assertEquals(error.span.map(span => span.line), Some(2))
       case Right(value) => fail(s"Expected a decode failure, got $value")
 

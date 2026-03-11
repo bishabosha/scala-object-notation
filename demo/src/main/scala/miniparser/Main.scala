@@ -35,18 +35,28 @@ object Main:
       System.exit(1)
     val name = args(nameIdx + 1)
     val input = Files.readString(path)
-    val tokens = Tokenizer.tokenize(input)
-
-    val ast = Parser.parse(tokens)
+    val tokens = Tokenizer.tokenize(input).fold(
+      { error =>
+        System.err.println(error.format)
+        sys.exit(1)
+      },
+      identity
+    )
+    if showTokens then
+      tokens.foreach(println)
+    val ast = Parser.parseAs[Expr](tokens).fold(
+      { error =>
+        System.err.println(error.format)
+        sys.exit(1)
+      },
+      identity
+    )
     render(ast, name, exportJson, exportYaml, preserveNums) match
       case Some(value) => println(value)
       case None =>
-        if showTokens then
-          tokens.foreach(println)
-        else
-          println(s"Parsed declaration '${name}' successfully")
+        println(s"Parsed declaration '${name}' successfully")
 
-  private[scalanotation] def render(sourceFile: SourceFile, name: String, exportJson: Boolean, exportYaml: Boolean, preserveNums: Boolean): Option[String] =
+  private[scalanotation] def render(sourceFile: SourceFile[Expr], name: String, exportJson: Boolean, exportYaml: Boolean, preserveNums: Boolean): Option[String] =
     if sourceFile.declaration.name != name then
       throw new IllegalArgumentException(s"Expected declaration name '$name' but found '${sourceFile.declaration.name}'")
     val value = sourceFile.declaration.value

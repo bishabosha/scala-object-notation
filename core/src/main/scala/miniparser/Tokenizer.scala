@@ -1,8 +1,7 @@
 package scalanotation
 
 import scala.collection.mutable
-
-final class ParseException(message: String) extends RuntimeException(message)
+import Tokenizer.TokenError
 
 final class Tokenizer(input: String):
   private var index = 0
@@ -15,13 +14,19 @@ final class Tokenizer(input: String):
   val Seq(KW_val @ _, KW_true @ _, KW_false @ _, KW_null @ _, KW_Vector @ _) =
     Seq("val","true","false","null","Vector").map(nameCached(_)).runtimeChecked
 
-  def tokenize(): IArray[Token] =
-    val tokens = IArray.newBuilder[Token]
-    while !isAtEnd do
-      skipTrivia()
-      if !isAtEnd then tokens += nextToken()
-    tokens += Token.Eof(currentSpan())
-    tokens.result()
+  private class ParseException(val message: String, val span: Span)
+    extends Exception with scala.util.control.NoStackTrace
+
+  def tokenize(): Either[TokenError, IArray[Token]] =
+    try
+      val tokens = IArray.newBuilder[Token]
+      while !isAtEnd do
+        skipTrivia()
+        if !isAtEnd then tokens += nextToken()
+      tokens += Token.Eof(currentSpan())
+      Right(tokens.result())
+    catch case e: ParseException =>
+      Left(TokenError(e.getMessage, e.span))
 
   private def nextToken(): Token =
     val start = currentSpan()
@@ -290,7 +295,11 @@ final class Tokenizer(input: String):
     || (base == 16 && (ch >= 'A' && ch <= 'F'))
 
   private def fail(message: String, span: Span): Nothing =
-    throw ParseException(s"$message at ${span.line}:${span.column}")
+    throw ParseException(message, span)
 
 object Tokenizer:
-  def tokenize(input: String): IArray[Token] = new Tokenizer(input).tokenize()
+  case class TokenError(message: String, span: Span):
+    def format: String = s"$message at ${span.line}:${span.column}"
+
+  def tokenize(input: String): Either[TokenError, IArray[Token]] =
+    new Tokenizer(input).tokenize()
