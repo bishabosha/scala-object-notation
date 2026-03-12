@@ -1,19 +1,23 @@
 package scalanotation
 
+import steps.result.Result
+import steps.result.Result.eval.break
+import steps.result.Result.eval.ok
+import steps.result.Result.eval.raise
+
+import scala.annotation.constructorOnly
 import scala.annotation.implicitNotFound
+import scala.annotation.publicInBinary
 import scala.collection.mutable
 import scala.util.NotGiven
-import steps.result.Result
-import steps.result.Result.eval.{ok, raise, break}
-import compiletime.uninitialized
+import scala.util.boundary
 
+import compiletime.uninitialized
 import NamedTuple.NamedTuple
 import NamedTuple.AnyNamedTuple
 import NamedTuple.NamedTuple as SNamedTuple
 import TaggedSchema.Builders.AtPath
 import TokenDecoder.describe
-import scala.annotation.constructorOnly
-import scala.annotation.publicInBinary
 
 object DecodeError:
   private[scalanotation] given AdaptTokenError: Conversion[Tokenizer.TokenError, DecodeError]:
@@ -361,6 +365,17 @@ object TaggedSchema {
 private[scalanotation] object Internal {
   import quoted.{Expr as QExpr, *}
 
+  import scala.util.boundary.Label
+  inline def loop[A](inline body: Label[A] ?=> Unit): A = {
+    boundary[A] {
+      while true do body
+      ???
+    }
+  }
+  object loop {
+    inline def break[A](a: A)(using Label[A]): A = boundary.break(a)
+  }
+
   // TODO: add to standard library!
   inline def showType[T] = ${ showTypeImpl[T] }
 
@@ -450,6 +465,8 @@ private[scalanotation] object TokenDecoder:
 
 private final class TokenDecoder(@constructorOnly tokens: List[Token])
     extends Internal.TokenStream(tokens) {
+  import scala.util.boundary.Label
+  type Resulting[+A, +E] = Label[Result.Err[E]] ?=> A
 
   def decodeRoot[T](
       schema: TaggedSchema[T],
@@ -509,26 +526,28 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
         fields: IArray[Schema.Field]
     ): Result[Checked[AnyNamedTuple], DecodeError] = Result {
       val values = new Array[AnyRef](fields.length)
-      val parsed = parseNamedTupleStructure(allowEmpty = fields.isEmpty) {
+
+      // FIXME: need to lift out or else the boundary/break optimisation fails.
+      val emptyFields = fields.isEmpty
+
+      val parsed = parseNamedTupleStructure(allowEmpty = emptyFields) {
         (actualName, nameSpan, fieldIndex) =>
-          Result {
-            if fieldIndex >= fields.length then
+          if fieldIndex >= fields.length then
+            raise(
+              DecodeError.FieldCountMismatch(fields.length, fieldIndex + 1).atToken(nameSpan)
+            )
+          else
+            val expectedField = fields(fieldIndex)
+            if actualName != expectedField.name then
               raise(
-                DecodeError.FieldCountMismatch(fields.length, fieldIndex + 1).atToken(nameSpan)
+                DecodeError.FieldOrderMismatch(expectedField.name, actualName).atToken(nameSpan)
               )
             else
-              val expectedField = fields(fieldIndex)
-              if actualName != expectedField.name then
-                raise(
-                  DecodeError.FieldOrderMismatch(expectedField.name, actualName).atToken(nameSpan)
-                )
-              else
-                val value = decodeChecked(expectedField.schema)
-                  .mapErr(_.atPath(s".${expectedField.name}"))
-                  .ok
-                values(fieldIndex) = value.value.asInstanceOf[AnyRef]
-          }
-      }.ok
+              val value = decodeChecked(expectedField.schema)
+                .mapErr(_.atPath(s".${expectedField.name}"))
+                .ok
+              values(fieldIndex) = value.value.asInstanceOf[AnyRef]
+      }
       if parsed.fieldCount != fields.length then
         raise(
           DecodeError
@@ -544,13 +563,11 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
       Result {
         val values = scala.Vector.newBuilder[Any]
         parseVectorStructure { indexInVector =>
-          Result {
-            val value = decodeChecked(element)
-              .mapErr(_.atPath(s"[$indexInVector]"))
-              .ok
-            values += value.value
-          }
-        }.ok
+          val value = decodeChecked(element)
+            .mapErr(_.atPath(s"[$indexInVector]"))
+            .ok
+          values += value.value
+        }
         Checked(values.result())
       }
 
@@ -611,22 +628,21 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
       val names    = IArray.newBuilder[String]
       val elements = IArray.newBuilder[Expr]
       val buf      = parseNamedTupleStructure(allowEmpty = false) { (name, _, _) =>
-        Result:
-          val elem = inferExpr().ok
-          names += name
-          elements += elem.value
-      }.ok
+        val elem = inferExpr().ok
+        names += name
+        elements += elem.value
+      }
       val _ = buf.closingSpan // consume result
       val _ = buf.fieldCount  // consume result
       Checked(Expr.NamedTupleExpr(names.result(), elements.result()))
 
-    def onVector(element: Schema): Result[Checked[Expr], DecodeError] = Result:
+    def onVector(element: Schema): Result[Checked[Expr], DecodeError] = Result {
       val elements = IArray.newBuilder[Expr]
       parseVectorStructure { _ =>
-        Result:
-          elements += inferExpr().ok.value
-      }.ok
+        elements += inferExpr().ok.value
+      }
       Checked(Expr.VectorExpr(elements.result()))
+    }
 
     def onOption(inner: Schema): Result[Checked[Expr], DecodeError] =
       inferExpr()
@@ -668,11 +684,12 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
       this.closingSpan = closingSpan
       this
   }
-  private def parseNamedTupleStructure(
+  private inline def parseNamedTupleStructure(
       allowEmpty: Boolean
   )(
-      consumeFieldValue: (String, Span, Int) => Result[Unit, DecodeError]
-  ): Result[NamedTupleParseResultBuf, DecodeError] = Result {
+      inline consumeFieldValue: (String, Span, Int) => Unit
+  ): Resulting[NamedTupleParseResultBuf, DecodeError] = {
+    import Internal.loop
     currentToken() match
       case Token.LParen(_) => advance()
       case other           =>
@@ -683,49 +700,42 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
         advance()
         if allowEmpty then
           // TODO: add early ok return as well!
-          break(Result.Ok(NamedTupleParseResultBuf.push(0, token.span)))
+          NamedTupleParseResultBuf.push(0, token.span)
         else raise(DecodeError.UnitValueNotAllowed().atToken(token.span))
       case _ =>
+        var fieldIndex           = 0
+        val rparen: Token.RParen = loop {
+          currentToken() match
+            case Token.Identifier(actualName, nameSpan) =>
+              advance()
+              currentToken() match
+                case Token.Equals(_) => advance()
+                case other           =>
+                  raise(DecodeError.ExpectedEquals(other).atToken(other.span))
 
-    var fieldIndex = 0
-    var done       = false
+              consumeFieldValue(actualName, nameSpan, fieldIndex)
+              fieldIndex += 1
 
-    while !done do
-      if currentToken().isInstanceOf[Token.RParen] then done = true
-      else
-        currentToken() match
-          case Token.Identifier(actualName, nameSpan) =>
-            advance()
-            currentToken() match
-              case Token.Equals(_) => advance()
-              case other           =>
-                raise(DecodeError.ExpectedEquals(other).atToken(other.span))
+              currentToken() match
+                case Token.Comma(_) =>
+                  advance()
+                  currentToken() match
+                    case rparen @ Token.RParen(_) => loop.break(rparen)
+                    case _                        => () // continue parsing next field
+                case rparen @ Token.RParen(_) => loop.break(rparen)
+                case other                    =>
+                  raise(DecodeError.ExpectedRParen(other).atToken(other.span))
 
-            consumeFieldValue(actualName, nameSpan, fieldIndex).ok
-            fieldIndex += 1
-
-            currentToken() match
-              case Token.Comma(_) =>
-                advance()
-                if currentToken().isInstanceOf[Token.RParen] then done = true
-              case Token.RParen(_) => done = true
-              case other           =>
-                raise(DecodeError.ExpectedRParen(other).atToken(other.span))
-
-          case other =>
-            raise(DecodeError.ExpectedFieldName(other).atToken(other.span))
-
-    currentToken() match
-      case Token.RParen(rParenSpan) =>
+            case other =>
+              raise(DecodeError.ExpectedFieldName(other).atToken(other.span))
+        }
         advance()
-        NamedTupleParseResultBuf.push(fieldIndex, rParenSpan)
-      case other =>
-        raise(DecodeError.ExpectedRParen(other).atToken(other.span))
+        NamedTupleParseResultBuf.push(fieldIndex, rparen.span)
   }
 
-  private def parseVectorStructure(
-      consumeElementValue: Int => Result[Unit, DecodeError]
-  ): Result[Unit, DecodeError] = Result {
+  private inline def parseVectorStructure(
+      inline consumeElementValue: Int => Unit
+  ): Resulting[Unit, DecodeError] = {
     (currentToken(), peekToken()) match
       case (Token.VectorId(_), Token.LParen(_)) =>
         advance()
@@ -735,30 +745,27 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
 
     var indexInVector = 0
 
-    if currentToken().isInstanceOf[Token.RParen] then
-      advance()
-      // TODO: add early ok return as well!
-      break(Result.Ok(()))
+    if currentToken().isInstanceOf[Token.RParen] then advance()
+    else {
+      var done = false
+      while !done do
+        consumeElementValue(indexInVector)
+        indexInVector += 1
 
-    var done = false
-    while !done do
-      consumeElementValue(indexInVector).ok
-      indexInVector += 1
+        currentToken() match
+          case Token.Comma(_) =>
+            advance()
+            if currentToken().isInstanceOf[Token.RParen] then done = true
+          case Token.RParen(_) => done = true
+          case other           =>
+            raise(DecodeError.ExpectedRParen(other).atToken(other.span))
 
       currentToken() match
-        case Token.Comma(_) =>
+        case Token.RParen(_) =>
           advance()
-          if currentToken().isInstanceOf[Token.RParen] then done = true
-        case Token.RParen(_) => done = true
-        case other           =>
+        case other =>
           raise(DecodeError.ExpectedRParen(other).atToken(other.span))
-
-    currentToken() match
-      case Token.RParen(_) =>
-        advance()
-        Result.Ok(())
-      case other =>
-        raise(DecodeError.ExpectedRParen(other).atToken(other.span))
+    }
   }
 
   private def decodeString[A](wrap: String => A): Result[A, DecodeError] =
