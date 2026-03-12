@@ -9,8 +9,7 @@ object SourceFile:
     def decodeValueAs[T: TaggedSchema as decoder](name: String): Result[T, DecodeError] =
       if sourceFile.declaration.name != name then
         Result.Err(DecodeError.UnexpectedRoot(sourceFile.declaration.name))
-      else
-        sourceFile.declaration.value.decodeAs[T]
+      else sourceFile.declaration.value.decodeAs[T]
 
 final case class ValDecl[T](name: String, value: T)
 
