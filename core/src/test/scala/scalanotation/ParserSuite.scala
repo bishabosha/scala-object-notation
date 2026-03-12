@@ -20,51 +20,52 @@ class ParserSuite extends FunSuite:
 
     val expected: PartialFunction[SourceFile[Expr], Unit] = {
       case SourceFile(
-        ValDecl(
-          "data",
-          Expr.NamedTupleExpr(
-            IArray("x", "y"),
-            IArray(
+            ValDecl(
+              "data",
               Expr.NamedTupleExpr(
-                IArray("ls", "ys"),
+                IArray("x", "y"),
                 IArray(
-                  Expr.VectorExpr(
+                  Expr.NamedTupleExpr(
+                    IArray("ls", "ys"),
                     IArray(
-                      Expr.StringConstant("abcdef"),
-                      Expr.CharConstant('b'),
-                      Expr.IntConstant(123),
-                      Expr.DoubleConstant(3.1d),
-                      Expr.FloatConstant(4.1f),
-                      Expr.LongConstant(23L)
+                      Expr.VectorExpr(
+                        IArray(
+                          Expr.StringConstant("abcdef"),
+                          Expr.CharConstant('b'),
+                          Expr.IntConstant(123),
+                          Expr.DoubleConstant(3.1d),
+                          Expr.FloatConstant(4.1f),
+                          Expr.LongConstant(23L)
+                        )
+                      ),
+                      Expr.VectorExpr(
+                        IArray(
+                          Expr.IntConstant(-1),
+                          Expr.IntConstant(-0b0000_0011),
+                          Expr.IntConstant(-0x00_1a)
+                        )
+                      )
                     )
                   ),
-                  Expr.VectorExpr(
-                    IArray(
-                      Expr.IntConstant(-1),
-                      Expr.IntConstant(-0b0000_0011),
-                      Expr.IntConstant(-0x00_1A)
-                    )
-                  )
+                  Expr.NullConstant
                 )
-              ),
-              Expr.NullConstant
+              )
             )
-          )
-        )
-      ) => () }
-
+          ) =>
+        ()
+    }
 
     assert(expected.isDefinedAt(parsed))
 
   test("tokenize booleans and negative numbers"):
-    val input = "val data = (a = true, b = false, c = -12, d = -1.5f)"
+    val input  = "val data = (a = true, b = false, c = -12, d = -1.5f)"
     val parsed = Parser.quick.parse(input)
 
     val Expr.NamedTupleExpr(_, elements) = parsed.declaration.value: @unchecked
     assertEquals(elements.length, 4)
 
   test("top level Vector"):
-    val input = "val data = Vector(true)"
+    val input  = "val data = Vector(true)"
     val parsed = Parser.quick.parse(input)
 
     val Expr.VectorExpr(elements) = parsed.declaration.value: @unchecked
@@ -92,7 +93,8 @@ class ParserSuite extends FunSuite:
                 IArray(Expr.IntConstant(1), Expr.BooleanConstant(true))
               )
             )
-          ) => ()
+          ) =>
+        ()
     }
 
     assert(expected.isDefinedAt(parsed))
@@ -115,14 +117,14 @@ class ParserSuite extends FunSuite:
     type Data =
       (x: (label: String, ys: Vector[Int]), y: Option[String], ok: Boolean)
 
-    val decoded = Parser.parseValueAs[Data](input, name = "data")
+    val decoded        = Parser.parseValueAs[Data](input, name = "data")
     val expected: Data =
       (x = (label = "abc", ys = Vector(1, 2)), y = None, ok = true)
 
     assertEquals(decoded, Result.Ok(expected))
 
   test("reject wrong root declaration name"):
-    val input = "val data = (x = 1)"
+    val input   = "val data = (x = 1)"
     val decoded = Parser.parseValueAs[Int](input, name = "other")
     assertEquals(decoded, Result.Err(DecodeError.UnexpectedRoot("data")))
 
@@ -141,9 +143,13 @@ class ParserSuite extends FunSuite:
         |)
         |""".stripMargin
 
-    val decoded = Parser.parseValueAs[Data](input, name = "data")
+    val decoded        = Parser.parseValueAs[Data](input, name = "data")
     val expected: Data =
-      (x = (label = "abcdef", ys = Vector(-1, -3, -26)), y = Some(23), ok = true)
+      (
+        x = (label = "abcdef", ys = Vector(-1, -3, -26)),
+        y = Some(23),
+        ok = true
+      )
 
     assertEquals(decoded, Result.Ok(expected))
 
@@ -157,7 +163,7 @@ class ParserSuite extends FunSuite:
         |)
         |""".stripMargin
 
-    val decoded = Parser.parseValueAs[Data](input, name = "data")
+    val decoded        = Parser.parseValueAs[Data](input, name = "data")
     val expected: Data = (missing = None, present = Some(41))
 
     assertEquals(decoded, Result.Ok(expected))
@@ -165,18 +171,21 @@ class ParserSuite extends FunSuite:
   test("report inner schema mismatches for Option values"):
     type Data = (x: Option[Int])
 
-    val input = "val data = (x = true)"
+    val input    = "val data = (x = true)"
     val obtained = Parser.parseValueAs[Data](input, name = "data")
 
     obtained match
       case Result.Err(error) =>
         assertEquals(error.path, List(".x"))
-        assertEquals(error.rootCause, DecodeError.ExpectedInt(Token.TrueKw(Span(16, 1, 17))))
+        assertEquals(
+          error.rootCause,
+          DecodeError.ExpectedInt(Token.TrueKw(Span(16, 1, 17)))
+        )
       case Result.Ok(value) => fail(s"Expected a decode failure, got $value")
 
   test("decode vectors of nested named tuples"):
     type Entry = (name: String, value: Int)
-    type Data = (items: Vector[Entry], total: Long)
+    type Data  = (items: Vector[Entry], total: Long)
 
     val input =
       """val data = (
@@ -188,23 +197,32 @@ class ParserSuite extends FunSuite:
         |)
         |""".stripMargin
 
-    val decoded = Parser.parseValueAs[Data](input, name = "data")
+    val decoded        = Parser.parseValueAs[Data](input, name = "data")
     val expected: Data =
-      (items = Vector((name = "a", value = 1), (name = "b", value = 2)), total = 2L)
+      (
+        items = Vector((name = "a", value = 1), (name = "b", value = 2)),
+        total = 2L
+      )
 
     assertEquals(decoded, Result.Ok(expected))
 
   test("report schema mismatches during decoding"):
     type Data = (x: Int)
 
-    val input = "val data = (x = true)"
+    val input    = "val data = (x = true)"
     val obtained = Parser.parseValueAs[Data](input, name = "data")
 
     obtained match
       case Result.Err(error) =>
         assertEquals(error.path, List(".x"))
-        assertEquals(error.rootCause, DecodeError.ExpectedInt(Token.TrueKw(Span(16, 1, 17))))
-        assertEquals(error.span.map(span => (span.line, span.column)), Some((1, 17)))
+        assertEquals(
+          error.rootCause,
+          DecodeError.ExpectedInt(Token.TrueKw(Span(16, 1, 17)))
+        )
+        assertEquals(
+          error.span.map(span => (span.line, span.column)),
+          Some((1, 17))
+        )
       case Result.Ok(value) => fail(s"Expected a decode failure, got $value")
 
   test("report full nested decode path through vectors"):
@@ -221,7 +239,10 @@ class ParserSuite extends FunSuite:
       case Result.Err(error) =>
         assertEquals(error.path, List(".items", "[0]", ".value"))
         assertEquals(true, error.format.contains("'.items[0].value'"))
-        assertEquals(error.rootCause, DecodeError.ExpectedInt(Token.TrueKw(Span(39, 2, 27))))
+        assertEquals(
+          error.rootCause,
+          DecodeError.ExpectedInt(Token.TrueKw(Span(39, 2, 27)))
+        )
         assertEquals(error.span.map(span => span.line), Some(2))
       case Result.Ok(value) => fail(s"Expected a decode failure, got $value")
 
@@ -234,28 +255,36 @@ class ParserSuite extends FunSuite:
         |)
         |""".stripMargin
 
-    val obtained = Parser.parseValueAs[Expr](input, name = "data").get
+    val obtained  = Parser.parseValueAs[Expr](input, name = "data").get
     val validated = obtained.decodeAs[Data]
     validated match
       case Result.Err(error) =>
         assertEquals(error.path, List(".items", "[0]", ".value"))
         assertEquals(true, error.format.contains("'.items[0].value'"))
-        assertEquals(error.rootCause, DecodeError.ExpectedInt(Expr.BooleanConstant(true)))
+        assertEquals(
+          error.rootCause,
+          DecodeError.ExpectedInt(Expr.BooleanConstant(true))
+        )
         assertEquals(error.span, None)
       case Result.Ok(value) => fail(s"Expected a decode failure, got $value")
 
   test("nest Expr inside of structured type"):
     type Data = (x: Int, y: (q: Vector[Expr]))
 
-    val input = "val data = (x = 23, y = (q = Vector(41)))"
-    val obtained = Parser.parseValueAs[Data](input, name = "data")
+    val input                                 = "val data = (x = 23, y = (q = Vector(41)))"
+    val obtained                              = Parser.parseValueAs[Data](input, name = "data")
     val expected: PartialFunction[Data, Unit] = {
       case (
-        x = 23,
-        y = (q = Vector(Expr.IntConstant(41)))
-      ) => ()
+            x = 23,
+            y = (q = Vector(Expr.IntConstant(41)))
+          ) =>
+        ()
     }
-    assert(expected.isDefinedAt(obtained.getOrElse(fail(s"Expected successful decode, got $obtained"))))
+    assert(
+      expected.isDefinedAt(
+        obtained.getOrElse(fail(s"Expected successful decode, got $obtained"))
+      )
+    )
 
   test("reject swapped named tuple field order"):
     type Data = (x: Int, y: Boolean)
@@ -266,7 +295,10 @@ class ParserSuite extends FunSuite:
     obtained match
       case Result.Err(error) =>
         assertEquals(error.rootCause, DecodeError.FieldOrderMismatch("x", "y"))
-        assertEquals(error.span.map(span => (span.line, span.column)), Some((1, 13)))
+        assertEquals(
+          error.span.map(span => (span.line, span.column)),
+          Some((1, 13))
+        )
       case Result.Ok(value) => fail(s"Expected a decode failure, got $value")
 
   test("no decoder is derived for Any"):
@@ -274,7 +306,8 @@ class ParserSuite extends FunSuite:
     assert(errors.nonEmpty)
 
   test("no decoder is derived for Vector[Any]"):
-    val errors = typeCheckErrors("summon[scalanotation.TaggedSchema[Vector[Any]]]")
+    val errors =
+      typeCheckErrors("summon[scalanotation.TaggedSchema[Vector[Any]]]")
     assert(errors.nonEmpty)
 
   test("no decoder is derived for nested Option"):
@@ -284,7 +317,10 @@ class ParserSuite extends FunSuite:
 
     assert(errors.nonEmpty)
     assert(clue(errors.head.message).contains(".x"))
-    assert(clue(errors.head.message).contains("AstDecoder[Option[Option[?]]] is not supported"))
+    assert(
+      clue(errors.head.message)
+        .contains("TaggedSchema[Option[Option[?]]] is not supported")
+    )
 
   test("compile-time derivation error includes nested field path"):
     val errors = typeCheckErrors(
@@ -293,7 +329,10 @@ class ParserSuite extends FunSuite:
 
     assert(errors.nonEmpty)
     assert(clue(errors.head.message).contains("outer.bad"))
-    assert(clue(errors.head.message).contains("scala.collection.immutable.List[scala.Int]"))
+    assert(
+      clue(errors.head.message)
+        .contains("scala.collection.immutable.List[scala.Int]")
+    )
 
   test("compile-time derivation error includes nested field path Vector"):
     val errors = typeCheckErrors(
@@ -302,7 +341,10 @@ class ParserSuite extends FunSuite:
 
     assert(errors.nonEmpty)
     assert(clue(errors.head.message).contains(".outer.inner[].sub1.bad"))
-    assert(clue(errors.head.message).contains("scala.collection.immutable.List[scala.Int]"))
+    assert(
+      clue(errors.head.message)
+        .contains("scala.collection.immutable.List[scala.Int]")
+    )
 
   test("compile-time derivation error includes nested field path Vector root"):
     val errors = typeCheckErrors(
@@ -311,7 +353,10 @@ class ParserSuite extends FunSuite:
 
     assert(errors.nonEmpty)
     assert(clue(errors.head.message).contains("'[].sub1.bad'"))
-    assert(clue(errors.head.message).contains("scala.collection.immutable.List[scala.Int]"))
+    assert(
+      clue(errors.head.message)
+        .contains("scala.collection.immutable.List[scala.Int]")
+    )
 
   test("compile-time derivation error includes vector path segment"):
     val errors = typeCheckErrors(
@@ -320,4 +365,7 @@ class ParserSuite extends FunSuite:
 
     assert(errors.nonEmpty)
     assert(clue(errors.head.message).contains("'.items[].bad'"))
-    assert(clue(errors.head.message).contains("scala.collection.immutable.List[scala.Int]"))
+    assert(
+      clue(errors.head.message)
+        .contains("scala.collection.immutable.List[scala.Int]")
+    )

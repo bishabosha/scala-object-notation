@@ -16,11 +16,21 @@ class MainSuite extends FunSuite:
         |""".stripMargin
     )
 
-    val obtained = ujson.read(Main.render(ast, name = "data", exportJson = true, exportYaml = false, preserveNums = false).get)
+    val obtained = ujson.read(
+      Main
+        .render(
+          ast,
+          name = "data",
+          exportJson = true,
+          exportYaml = false,
+          preserveNums = false
+        )
+        .get
+    )
     val expected = ujson.Obj(
-      "x" -> ujson.Arr(1, 2),
-      "y" -> ujson.Null,
-      "ok" -> ujson.Bool(true),
+      "x"     -> ujson.Arr(1, 2),
+      "y"     -> ujson.Null,
+      "ok"    -> ujson.Bool(true),
       "label" -> ujson.Str("abc")
     )
 
@@ -37,8 +47,17 @@ class MainSuite extends FunSuite:
         |""".stripMargin
     )
 
-    def trimLines(s: String): String = s.linesIterator.map(_.trim).mkString("\n")
-    val obtained = Main.render(ast, name = "data", exportJson = false, exportYaml = true, preserveNums = false).get
+    def trimLines(s: String): String =
+      s.linesIterator.map(_.trim).mkString("\n")
+    val obtained = Main
+      .render(
+        ast,
+        name = "data",
+        exportJson = false,
+        exportYaml = true,
+        preserveNums = false
+      )
+      .get
     val expected =
       """x:
         |  - 1
@@ -64,11 +83,12 @@ class MainSuite extends FunSuite:
         |""".stripMargin
     )
 
-    val node = Main.exprToYamlNode(ast.declaration.value)
+    val node                          = Main.exprToYamlNode(ast.declaration.value)
     val Node.MappingNode(mappings, _) = node: @unchecked
 
     val byName = mappings.collect {
-      case (Node.ScalarNode(name, _), value @ Node.ScalarNode(_, _)) => name -> value
+      case (Node.ScalarNode(name, _), value @ Node.ScalarNode(_, _)) =>
+        name -> value
     }.toMap
 
     assertEquals(byName("i").tag, Tag.int)
