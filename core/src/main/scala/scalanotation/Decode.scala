@@ -357,6 +357,44 @@ object TaggedSchema {
   }
 }
 
+@publicInBinary
+private[scalanotation] object Internal {
+  import quoted.{Expr as QExpr, *}
+
+  // TODO: add to standard library!
+  inline def showType[T] = ${ showTypeImpl[T] }
+
+  def showTypeImpl[T: Type](using Quotes): QExpr[String] =
+    import quotes.reflect.*
+    QExpr(Type.show[T])
+
+  trait HasDefault[T] {
+    def Default: T
+  }
+
+  class TokenStream[T: Internal.HasDefault as default](@constructorOnly tokens: List[T]) {
+    private var curr: T       = uninitialized
+    private var rest: List[T] = tokens
+    advance() // initialize curr and rest
+
+    protected def currentToken(): T = curr
+
+    protected def peekToken(): T =
+      rest match
+        case t :: _ => t
+        case _      => default.Default
+
+    protected def advance(): Unit =
+      rest match
+        case curr1 :: rest1 =>
+          curr = curr1
+          rest = rest1
+        case _ =>
+          curr = default.Default
+          rest = Nil
+  }
+}
+
 private[scalanotation] object TokenDecoder:
   def decode[T](
       tokens: List[Token],
@@ -410,46 +448,8 @@ private[scalanotation] object TokenDecoder:
       case Expr.BooleanConstant(_)              => "boolean constant"
       case Expr.NullConstant                    => "null constant"
 
-@publicInBinary
-private[scalanotation] object Internal {
-  import quoted.{Expr as QExpr, *}
-
-  // TODO: add to standard library!
-  inline def showType[T] = ${ showTypeImpl[T] }
-
-  def showTypeImpl[T: Type](using Quotes): QExpr[String] =
-    import quotes.reflect.*
-    QExpr(Type.show[T])
-
-  trait HasDefault[T] {
-    def Default: T
-  }
-
-  class TokenStream[T: Internal.HasDefault as default](@constructorOnly tokens: List[T]) {
-    private var curr: T       = uninitialized
-    private var rest: List[T] = tokens
-    advance() // initialize curr and rest
-
-    protected def currentToken(): T = curr
-
-    protected def peekToken(): T =
-      rest match
-        case t :: _ => t
-        case _      => default.Default
-
-    protected def advance(): Unit =
-      rest match
-        case curr1 :: rest1 =>
-          curr = curr1
-          rest = rest1
-        case _ =>
-          curr = default.Default
-          rest = Nil
-  }
-}
-
 private final class TokenDecoder(@constructorOnly tokens: List[Token])
-    extends Internal.TokenStream(tokens):
+    extends Internal.TokenStream(tokens) {
 
   def decodeRoot[T](
       schema: TaggedSchema[T],
@@ -897,3 +897,4 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
     currentToken() match
       case Token.Eof(_) => ()
       case other        => raise(DecodeError.ExpectedEof(other).atToken(other.span))
+}

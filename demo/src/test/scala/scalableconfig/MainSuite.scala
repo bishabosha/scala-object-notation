@@ -1,4 +1,6 @@
-package scalanotation
+package scalableconfig
+
+import scalanotation.*
 
 import munit.FunSuite
 import org.virtuslab.yaml.Node

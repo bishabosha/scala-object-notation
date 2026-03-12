@@ -1,8 +1,10 @@
-package scalanotation
+package scalableconfig
 
 import java.nio.file.Files
 import java.nio.file.Path
 import scala.collection.immutable.ListMap
+
+import scalanotation.*
 
 import org.virtuslab.yaml.*
 import org.virtuslab.yaml.Node
@@ -19,7 +21,7 @@ object Main:
   def main(args: Array[String]): Unit =
     if args.isEmpty then
       System.err.println(
-        "Usage: scalanotation.Main <path> --name <name> [--tokens] [--json | --yaml] [--safe-nums]"
+        "args: <path> --name <name> [--tokens] [--json | --yaml] [--safe-nums]"
       )
       System.exit(1)
 
@@ -63,7 +65,7 @@ object Main:
       case None        =>
         println(s"Parsed declaration '${name}' successfully")
 
-  private[scalanotation] def render(
+  private[scalableconfig] def render(
       sourceFile: SourceFile[Expr],
       name: String,
       exportJson: Boolean,
@@ -103,7 +105,7 @@ object Main:
       case Expr.BooleanConstant(value) => Bool(value)
       case Expr.NullConstant           => Null
 
-  private[scalanotation] def exprToYamlNode(expr: Expr): Node =
+  private[scalableconfig] def exprToYamlNode(expr: Expr): Node =
     expr match
       case Expr.NamedTupleExpr(names, elements) =>
         val fields = names.view.zip(elements.view).map { (name, element) =>
