@@ -351,7 +351,7 @@ private final class Tokenizer(input: String):
 
 object Tokenizer:
   case class TokenError(message: String, span: Span):
-    def format: String = s"$message at ${span.line}:${span.column}"
+    def format: String = s"${span.line}:${span.column}: $message"
 
   def tokenize(input: String): Result[List[Token], TokenError] =
     new Tokenizer(input).tokenize()

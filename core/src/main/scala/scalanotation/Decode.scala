@@ -78,7 +78,7 @@ enum DecodeError:
   def format: String =
     this match
       case DecodeError.UnexpectedToken(err) =>
-        s"Unexpected token: ${err.format}"
+        err.format
       case DecodeError.ExpectedNumber(found) =>
         s"Expected a number but found ${describe(found)}"
       case DecodeError.ExpectedExpression(found) =>
