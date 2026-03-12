@@ -151,35 +151,33 @@ enum Schema:
   case Boolean
   case Option(inner: Schema)
 
-  def validate(expr: Expr): Result[Checked[Any], DecodeError] =
+  def validate(expr: Expr): Result[Checked[Any], DecodeError] = Result:
     this match
       case Schema.NamedTuple(fields) =>
         expr match
           case Expr.NamedTupleExpr(names, elements) =>
             if names.length != fields.length then
-              return Result.Err(
-                DecodeError.FieldCountMismatch(fields.length, names.length)
-              )
+              raise(DecodeError.FieldCountMismatch(fields.length, names.length))
 
             var index  = 0
-            val values = IArray.newBuilder[Any]
+            val values = new Array[AnyRef](fields.length)
             while index < fields.length do
               val field     = fields(index)
               val fieldName = names(index)
               if fieldName != field.name then
-                return Result.Err(
-                  DecodeError.FieldOrderMismatch(field.name, fieldName)
-                )
+                raise(DecodeError.FieldOrderMismatch(field.name, fieldName))
 
-              field.schema.validate(elements(index)) match
-                case Result.Ok(value)  => values += value.value
-                case Result.Err(error) =>
-                  return Result.Err(error.atPath(s".${field.name}"))
+              val value =
+                field.schema
+                  .validate(elements(index))
+                  .mapErr(_.atPath(s".${field.name}"))
+                  .ok
+              values(index) = value.value.asInstanceOf[AnyRef]
               index += 1
 
-            Result.Ok(Checked(Tuple.fromIArray(values.result())))
+            Checked(scala.NamedTuple.build()(Tuple.fromIArray(IArray.unsafeFromArray(values))))
           case other =>
-            Result.Err(DecodeError.ExpectedNamedTuple(other))
+            raise(DecodeError.ExpectedNamedTuple(other))
 
       case Schema.Vector(elementSchema) =>
         expr match
@@ -187,58 +185,60 @@ enum Schema:
             val values = scala.Vector.newBuilder[Any]
             var index  = 0
             while index < elements.length do
-              elementSchema.validate(elements(index)) match
-                case Result.Ok(value)  => values += value.value
-                case Result.Err(error) =>
-                  return Result.Err(error.atPath(s"[$index]"))
+              val value = elementSchema
+                .validate(elements(index))
+                .mapErr(_.atPath(s"[$index]"))
+                .ok
+              values += value.value
               index += 1
-            Result.Ok(Checked(values.result()))
+            Checked(values.result())
           case other =>
-            Result.Err(DecodeError.ExpectedVector(other))
+            raise(DecodeError.ExpectedVector(other))
 
       case Schema.AnyExpr =>
-        Result.Ok(Checked(expr))
+        Checked(expr)
 
       case Schema.String =>
         expr match
-          case Expr.StringConstant(value) => Result.Ok(Checked(value))
-          case other                      => Result.Err(DecodeError.ExpectedString(other))
+          case Expr.StringConstant(value) => Checked(value)
+          case other                      => raise(DecodeError.ExpectedString(other))
 
       case Schema.Char =>
         expr match
-          case Expr.CharConstant(value) => Result.Ok(Checked(value))
-          case other                    => Result.Err(DecodeError.ExpectedChar(other))
+          case Expr.CharConstant(value) => Checked(value)
+          case other                    => raise(DecodeError.ExpectedChar(other))
 
       case Schema.Int =>
         expr match
-          case Expr.IntConstant(value) => Result.Ok(Checked(value))
-          case other                   => Result.Err(DecodeError.ExpectedInt(other))
+          case Expr.IntConstant(value) => Checked(value)
+          case other                   => raise(DecodeError.ExpectedInt(other))
 
       case Schema.Long =>
         expr match
-          case Expr.LongConstant(value) => Result.Ok(Checked(value))
-          case other                    => Result.Err(DecodeError.ExpectedLong(other))
+          case Expr.LongConstant(value) => Checked(value)
+          case other                    => raise(DecodeError.ExpectedLong(other))
 
       case Schema.Float =>
         expr match
-          case Expr.FloatConstant(value) => Result.Ok(Checked(value))
-          case other                     => Result.Err(DecodeError.ExpectedFloat(other))
+          case Expr.FloatConstant(value) => Checked(value)
+          case other                     => raise(DecodeError.ExpectedFloat(other))
 
       case Schema.Double =>
         expr match
-          case Expr.DoubleConstant(value) => Result.Ok(Checked(value))
-          case other                      => Result.Err(DecodeError.ExpectedDouble(other))
+          case Expr.DoubleConstant(value) => Checked(value)
+          case other                      => raise(DecodeError.ExpectedDouble(other))
 
       case Schema.Boolean =>
         expr match
-          case Expr.BooleanConstant(value) => Result.Ok(Checked(value))
-          case other                       => Result.Err(DecodeError.ExpectedBoolean(other))
+          case Expr.BooleanConstant(value) => Checked(value)
+          case other                       => raise(DecodeError.ExpectedBoolean(other))
 
       case Schema.Option(inner) =>
         expr match
-          case Expr.NullConstant => Result.Ok(Checked(None))
+          case Expr.NullConstant => Checked(None)
           case other             =>
-            inner.validate(other).map(value => Checked(Some(value.value)))
+            val value = inner.validate(other).ok
+            Checked(Some(value.value))
 
 object Schema:
   final case class Field(name: String, schema: Schema)
