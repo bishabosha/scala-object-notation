@@ -26,7 +26,7 @@ trait PublishSettings extends PublishModule, mill.util.VcsVersionModule:
     url = "https://github.com/bishabosha/scala-object-notation",
     licenses = Seq(License.`Apache-2.0`),
     versionControl = VersionControl.github("bishabosha", "scala-object-notation"),
-    developers = Seq(Developer("bishabosha", "Jamie Thompson", "https://github.com/bishabosha"))
+    developers = Seq(Developer("bishabosha", "Jamie Thompson", "https://bishabosha.github.io", email = "thompsonjamesrichard@gmail.com"))
   )
 
 object core extends ScalaObjectNotationModule, PublishSettings:
