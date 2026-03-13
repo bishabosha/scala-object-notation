@@ -468,6 +468,72 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
   import scala.util.boundary.Label
   type Resulting[+A, +E] = Label[Result.Err[E]] ?=> A
 
+  // NOTE: currently as we make one decoder per token stream then there is no issue
+  // of leaked shared state.
+  // if we switch to a design based on a reusable decoder for multiple token streams
+  // (e.g. batch processing), then either state explicit thread unsafe, or
+  // we should switch to concurrent safe state.
+  private var identCount                = 0
+  private val perfectNamesCache         = mutable.HashMap[String, Int]()
+  private def nameId(name: String): Int =
+    perfectNamesCache.getOrElseUpdate(
+      name, {
+        try identCount
+        finally identCount += 1
+      }
+    )
+  private val namesRing                  = mutable.ArrayDeque.empty[Array[Long]]
+  private def borrowNames(): Array[Long] =
+    // non-atomic pull, but this should be single-threaded code
+    if namesRing.isEmpty then
+      // if identCount grows beyond ~4100 then
+      // BitSet is likely to resize and create huge arrays that could start impacting memory
+      // seriously.
+      // could explore if time requires a staged design that scales from bitset to hashset
+      // beyond a certain number of unique names.
+      new Array[Long](64)
+    else
+      val arr = namesRing.removeHead()
+      java.util.Arrays.fill(arr, 0L)
+      arr
+  private def releaseNames(bitmask: Array[Long]): Unit =
+    namesRing.append(bitmask)
+  private val schemaStateCache = mutable.HashMap.empty[IArray[Schema.Field], Boolean]
+  private def validateFields(
+      fields: IArray[Schema.Field]
+  ): Boolean =
+    schemaStateCache.getOrElseUpdate(
+      fields,
+      withNames { seenNames =>
+        boundary {
+          var i   = 0
+          val len = fields.length
+          while i < len do
+            val id = nameId(fields(i).name)
+            if seenNames.contains(id) || { seenNames.addOne(id); false } then boundary.break(false)
+            i += 1
+          true
+        }
+      }
+    )
+  private def duplicateField(
+      fields: IArray[Schema.Field]
+  ): String =
+    // called after validation fails so we can use a slower path
+    fields
+      .groupBy(_.name)
+      .collectFirst {
+        case (name, fieldGroup) if fieldGroup.length > 1 => name
+      }
+      .getOrElse("...")
+
+  private inline def withNames[A](inline body: mutable.BitSet => A): A = {
+    val unsafeMask = borrowNames()
+    val seenNames  = mutable.BitSet.fromBitMaskNoCopy(unsafeMask)
+    try body(seenNames)
+    finally releaseNames(unsafeMask)
+  }
+
   def decodeRoot[T](
       schema: TaggedSchema[T],
       rootName: String
@@ -524,39 +590,48 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
 
     def onNamedTuple(
         fields: IArray[Schema.Field]
-    ): Result[Checked[AnyNamedTuple], DecodeError] = Result {
-      val values = new Array[AnyRef](fields.length)
+    ): Result[Checked[AnyNamedTuple], DecodeError] = {
+      Result {
+        if !validateFields(fields) then raise(DecodeError.DuplicateField(duplicateField(fields)))
+        val values = new Array[AnyRef](fields.length)
 
-      // FIXME: need to lift out or else the boundary/break optimisation fails.
-      val emptyFields = fields.isEmpty
+        // FIXME: need to lift out or else the boundary/break optimisation fails.
+        val emptyFields = fields.isEmpty
 
-      val parsed = parseNamedTupleStructure(allowEmpty = emptyFields) {
-        (actualName, nameSpan, fieldIndex) =>
-          if fieldIndex >= fields.length then
-            raise(
-              DecodeError.FieldCountMismatch(fields.length, fieldIndex + 1).atPath(s".${actualName}").atToken(nameSpan)
-            )
-          else
-            val expectedField = fields(fieldIndex)
-            if actualName != expectedField.name then
+        val parsed = parseNamedTupleStructure(allowEmpty = emptyFields) {
+          (actualName, nameSpan, fieldIndex) =>
+            if fieldIndex >= fields.length then
               raise(
-                DecodeError.FieldOrderMismatch(expectedField.name, actualName).atPath(s".${actualName}").atToken(nameSpan)
+                DecodeError
+                  .FieldCountMismatch(fields.length, fieldIndex + 1)
+                  .atPath(s".${actualName}")
+                  .atToken(nameSpan)
               )
             else
-              val value = decodeChecked(expectedField.schema)
-                .mapErr(_.atPath(s".${expectedField.name}"))
-                .ok
-              values(fieldIndex) = value.value.asInstanceOf[AnyRef]
+              val expectedField = fields(fieldIndex)
+              if actualName != expectedField.name then
+                raise(
+                  DecodeError
+                    .FieldOrderMismatch(expectedField.name, actualName)
+                    .atPath(s".${actualName}")
+                    .atToken(nameSpan)
+                )
+              else
+                val value = decodeChecked(expectedField.schema)
+                  .mapErr(_.atPath(s".${expectedField.name}"))
+                  .ok
+                values(fieldIndex) = value.value.asInstanceOf[AnyRef]
+        }
+        if parsed.fieldCount != fields.length then
+          raise(
+            DecodeError
+              .FieldCountMismatch(fields.length, parsed.fieldCount)
+              .atToken(parsed.closingSpan)
+          )
+        else
+          val asTuple = Tuple.fromIArray(IArray.unsafeFromArray(values))
+          Checked(NamedTuple.build()(asTuple))
       }
-      if parsed.fieldCount != fields.length then
-        raise(
-          DecodeError
-            .FieldCountMismatch(fields.length, parsed.fieldCount)
-            .atToken(parsed.closingSpan)
-        )
-      else
-        val asTuple = Tuple.fromIArray(IArray.unsafeFromArray(values))
-        Checked(NamedTuple.build()(asTuple))
     }
 
     def onVector(element: Schema): Result[Checked[Vector[Any]], DecodeError] =
@@ -598,34 +673,6 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
     def onNull(): Result[Checked[Null], DecodeError] = decodeNull(Checked(_))
 
   private object exprVisitor extends DecodingVisitor[Checked[Expr]]:
-    // NOTE: currently as we make one decoder per token stream then there is no issue
-    // of leaked shared state.
-    // if we switch to a design based on a reusable decoder for multiple token streams
-    // (e.g. batch processing), then either state explicit thread unsafe, or
-    // we should switch to concurrent safe state.
-    private var identCount = 0
-    private val perfectNamesCache = mutable.HashMap[String, Int]()
-    private def nameId(name: String): Int =
-      perfectNamesCache.getOrElseUpdate(name, {
-        try identCount
-        finally identCount += 1
-      })
-    private val namesRing = mutable.ArrayDeque.empty[Array[Long]]
-    private def borrowNames(): Array[Long] =
-      // non-atomic pull, but this should be single-threaded code
-      if namesRing.isEmpty then
-        // if identCount grows beyond ~4100 then
-        // BitSet is likely to resize and create huge arrays that could start impacting memory
-        // seriously.
-        // could explore if time requires a staged design that scales from bitset to hashset
-        // beyond a certain number of unique names.
-        new Array[Long](64)
-      else
-        val arr = namesRing.removeHead()
-        java.util.Arrays.fill(arr, 0L)
-        arr
-    private def releaseNames(bitmask: Array[Long]): Unit =
-      namesRing.append(bitmask)
     private val AnyNamedTupleSchemaFields                     = IArray.empty[Schema.Field]
     final def inferExpr(): Result[Checked[Expr], DecodeError] =
       currentToken() match
@@ -652,27 +699,22 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
 
     def onNamedTuple(
         fields: IArray[Schema.Field]
-    ): Result[Checked[Expr], DecodeError] = {
-      val names    = IArray.newBuilder[String]
-      val elements = IArray.newBuilder[Expr]
-      val unsafeMask = borrowNames()
-      val seenNames = mutable.BitSet.fromBitMaskNoCopy(unsafeMask)
-      try
-        Result {
-          val buf = parseNamedTupleStructure(allowEmpty = false) { (name, nameSpan, _) =>
-            val id = nameId(name)
-            if seenNames.contains(id) || { seenNames.addOne(id); false } then
-              raise(DecodeError.DuplicateField(name).atPath(s".${name}").atToken(nameSpan))
-            val elem = inferExpr().mapErr(_.atPath(s".${name}")).ok
-            names += name
-            elements += elem.value
-          }
-          val _ = buf.closingSpan // consume result
-          val _ = buf.fieldCount  // consume result
-          Checked(Expr.NamedTupleExpr(names.result(), elements.result()))
+    ): Result[Checked[Expr], DecodeError] = withNames { seenNames =>
+      Result {
+        val names    = IArray.newBuilder[String]
+        val elements = IArray.newBuilder[Expr]
+        val buf      = parseNamedTupleStructure(allowEmpty = false) { (name, nameSpan, _) =>
+          val id = nameId(name)
+          if seenNames.contains(id) || { seenNames.addOne(id); false } then
+            raise(DecodeError.DuplicateField(name).atPath(s".${name}").atToken(nameSpan))
+          val elem = inferExpr().mapErr(_.atPath(s".${name}")).ok
+          names += name
+          elements += elem.value
+        }
+        val _ = buf.closingSpan // consume result
+        val _ = buf.fieldCount  // consume result
+        Checked(Expr.NamedTupleExpr(names.result(), elements.result()))
       }
-      finally
-        releaseNames(unsafeMask)
     }
 
     def onVector(element: Schema): Result[Checked[Expr], DecodeError] = Result {
