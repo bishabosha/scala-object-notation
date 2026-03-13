@@ -490,12 +490,10 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
   private def borrowNames(): SharedBitSet =
     // non-atomic pull, but this should be single-threaded code
     if namesRing.isEmpty then
-      // if identCount grows beyond ~4100 then
-      // BitSet is likely to resize and create huge arrays that could start impacting memory
-      // seriously.
-      // could explore if time requires a staged design that scales from bitset to hashset
-      // beyond a certain number of unique names.
-      new SharedBitSet(new Array[Long](64))
+      // if identCount grows to >= 1024 then
+      // SharedBitSet will resize on observing the 1024th identifier and not pool.
+      // this is probably rare? unless we have an attacker.
+      new SharedBitSet(new Array[Long](16))
     else
       val unsafeMask = namesRing.removeHead()
       unsafeMask.clear()
