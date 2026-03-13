@@ -498,6 +498,18 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
       arr
   private def releaseNames(bitmask: Array[Long]): Unit =
     namesRing.append(bitmask)
+  private val tupleBuilders = mutable.HashMap.empty[Int, mutable.ArrayDeque[Array[AnyRef]]]
+  private def borrowTupleBuilder(size: Int): Array[AnyRef] =
+    val deque = tupleBuilders.getOrElseUpdate(size, mutable.ArrayDeque.empty[Array[AnyRef]])
+    if deque.isEmpty then new Array[AnyRef](size)
+    else deque.removeHead()
+  private def releaseTupleBuilder(builder: Array[AnyRef]): Unit =
+    tupleBuilders(builder.length).append(builder)
+  private inline def withTupleBuilder[A](size: Int)(inline body: Array[AnyRef] => A): A = {
+    val builder = borrowTupleBuilder(size)
+    try body(builder)
+    finally releaseTupleBuilder(builder)
+  }
   private val schemaStateCache = mutable.HashMap.empty[IArray[Schema.Field], Boolean]
   private def validateFields(
       fields: IArray[Schema.Field]
@@ -591,46 +603,45 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
     def onNamedTuple(
         fields: IArray[Schema.Field]
     ): Result[Checked[AnyNamedTuple], DecodeError] = {
-      Result {
-        if !validateFields(fields) then raise(DecodeError.DuplicateField(duplicateField(fields)))
-        val values = new Array[AnyRef](fields.length)
+      withTupleBuilder(fields.length) { builder =>
+        Result {
+          if !validateFields(fields) then raise(DecodeError.DuplicateField(duplicateField(fields)))
 
-        // FIXME: need to lift out or else the boundary/break optimisation fails.
-        val emptyFields = fields.isEmpty
+          // FIXME: need to lift out or else the boundary/break optimisation fails.
+          val emptyFields = fields.isEmpty
 
-        val parsed = parseNamedTupleStructure(allowEmpty = emptyFields) {
-          (actualName, nameSpan, fieldIndex) =>
-            if fieldIndex >= fields.length then
-              raise(
-                DecodeError
-                  .FieldCountMismatch(fields.length, fieldIndex + 1)
-                  .atPath(s".${actualName}")
-                  .atToken(nameSpan)
-              )
-            else
-              val expectedField = fields(fieldIndex)
-              if actualName != expectedField.name then
+          val parsed = parseNamedTupleStructure(allowEmpty = emptyFields) {
+            (actualName, nameSpan, fieldIndex) =>
+              if fieldIndex >= fields.length then
                 raise(
                   DecodeError
-                    .FieldOrderMismatch(expectedField.name, actualName)
+                    .FieldCountMismatch(fields.length, fieldIndex + 1)
                     .atPath(s".${actualName}")
                     .atToken(nameSpan)
                 )
               else
-                val value = decodeChecked(expectedField.schema)
-                  .mapErr(_.atPath(s".${expectedField.name}"))
-                  .ok
-                values(fieldIndex) = value.value.asInstanceOf[AnyRef]
+                val expectedField = fields(fieldIndex)
+                if actualName != expectedField.name then
+                  raise(
+                    DecodeError
+                      .FieldOrderMismatch(expectedField.name, actualName)
+                      .atPath(s".${actualName}")
+                      .atToken(nameSpan)
+                  )
+                else
+                  val value = decodeChecked(expectedField.schema)
+                    .mapErr(_.atPath(s".${expectedField.name}"))
+                    .ok
+                  builder(fieldIndex) = value.value.asInstanceOf[AnyRef]
+          }
+          if parsed.fieldCount != fields.length then
+            raise(
+              DecodeError
+                .FieldCountMismatch(fields.length, parsed.fieldCount)
+                .atToken(parsed.closingSpan)
+            )
+          else Checked(NamedTuple.build()(Tuple.fromArray(builder)))
         }
-        if parsed.fieldCount != fields.length then
-          raise(
-            DecodeError
-              .FieldCountMismatch(fields.length, parsed.fieldCount)
-              .atToken(parsed.closingSpan)
-          )
-        else
-          val asTuple = Tuple.fromIArray(IArray.unsafeFromArray(values))
-          Checked(NamedTuple.build()(asTuple))
       }
     }
 
