@@ -865,7 +865,7 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
 
   private def decodeStringAtom(): Result[String, DecodeError] = Result:
     currentToken() match
-      case Token.StringLit(_, value, _) =>
+      case Token.StringLit(value = value) =>
         advance()
         value
       case other =>
@@ -873,47 +873,77 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
 
   private def decodeChar[A](wrap: Char => A): Result[A, DecodeError] = Result:
     currentToken() match
-      case Token.CharLit(_, value, _) =>
+      case Token.CharLit(value = value) =>
         advance()
         wrap(value)
       case other =>
         raise(DecodeError.ExpectedChar(other).atToken(other.span))
 
-  private def decodeInt[A](wrap: Int => A): Result[A, DecodeError] =
+  private def decodeInt[A](wrap: Int => A): Result[A, DecodeError] = Result:
     decodeSigned(
-      literal = { case Token.IntLit(_, value, _) =>
-        value
+      literal = {
+        case Token.IntLit(value = value) => value
+        case token => raise(DecodeError.ExpectedInt(token).atToken(token.span))
       },
-      expected = token => DecodeError.ExpectedInt(token).atToken(token.span),
+      negator = -1,
+      one = 1,
+      prod = _ * _,
       wrap = wrap
     )
 
-  private def decodeLong[A](wrap: Long => A): Result[A, DecodeError] =
+  private def decodeLong[A](wrap: Long => A): Result[A, DecodeError] = Result:
     decodeSigned(
-      literal = { case Token.LongLit(_, value, _) =>
-        value
+      literal = {
+        case Token.LongLit(value = value) => value
+        case token => raise(DecodeError.ExpectedLong(token).atToken(token.span))
       },
-      expected = token => DecodeError.ExpectedLong(token).atToken(token.span),
+      negator = -1L,
+      one = 1L,
+      prod = _ * _,
       wrap = wrap
     )
 
-  private def decodeFloat[A](wrap: Float => A): Result[A, DecodeError] =
+  private def decodeFloat[A](wrap: Float => A): Result[A, DecodeError] = Result:
     decodeSigned(
-      literal = { case Token.FloatLit(_, value, _) =>
-        value
+      literal = {
+        case Token.FloatLit(value = value) => value
+        case token => raise(DecodeError.ExpectedFloat(token).atToken(token.span))
       },
-      expected = token => DecodeError.ExpectedFloat(token).atToken(token.span),
+      negator = -1.0f,
+      one = 1.0f,
+      prod = _ * _,
       wrap = wrap
     )
 
-  private def decodeDouble[A](wrap: Double => A): Result[A, DecodeError] =
+  private def decodeDouble[A](wrap: Double => A): Result[A, DecodeError] = Result:
     decodeSigned(
-      literal = { case Token.DoubleLit(_, value, _) =>
-        value
+      literal = {
+        case Token.DoubleLit(value = value) => value
+        case token => raise(DecodeError.ExpectedDouble(token).atToken(token.span))
       },
-      expected = token => DecodeError.ExpectedDouble(token).atToken(token.span),
+      negator = -1.0,
+      one = 1.0,
+      prod = _ * _,
       wrap = wrap
     )
+
+  private inline def decodeSigned[T, A](
+      inline literal: Token => T,
+      inline negator: T,
+      inline one: T,
+      inline prod: (T, T) => T,
+      wrap: T => A
+  ): Resulting[A, DecodeError] =
+    val sign =
+      currentToken() match
+        case Token.Minus(_) =>
+          advance()
+          negator
+        case _ =>
+          one
+    val t = literal(currentToken())
+    advance()
+    wrap(prod(sign, t))
 
   private def decodeBoolean[A](wrap: Boolean => A): Result[A, DecodeError] =
     Result:
@@ -934,30 +964,6 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
         wrap(null)
       case other =>
         raise(DecodeError.ExpectedNull(other).atToken(other.span))
-
-  private val PFTombStone: Function[Any, Any] = { case _ =>
-    PFTombStone
-  }
-  private def decodeSigned[T, A](
-      literal: PartialFunction[Token, T],
-      expected: Token => DecodeError,
-      wrap: T => A
-  )(using num: Numeric[T]): Result[A, DecodeError] = Result:
-    currentToken() match
-      case Token.Minus(_) =>
-        advance()
-        val token = currentToken()
-        literal.applyOrElse(token, PFTombStone) match
-          case PFTombStone     => raise(expected(token))
-          case t: T @unchecked =>
-            advance()
-            wrap(num.negate(t))
-      case token =>
-        literal.applyOrElse(token, PFTombStone) match
-          case PFTombStone     => raise(expected(token))
-          case t: T @unchecked =>
-            advance()
-            wrap(t)
 
   private def expectVal(): Result[Unit, DecodeError] = Result:
     currentToken() match
