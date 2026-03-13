@@ -19,4 +19,4 @@ jobs:
       with:
         distribution: temurin
         java-version: 17
-    - run: ./mill __.test
+    - run: ./mill mill.scalalib.scalafmt/checkFormatAll && ./mill __.test

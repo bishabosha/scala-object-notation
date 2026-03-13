@@ -26,8 +26,7 @@ enum Token:
   def span: Span
 
 object Token:
-  lazy val Empty: Token           = Token.Eof(Span(0, 0, 0))
-  lazy val EmptyFile: List[Token] = Token.Empty :: Nil
+  lazy val Empty: Token = Token.Eof(Span(0, 0, 0))
 
-  given Internal.HasDefault[Token]:
+  private[scalanotation] given DefaultToken: Internal.HasDefault[Token]:
     val Default: Token = Token.Empty

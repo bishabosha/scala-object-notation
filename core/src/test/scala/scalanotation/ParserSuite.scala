@@ -125,8 +125,21 @@ class ParserSuite extends FunSuite:
 
   test("reject wrong root declaration name"):
     val input   = "val data = (x = 1)"
-    val decoded = Parser.parseValueAs[Int](input, name = "other")
+    val decoded = Parser.parseValueAs[Expr](input, name = "other")
     assertEquals(decoded, Result.Err(DecodeError.UnexpectedRoot("data")))
+
+  test("reject duplicate field decls with Expr"):
+    val input   = "val data = (x = 1, x = 2)"
+    val decoded = Parser.parseValueAs[Expr](input, name = "data")
+    assertEquals(decoded.getErr.rootCause, DecodeError.DuplicateField("x"))
+    assertEquals(decoded.getErr.path, List(".x"))
+
+  test("reject duplicate field decls with Expr, nested"):
+    val input   = "val data = (a = 1, b = (x = true, x = null), c = 3)"
+    val decoded = Parser.parseValueAs[Expr](input, name = "data")
+    assertEquals(decoded.getErr.rootCause, DecodeError.DuplicateField("x"))
+    assertEquals(decoded.getErr.path, List(".b", ".x"))
+    assertEquals(decoded.getErr.span.map(span => (span.line, span.column)), Some((1, 35)))
 
   test("decode directly into a typed named tuple"):
     type Data =
