@@ -482,21 +482,23 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
         finally identCount += 1
       }
     )
-  private val namesRing                  = mutable.ArrayDeque.empty[Array[Long]]
-  private def borrowNames(): Array[Long] =
+  private val namesRing = mutable.ArrayDeque.empty[SharedBitSet]
+  class SharedBitSet(@constructorOnly elems0: Array[Long]) extends mutable.BitSet(elems0):
+    val initialSize            = elems0.length
+    def resized: Boolean       = initialSize != this.elems.length
+    override def clear(): Unit = java.util.Arrays.fill(this.elems, 0L)
+  private def borrowNames(): SharedBitSet =
     // non-atomic pull, but this should be single-threaded code
     if namesRing.isEmpty then
-      // if identCount grows beyond ~4100 then
-      // BitSet is likely to resize and create huge arrays that could start impacting memory
-      // seriously.
-      // could explore if time requires a staged design that scales from bitset to hashset
-      // beyond a certain number of unique names.
-      new Array[Long](64)
+      // if identCount grows to >= 1024 then
+      // SharedBitSet will resize on observing the 1024th identifier and not pool.
+      // this is probably rare? unless we have an attacker.
+      new SharedBitSet(new Array[Long](16))
     else
-      val arr = namesRing.removeHead()
-      java.util.Arrays.fill(arr, 0L)
-      arr
-  private def releaseNames(bitmask: Array[Long]): Unit =
+      val unsafeMask = namesRing.removeHead()
+      unsafeMask.clear()
+      unsafeMask
+  private def releaseNames(bitmask: SharedBitSet): Unit =
     namesRing.append(bitmask)
   private val schemaStateCache = mutable.HashMap.empty[IArray[Schema.Field], Boolean]
   private def validateFields(
@@ -529,9 +531,9 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
 
   private inline def withNames[A](inline body: mutable.BitSet => A): A = {
     val unsafeMask = borrowNames()
-    val seenNames  = mutable.BitSet.fromBitMaskNoCopy(unsafeMask)
-    try body(seenNames)
-    finally releaseNames(unsafeMask)
+    try body(unsafeMask)
+    finally
+      if !unsafeMask.resized then releaseNames(unsafeMask)
   }
 
   def decodeRoot[T](
