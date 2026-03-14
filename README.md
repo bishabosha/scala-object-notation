@@ -50,7 +50,7 @@ Not supported:
 - methods, classes, imports, or type definitions
 - general collection syntax beyond `Vector(...)`
 - string interpolation or advanced string forms
-- decoding to arbitrary Scala types
+- automatic derivation for arbitrary Scala types
 
 ## Public API
 
@@ -94,6 +94,40 @@ Supported typed decoding targets currently include:
 - `Option[T]` for nullable values
 - `Expr`
 - `String`, `Char`, `Int`, `Long`, `Float`, `Double`, and `Boolean`
+- custom types built from one existing `TaggedSchema` transformation
+
+Custom types are extended by mapping from one already-supported schema. This stays compositional, so a custom string decoder can be used inside `Vector[T]`, named tuples, and other custom decoders.
+
+```scala
+import scalanotation.*
+import steps.result.Result
+
+import java.time.LocalDate
+
+enum Mode:
+  case Fast, Safe
+
+final case class User(name: String, age: Int)
+
+given TaggedSchema[Mode] =
+  summon[TaggedSchema[String]].emap {
+    case "fast" => Result.Ok(Mode.Fast)
+    case "safe" => Result.Ok(Mode.Safe)
+    case other  => Result.Err(DecodeError.Custom(s"Unknown mode '$other'"))
+  }
+
+given TaggedSchema[LocalDate] =
+  summon[TaggedSchema[String]].emap { raw =>
+    try Result.Ok(LocalDate.parse(raw))
+    catch case _: java.time.format.DateTimeParseException =>
+      Result.Err(DecodeError.Custom(s"Invalid ISO date '$raw'"))
+  }
+
+given TaggedSchema[User] =
+  summon[TaggedSchema[(name: String, age: Int)]].map(data => User(data.name, data.age))
+
+type Data = (owner: User, mode: Mode, dates: Vector[LocalDate])
+```
 
 Typed decoding is strict:
 
