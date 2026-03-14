@@ -97,7 +97,10 @@ Supported typed decoding targets currently include:
 - custom types built from one existing `TaggedSchema` transformation
 - direct case class decoding via `TaggedSchema.caseClass[T]`
 
-Custom types are extended by mapping from one already-supported schema. This stays compositional, so a custom string decoder can be used inside `Vector[T]`, named tuples, and other custom decoders.
+Custom types are supported either by mapping an existing schema, or
+derived decoders exist for product types.
+
+**Mapping an existing Schema**
 
 ```scala
 import scalanotation.*
@@ -108,51 +111,35 @@ import java.time.LocalDate
 enum Mode:
   case Fast, Safe
 
-final case class User(name: String, age: Int)
-
 given TaggedSchema[Mode] =
   summon[TaggedSchema[String]].emap {
     case "fast" => Result.Ok(Mode.Fast)
     case "safe" => Result.Ok(Mode.Safe)
     case other  => Result.Err(DecodeError.Custom(s"Unknown mode '$other'"))
   }
-
-given TaggedSchema[LocalDate] =
-  summon[TaggedSchema[String]].emap { raw =>
-    try Result.Ok(LocalDate.parse(raw))
-    catch case _: java.time.format.DateTimeParseException =>
-      Result.Err(DecodeError.Custom(s"Invalid ISO date '$raw'"))
-  }
-
-given TaggedSchema[User] =
-  summon[TaggedSchema[(name: String, age: Int)]].map(data => User(data.name, data.age))
-
-type Data = (owner: User, mode: Mode, dates: Vector[LocalDate])
 ```
 
-For product types, you can also derive a decoder that constructs the case class directly instead of decoding through an intermediate named tuple value:
+**Derived Schemas**
+For product types, you can also derive a decoder automatically, composed of existing decoders
+for each field, that constructs the value directly:
 
 ```scala
 import scalanotation.*
-import steps.result.Result
+import steps.result.Result, Result.eval.raise
 
 import java.time.LocalDate
 
-final case class Metadata(created: LocalDate, tags: Vector[String])
-final case class User(name: String, age: Int, metadata: Metadata)
+case class Metadata(created: LocalDate, tags: Vector[String]) derives TaggedSchema
+case class User(name: String, age: Int, metadata: Metadata) derives TaggedSchema
 
 given TaggedSchema[LocalDate] =
   summon[TaggedSchema[String]].emap { raw =>
-    try Result.Ok(LocalDate.parse(raw))
-    catch case _: java.time.format.DateTimeParseException =>
-      Result.Err(DecodeError.Custom(s"Invalid ISO date '$raw'"))
+    Result:
+      try LocalDate.parse(raw)
+      catch case _: java.time.format.DateTimeParseException =>
+        raise(DecodeError.Custom(s"Invalid ISO date '$raw'"))
   }
-
-given TaggedSchema[Metadata] = TaggedSchema.caseClass[Metadata]
-given TaggedSchema[User] = TaggedSchema.caseClass[User]
 ```
-
-This still composes through field-level `TaggedSchema` instances, so nested case classes, vectors, options, and custom atomic decoders continue to work.
 
 Typed decoding is strict:
 

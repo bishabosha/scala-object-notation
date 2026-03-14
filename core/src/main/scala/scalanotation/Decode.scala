@@ -22,13 +22,8 @@ import TokenDecoder.describe
 import scalanotation.TaggedSchema.MappedSchema
 import Internal.showType
 
-object DecodeError:
-  private[scalanotation] given AdaptTokenError: Conversion[Tokenizer.TokenError, DecodeError]:
-    def apply(err: Tokenizer.TokenError): DecodeError =
-      DecodeError.UnexpectedToken(err)
-
 enum DecodeError:
-  case UnexpectedToken(err: Tokenizer.TokenError)
+  case TokenFormat(message: String)
   case ExpectedExpression(found: Token)
   case ExpectedNamedTuple(found: Expr | Token)
   case ExpectedVector(found: Expr | Token)
@@ -81,8 +76,7 @@ enum DecodeError:
 
   def format: String =
     this match
-      case DecodeError.UnexpectedToken(err) =>
-        err.format
+      case TokenFormat(message)              => message
       case DecodeError.ExpectedNumber(found) =>
         s"Expected a number but found ${describe(found)}"
       case DecodeError.ExpectedExpression(found) =>
@@ -481,7 +475,12 @@ private[scalanotation] object Internal {
     def Default: T
   }
 
-  class TokenStream[T: Internal.HasDefault as default](@constructorOnly tokens: List[T]) {
+  /** a small abstraction around token iteration - but perhaps we would change to a fused char
+    * reader with tokenizer.
+    */
+  private[scalanotation] class TokenStream[T: Internal.HasDefault as default](
+      @constructorOnly tokens: List[T]
+  ) {
     private var curr: T       = uninitialized
     private var rest: List[T] = tokens
     advance() // initialize curr and rest
@@ -505,13 +504,15 @@ private[scalanotation] object Internal {
 }
 
 private[scalanotation] object TokenDecoder:
-  def decode[T](
+
+  private[scalanotation] def decode[T](
       tokens: List[Token],
       rootName: String,
       decoder: TaggedSchema[T]
   ): Result[T, DecodeError] =
     TokenDecoder(tokens).decodeRoot(decoder, rootName)
-  def decodeAnyRoot[T](
+
+  private[scalanotation] def decodeAnyRoot[T](
       tokens: List[Token],
       decoder: TaggedSchema[T]
   ): Result[SourceFile[T], DecodeError] =
@@ -577,7 +578,8 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
       }
     )
   private val namesRing = mutable.ArrayDeque.empty[SharedBitSet]
-  class SharedBitSet(@constructorOnly elems0: Array[Long]) extends mutable.BitSet(elems0):
+  private final class SharedBitSet(@constructorOnly elems0: Array[Long])
+      extends mutable.BitSet(elems0):
     val initialSize            = elems0.length
     def resized: Boolean       = initialSize != this.elems.length
     override def clear(): Unit = java.util.Arrays.fill(this.elems, 0L)
@@ -755,13 +757,13 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
     def onString(): Result[String, DecodeError] = decodeString(
       identity
     )
-    def onChar(): Result[Char, DecodeError]     = decodeChar(identity)
-    def onInt(): Result[Int, DecodeError]       = decodeInt(identity)
-    def onLong(): Result[Long, DecodeError]     = decodeLong(identity)
-    def onFloat(): Result[Float, DecodeError]   = decodeFloat(identity)
-    def onDouble(): Result[Double, DecodeError] = decodeDouble(identity)
+    def onChar(): Result[Char, DecodeError]       = decodeChar(identity)
+    def onInt(): Result[Int, DecodeError]         = decodeInt(identity)
+    def onLong(): Result[Long, DecodeError]       = decodeLong(identity)
+    def onFloat(): Result[Float, DecodeError]     = decodeFloat(identity)
+    def onDouble(): Result[Double, DecodeError]   = decodeDouble(identity)
     def onBoolean(): Result[Boolean, DecodeError] = decodeBoolean(identity)
-    def onNull(): Result[Null, DecodeError] = decodeNull(identity)
+    def onNull(): Result[Null, DecodeError]       = decodeNull(identity)
 
   private object exprVisitor extends DecodingVisitor[Expr]:
     private val AnyNamedTupleSchemaFields = IArray.empty[Schema.Field[?]]

@@ -2,7 +2,7 @@ package scalanotation
 
 final case class Span(offset: Int, line: Int, column: Int)
 
-enum Token:
+private[scalanotation] enum Token:
   case ValKw(span: Span)
   case VectorId(span: Span)
   case TrueKw(span: Span)
@@ -25,7 +25,7 @@ enum Token:
 
   def span: Span
 
-object Token:
+private[scalanotation] object Token:
   lazy val Empty: Token = Token.Eof(Span(0, 0, 0))
 
   private[scalanotation] given DefaultToken: Internal.HasDefault[Token]:

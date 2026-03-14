@@ -332,9 +332,8 @@ class ParserSuite extends FunSuite:
 
     given TaggedSchema[LocalDate] =
       summon[TaggedSchema[String]].emap { raw =>
-        Result.catchException({
-          case _: java.time.format.DateTimeParseException =>
-            DecodeError.Custom(s"Invalid ISO date '$raw'")
+        Result.catchException({ case _: java.time.format.DateTimeParseException =>
+          DecodeError.Custom(s"Invalid ISO date '$raw'")
         }) {
           LocalDate.parse(raw)
         }
@@ -358,7 +357,7 @@ class ParserSuite extends FunSuite:
         |)
         |""".stripMargin
 
-    val decoded = Parser.parseValueAs[Data](input, name = "data")
+    val decoded        = Parser.parseValueAs[Data](input, name = "data")
     val expected: Data =
       (
         owner = User("Ada", 41),
@@ -374,8 +373,9 @@ class ParserSuite extends FunSuite:
     given TaggedSchema[LocalDate] =
       summon[TaggedSchema[String]].emap { raw =>
         try Result.Ok(LocalDate.parse(raw))
-        catch case _: java.time.format.DateTimeParseException =>
-          Result.Err(DecodeError.Custom(s"Invalid ISO date '$raw'"))
+        catch
+          case _: java.time.format.DateTimeParseException =>
+            Result.Err(DecodeError.Custom(s"Invalid ISO date '$raw'"))
       }
 
     type Data = (dates: Vector[LocalDate])
@@ -419,9 +419,8 @@ class ParserSuite extends FunSuite:
 
     given TaggedSchema[LocalDate] =
       summon[TaggedSchema[String]].emap { raw =>
-        Result.catchException({
-          case _: java.time.format.DateTimeParseException =>
-            DecodeError.Custom(s"Invalid ISO date '$raw'")
+        Result.catchException({ case _: java.time.format.DateTimeParseException =>
+          DecodeError.Custom(s"Invalid ISO date '$raw'")
         }) {
           LocalDate.parse(raw)
         }
@@ -438,7 +437,7 @@ class ParserSuite extends FunSuite:
         |)
         |""".stripMargin
 
-    val decoded = Parser.parseValueAs[User](input, name = "data")
+    val decoded  = Parser.parseValueAs[User](input, name = "data")
     val expected = User(
       name = "Ada",
       age = 41,
@@ -458,9 +457,8 @@ class ParserSuite extends FunSuite:
 
     given TaggedSchema[LocalDate] =
       summon[TaggedSchema[String]].emap { raw =>
-        Result.catchException({
-          case _: java.time.format.DateTimeParseException =>
-            DecodeError.Custom(s"Invalid ISO date '$raw'")
+        Result.catchException({ case _: java.time.format.DateTimeParseException =>
+          DecodeError.Custom(s"Invalid ISO date '$raw'")
         }) {
           LocalDate.parse(raw)
         }
