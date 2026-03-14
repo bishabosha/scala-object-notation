@@ -29,6 +29,3 @@ object Expr:
   extension (expr: Expr)
     def decodeAs[T: TaggedSchema as decoder]: Result[T, DecodeError] =
       decoder.decode(expr)
-
-    def checkedAs[T: TaggedSchema as decoder]: Result[Checked[T], DecodeError] =
-      decoder.checked(expr)

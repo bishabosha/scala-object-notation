@@ -8,34 +8,25 @@ import scala.collection.mutable
 
 object Parser:
   object quick:
-    def parse(input: String): SourceFile[Expr] =
+    def parse(input: String, debugTokens: Boolean = false): SourceFile[Expr] =
       // TODO: add an okOrElse method that can recover the error somehow or return the value.
-      parseAs[Expr](input) match
+      parseAs[Expr](input, debugTokens) match
         case Result.Ok(value) => value
         case Result.Err(err)  => throw IllegalArgumentException(err.format)
 
   def parseAs[T: TaggedSchema as decoder](
-      input: String
+      input: String,
+      debugTokens: Boolean = false
   ): Result[SourceFile[T], DecodeError] =
     Result:
-      val tokens = Tokenizer.tokenize(input).ok
-      break(parseAs(tokens))
-
-  def parseAs[T: TaggedSchema as decoder](
-      input: List[Token]
-  ): Result[SourceFile[T], DecodeError] =
-    TokenDecoder.decodeAnyRoot(input, decoder)
+      val tokens = Tokenizer.tokenize(input, debugTokens).ok
+      break(TokenDecoder.decodeAnyRoot(tokens, decoder))
 
   def parseValueAs[T: TaggedSchema as decoder](
       input: String,
-      name: String
+      name: String,
+      debugTokens: Boolean = false
   ): Result[T, DecodeError] =
     Result:
-      val tokens = Tokenizer.tokenize(input).ok
-      break(parseValueAs(tokens, name))
-
-  def parseValueAs[T: TaggedSchema as decoder](
-      input: List[Token],
-      name: String
-  ): Result[T, DecodeError] =
-    TokenDecoder.decode(input, name, decoder)
+      val tokens = Tokenizer.tokenize(input, debugTokens).ok
+      break(TokenDecoder.decode(tokens, name, decoder))

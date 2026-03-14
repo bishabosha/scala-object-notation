@@ -314,6 +314,173 @@ class ParserSuite extends FunSuite:
         )
       case Result.Ok(value) => fail(s"Expected a decode failure, got $value")
 
+  test("decode custom types from single-level TaggedSchema transformations"):
+    import java.time.LocalDate
+
+    enum Mode:
+      case Fast, Safe
+
+    final case class User(name: String, age: Int)
+    final case class Schedule(dates: Vector[LocalDate])
+
+    given TaggedSchema[Mode] =
+      summon[TaggedSchema[String]].emap {
+        case "fast" => Result.Ok(Mode.Fast)
+        case "safe" => Result.Ok(Mode.Safe)
+        case other  => Result.Err(DecodeError.Custom(s"Unknown mode '$other'"))
+      }
+
+    given TaggedSchema[LocalDate] =
+      summon[TaggedSchema[String]].emap { raw =>
+        Result.catchException({ case _: java.time.format.DateTimeParseException =>
+          DecodeError.Custom(s"Invalid ISO date '$raw'")
+        }) {
+          LocalDate.parse(raw)
+        }
+      }
+
+    given TaggedSchema[User] =
+      summon[TaggedSchema[(name: String, age: Int)]].map { data =>
+        User(name = data.name, age = data.age)
+      }
+
+    given TaggedSchema[Schedule] =
+      summon[TaggedSchema[Vector[LocalDate]]].map(Schedule(_))
+
+    type Data = (owner: User, mode: Mode, schedule: Schedule)
+
+    val input =
+      """val data = (
+        |  owner = (name = "Ada", age = 41),
+        |  mode = "fast",
+        |  schedule = Vector("2026-03-14", "2026-03-15")
+        |)
+        |""".stripMargin
+
+    val decoded        = Parser.parseValueAs[Data](input, name = "data")
+    val expected: Data =
+      (
+        owner = User("Ada", 41),
+        mode = Mode.Fast,
+        schedule = Schedule(Vector(LocalDate.parse("2026-03-14"), LocalDate.parse("2026-03-15")))
+      )
+
+    assertEquals(decoded, Result.Ok(expected))
+
+  test("report composed paths for custom string decoders inside vectors"):
+    import java.time.LocalDate
+
+    given TaggedSchema[LocalDate] =
+      summon[TaggedSchema[String]].emap { raw =>
+        try Result.Ok(LocalDate.parse(raw))
+        catch
+          case _: java.time.format.DateTimeParseException =>
+            Result.Err(DecodeError.Custom(s"Invalid ISO date '$raw'"))
+      }
+
+    type Data = (dates: Vector[LocalDate])
+
+    val input =
+      """val data = (
+        |  dates = Vector("2026-03-14", "2026-99-99")
+        |)
+        |""".stripMargin
+
+    val obtained = Parser.parseValueAs[Data](input, name = "data")
+    obtained match
+      case Result.Err(error) =>
+        assertEquals(error.path, List(".dates", "[1]"))
+        assertEquals(error.rootCause, DecodeError.Custom("Invalid ISO date '2026-99-99'"))
+      case Result.Ok(value) => fail(s"Expected a decode failure, got $value")
+
+  test("report custom sequence validation errors at the wrapped field"):
+    final case class NonEmptyInts(values: Vector[Int])
+
+    given TaggedSchema[NonEmptyInts] =
+      summon[TaggedSchema[Vector[Int]]].emap { values =>
+        if values.nonEmpty then Result.Ok(NonEmptyInts(values))
+        else Result.Err(DecodeError.Custom("Expected at least one integer"))
+      }
+
+    type Data = (items: NonEmptyInts)
+
+    val obtained = Parser.parseValueAs[Data]("val data = (items = Vector())", name = "data")
+    obtained match
+      case Result.Err(error) =>
+        assertEquals(error.path, List(".items"))
+        assertEquals(error.rootCause, DecodeError.Custom("Expected at least one integer"))
+      case Result.Ok(value) => fail(s"Expected a decode failure, got $value")
+
+  test("decode directly into nested case classes"):
+    import java.time.LocalDate
+
+    final case class Metadata(created: LocalDate, tags: Vector[String]) derives TaggedSchema
+    final case class User(name: String, age: Int, metadata: Metadata) derives TaggedSchema
+
+    given TaggedSchema[LocalDate] =
+      summon[TaggedSchema[String]].emap { raw =>
+        Result.catchException({ case _: java.time.format.DateTimeParseException =>
+          DecodeError.Custom(s"Invalid ISO date '$raw'")
+        }) {
+          LocalDate.parse(raw)
+        }
+      }
+
+    val input =
+      """val data = (
+        |  name = "Ada",
+        |  age = 41,
+        |  metadata = (
+        |    created = "2026-03-14",
+        |    tags = Vector("compiler", "scala")
+        |  )
+        |)
+        |""".stripMargin
+
+    val decoded  = Parser.parseValueAs[User](input, name = "data")
+    val expected = User(
+      name = "Ada",
+      age = 41,
+      metadata = Metadata(
+        created = LocalDate.parse("2026-03-14"),
+        tags = Vector("compiler", "scala")
+      )
+    )
+
+    assertEquals(decoded, Result.Ok(expected))
+
+  test("report nested paths for direct case class decoders"):
+    import java.time.LocalDate
+
+    final case class Metadata(created: LocalDate)
+    final case class User(metadata: Metadata)
+
+    given TaggedSchema[LocalDate] =
+      summon[TaggedSchema[String]].emap { raw =>
+        Result.catchException({ case _: java.time.format.DateTimeParseException =>
+          DecodeError.Custom(s"Invalid ISO date '$raw'")
+        }) {
+          LocalDate.parse(raw)
+        }
+      }
+
+    given TaggedSchema[Metadata] = TaggedSchema.caseClass[Metadata]
+    given TaggedSchema[User]     = TaggedSchema.caseClass[User]
+
+    val input =
+      """val data = (
+        |  metadata = (
+        |    created = "bad-date"
+        |  )
+        |)
+        |""".stripMargin
+
+    Parser.parseValueAs[User](input, name = "data") match
+      case Result.Err(error) =>
+        assertEquals(error.path, List(".metadata", ".created"))
+        assertEquals(error.rootCause, DecodeError.Custom("Invalid ISO date 'bad-date'"))
+      case Result.Ok(value) => fail(s"Expected a decode failure, got $value")
+
   test("no decoder is derived for Any"):
     val errors = typeCheckErrors("summon[scalanotation.TaggedSchema[Any]]")
     assert(errors.nonEmpty)

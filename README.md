@@ -50,7 +50,7 @@ Not supported:
 - methods, classes, imports, or type definitions
 - general collection syntax beyond `Vector(...)`
 - string interpolation or advanced string forms
-- decoding to arbitrary Scala types
+- automatic derivation for arbitrary Scala types
 
 ## Public API
 
@@ -94,6 +94,52 @@ Supported typed decoding targets currently include:
 - `Option[T]` for nullable values
 - `Expr`
 - `String`, `Char`, `Int`, `Long`, `Float`, `Double`, and `Boolean`
+- custom types built from one existing `TaggedSchema` transformation
+- direct case class decoding via `TaggedSchema.caseClass[T]`
+
+Custom types are supported either by mapping an existing schema, or
+derived decoders exist for product types.
+
+**Mapping an existing Schema**
+
+```scala
+import scalanotation.*
+import steps.result.Result
+
+import java.time.LocalDate
+
+enum Mode:
+  case Fast, Safe
+
+given TaggedSchema[Mode] =
+  summon[TaggedSchema[String]].emap {
+    case "fast" => Result.Ok(Mode.Fast)
+    case "safe" => Result.Ok(Mode.Safe)
+    case other  => Result.Err(DecodeError.Custom(s"Unknown mode '$other'"))
+  }
+```
+
+**Derived Schemas**
+For product types, you can also derive a decoder automatically, composed of existing decoders
+for each field, that constructs the value directly:
+
+```scala
+import scalanotation.*
+import steps.result.Result, Result.eval.raise
+
+import java.time.LocalDate
+
+case class Metadata(created: LocalDate, tags: Vector[String]) derives TaggedSchema
+case class User(name: String, age: Int, metadata: Metadata) derives TaggedSchema
+
+given TaggedSchema[LocalDate] =
+  summon[TaggedSchema[String]].emap { raw =>
+    Result:
+      try LocalDate.parse(raw)
+      catch case _: java.time.format.DateTimeParseException =>
+        raise(DecodeError.Custom(s"Invalid ISO date '$raw'"))
+  }
+```
 
 Typed decoding is strict:
 

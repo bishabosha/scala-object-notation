@@ -1,7 +1,6 @@
 package scalanotation
 
 import scala.collection.mutable
-import Tokenizer.TokenError
 import steps.result.Result
 
 private final class Tokenizer(input: String):
@@ -21,15 +20,21 @@ private final class Tokenizer(input: String):
       extends Exception
       with scala.util.control.NoStackTrace
 
-  def tokenize(): Result[List[Token], TokenError] =
+  def tokenize(debug: Boolean): Result[List[Token], DecodeError] =
     Result.catchException({ case e: ParseException =>
-      TokenError(e.message, e.span)
+      DecodeError.TokenFormat(e.message).atToken(e.span)
     }):
       val tokens = List.newBuilder[Token]
       while !isAtEnd do
         skipTrivia()
-        if !isAtEnd then tokens += nextToken()
-      tokens += Token.Eof(currentSpan())
+        if !isAtEnd then
+          val token = nextToken()
+          tokens += token
+          if debug then
+            Console.err.println(token) // TODO: should allow logger customization in the future
+      val finalToken = Token.Eof(currentSpan())
+      tokens += finalToken
+      if debug then Console.err.println(finalToken)
       tokens.result()
 
   private def nextToken(): Token =
@@ -349,9 +354,7 @@ private final class Tokenizer(input: String):
   private def fail(message: String, span: Span): Nothing =
     throw ParseException(message, span)
 
-object Tokenizer:
-  case class TokenError(message: String, span: Span):
-    def format: String = s"${span.line}:${span.column}: $message"
-
-  def tokenize(input: String): Result[List[Token], TokenError] =
-    new Tokenizer(input).tokenize()
+private[scalanotation] object Tokenizer:
+  // TODO: made private so we could evolve the token stream format without breaking the public API.
+  def tokenize(input: String, debug: Boolean): Result[List[Token], DecodeError] =
+    Tokenizer(input).tokenize(debug)

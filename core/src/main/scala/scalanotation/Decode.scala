@@ -9,6 +9,7 @@ import scala.annotation.constructorOnly
 import scala.annotation.implicitNotFound
 import scala.annotation.publicInBinary
 import scala.collection.mutable
+import scala.deriving.Mirror
 import scala.util.NotGiven
 import scala.util.boundary
 
@@ -18,14 +19,11 @@ import NamedTuple.AnyNamedTuple
 import NamedTuple.NamedTuple as SNamedTuple
 import TaggedSchema.Builders.AtPath
 import TokenDecoder.describe
-
-object DecodeError:
-  private[scalanotation] given AdaptTokenError: Conversion[Tokenizer.TokenError, DecodeError]:
-    def apply(err: Tokenizer.TokenError): DecodeError =
-      DecodeError.UnexpectedToken(err)
+import scalanotation.TaggedSchema.MappedSchema
+import Internal.showType
 
 enum DecodeError:
-  case UnexpectedToken(err: Tokenizer.TokenError)
+  case TokenFormat(message: String)
   case ExpectedExpression(found: Token)
   case ExpectedNamedTuple(found: Expr | Token)
   case ExpectedVector(found: Expr | Token)
@@ -51,6 +49,7 @@ enum DecodeError:
   case UnexpectedField(fieldName: String)
   case UnexpectedRoot(rootName: String)
   case DuplicateField(fieldName: String)
+  case Custom(message: String)
   case AtPath(segment: String, cause: DecodeError)
   case AtToken(tokenSpan: Span, cause: DecodeError)
 
@@ -77,8 +76,7 @@ enum DecodeError:
 
   def format: String =
     this match
-      case DecodeError.UnexpectedToken(err) =>
-        err.format
+      case TokenFormat(message)              => message
       case DecodeError.ExpectedNumber(found) =>
         s"Expected a number but found ${describe(found)}"
       case DecodeError.ExpectedExpression(found) =>
@@ -128,6 +126,8 @@ enum DecodeError:
         s"Unexpected root declaration '$rootName'"
       case DecodeError.DuplicateField(fieldName) =>
         s"Duplicate field '$fieldName'"
+      case DecodeError.Custom(message) =>
+        message
       case DecodeError.AtPath(segment, cause) =>
         def loop(cause: DecodeError, acc: List[String]): String =
           cause match
@@ -142,9 +142,9 @@ enum DecodeError:
       case DecodeError.AtToken(tokenSpan, cause) =>
         s"${tokenSpan.line}:${tokenSpan.column}: ${cause.format}"
 
-enum Schema:
-  case NamedTuple(fields: IArray[Schema.Field])
-  case Vector(element: Schema)
+private[scalanotation] enum Schema:
+  case NamedTuple[A](fields: IArray[Schema.Field[?]], build: Array[AnyRef] => A)
+  case Vector[A](element: TaggedSchema[A])
   case AnyExpr
   case String
   case Char
@@ -153,11 +153,11 @@ enum Schema:
   case Float
   case Double
   case Boolean
-  case Option(inner: Schema)
+  case Option[A](inner: TaggedSchema[A])
 
-  def validate(expr: Expr): Result[Checked[Any], DecodeError] = Result:
+  def validate(expr: Expr): Result[Any, DecodeError] = Result:
     this match
-      case Schema.NamedTuple(fields) =>
+      case Schema.NamedTuple(fields, build) =>
         expr match
           case Expr.NamedTupleExpr(names, elements) =>
             if names.length != fields.length then
@@ -171,135 +171,201 @@ enum Schema:
               if fieldName != field.name then
                 raise(DecodeError.FieldOrderMismatch(field.name, fieldName))
 
-              val value =
-                field.schema
-                  .validate(elements(index))
-                  .mapErr(_.atPath(s".${field.name}"))
-                  .ok
-              values(index) = value.value.asInstanceOf[AnyRef]
+              val value = field.decoder
+                .decode(elements(index))
+                .mapErr(_.atPath(s".${field.name}"))
+                .ok
+              values(index) = value.asInstanceOf[AnyRef]
               index += 1
 
-            Checked(scala.NamedTuple.build()(Tuple.fromIArray(IArray.unsafeFromArray(values))))
+            build(values)
           case other =>
             raise(DecodeError.ExpectedNamedTuple(other))
-
-      case Schema.Vector(elementSchema) =>
+      case Schema.Vector(elementDecoder) =>
         expr match
           case Expr.VectorExpr(elements) =>
             val values = scala.Vector.newBuilder[Any]
             var index  = 0
             while index < elements.length do
-              val value = elementSchema
-                .validate(elements(index))
+              val value = elementDecoder
+                .decode(elements(index))
                 .mapErr(_.atPath(s"[$index]"))
                 .ok
-              values += value.value
+              values += value
               index += 1
-            Checked(values.result())
+            values.result()
           case other =>
             raise(DecodeError.ExpectedVector(other))
 
       case Schema.AnyExpr =>
-        Checked(expr)
+        expr
 
       case Schema.String =>
         expr match
-          case Expr.StringConstant(value) => Checked(value)
+          case Expr.StringConstant(value) => value
           case other                      => raise(DecodeError.ExpectedString(other))
 
       case Schema.Char =>
         expr match
-          case Expr.CharConstant(value) => Checked(value)
+          case Expr.CharConstant(value) => value
           case other                    => raise(DecodeError.ExpectedChar(other))
 
       case Schema.Int =>
         expr match
-          case Expr.IntConstant(value) => Checked(value)
+          case Expr.IntConstant(value) => value
           case other                   => raise(DecodeError.ExpectedInt(other))
 
       case Schema.Long =>
         expr match
-          case Expr.LongConstant(value) => Checked(value)
+          case Expr.LongConstant(value) => value
           case other                    => raise(DecodeError.ExpectedLong(other))
 
       case Schema.Float =>
         expr match
-          case Expr.FloatConstant(value) => Checked(value)
+          case Expr.FloatConstant(value) => value
           case other                     => raise(DecodeError.ExpectedFloat(other))
 
       case Schema.Double =>
         expr match
-          case Expr.DoubleConstant(value) => Checked(value)
+          case Expr.DoubleConstant(value) => value
           case other                      => raise(DecodeError.ExpectedDouble(other))
 
       case Schema.Boolean =>
         expr match
-          case Expr.BooleanConstant(value) => Checked(value)
+          case Expr.BooleanConstant(value) => value
           case other                       => raise(DecodeError.ExpectedBoolean(other))
 
-      case Schema.Option(inner) =>
+      case Schema.Option(innerDecoder) =>
         expr match
-          case Expr.NullConstant => Checked(None)
-          case other             =>
-            val value = inner.validate(other).ok
-            Checked(Some(value.value))
+          case Expr.NullConstant => None
+          case other             => Some(innerDecoder.decode(other).ok)
 
-object Schema:
-  final case class Field(name: String, schema: Schema)
-
-opaque type Checked[+T] = T
-object Checked:
-  private[scalanotation] def apply[T](value: T): Checked[T] = value
-  extension [T](value: Checked[T]) def value: T             = value
+private[scalanotation] object Schema:
+  final case class Field[A](name: String, decoder: TaggedSchema[A]):
+    def schema: Schema = decoder.schema
 
 sealed trait TaggedSchema[T]:
-  def schema: Schema
-
-  final def checked(expr: Expr): Result[Checked[T], DecodeError] =
-    schema.validate(expr).map(_.asInstanceOf[Checked[T]])
+  private[scalanotation] def schema: Schema
 
   final def decode(expr: Expr): Result[T, DecodeError] =
-    schema.validate(expr).map(_.value.asInstanceOf[T])
+    TaggedSchema.finalize(this, schema.validate(expr))
+
+  final def map[U](f: T => U): TaggedSchema[U] =
+    TaggedSchema.mapped(this)(f)
+
+  final def emap[U](f: T => Result[U, DecodeError]): TaggedSchema[U] =
+    TaggedSchema.mappedResult(this)(f)
 
 object TaggedSchema {
-  given TaggedSchema[Expr]:
-    val schema: Schema = Schema.AnyExpr
+  private[scalanotation] final def finalize[Z, T](
+      decoder: TaggedSchema[T],
+      checked: Result[Z, DecodeError]
+  ): Result[T, DecodeError] =
+    decoder match
+      case mapped: MappedSchema[T] => checked.flatMap(mapped.decodeValidated)
+      case _                       => checked.asInstanceOf[Result[T, DecodeError]]
 
-  given TaggedSchema[String]:
-    val schema: Schema = Schema.String
+  private[scalanotation] sealed trait MappedSchema[T] extends TaggedSchema[T]:
+    private[scalanotation] def decodeValidated[Z](value: Z): Result[T, DecodeError]
 
-  given TaggedSchema[Char]:
-    val schema: Schema = Schema.Char
+  private def identity[T](schema0: Schema): TaggedSchema[T] =
+    new TaggedSchema[T]:
+      val schema: Schema = schema0
 
-  given TaggedSchema[Int]:
-    val schema: Schema = Schema.Int
+  def mapped[A, B](base: TaggedSchema[A])(transform: A => B): TaggedSchema[B] =
+    mappedResult(base)(value => Result.Ok(transform(value)))
 
-  given TaggedSchema[Long]:
-    val schema: Schema = Schema.Long
+  def mappedResult[A, B](base: TaggedSchema[A])(
+      transform: A => Result[B, DecodeError]
+  ): TaggedSchema[B] =
+    new MappedSchema[B] {
+      val schema: Schema = base.schema
 
-  given TaggedSchema[Float]:
-    val schema: Schema = Schema.Float
+      private[scalanotation] def decodeValidated[Z](
+          value: Z
+      ): Result[B, DecodeError] = Result:
+        val raw: A = base match
+          case mapped: MappedSchema[A] =>
+            mapped.decodeValidated(value).ok
+          case _ =>
+            value.asInstanceOf[A]
+        break(transform(raw))
+    }
 
-  given TaggedSchema[Double]:
-    val schema: Schema = Schema.Double
+  inline def derived[T](using mirror: Mirror.Of[T]): TaggedSchema[T] =
+    inline mirror match
+      case m: Mirror.ProductOf[T] =>
+        compiletime.summonFrom({
+          case atPath: Builders.ProductFieldsAtPath[
+                "",
+                m.MirroredElemLabels,
+                m.MirroredElemTypes
+              ] =>
+            caseClass[T](using m)(using atPath)
+        })
+      case _ => compiletime.error("Cannot derive TaggedSchema for non-product type " + showType[T])
 
-  given TaggedSchema[Boolean]:
-    val schema: Schema = Schema.Boolean
+  def caseClass[T](using mirror: Mirror.ProductOf[T])(
+      using
+      atPath: Builders.ProductFieldsAtPath["", mirror.MirroredElemLabels, mirror.MirroredElemTypes]
+  ): TaggedSchema[T] =
+    identity(
+      Schema.NamedTuple(
+        IArray.from(atPath.fields),
+        Internal.caseClassBuilder[T]
+      )
+    )
 
-  given OptionDecoder: [T] => (atPath: AtPath["", Option[T]]) => TaggedSchema[Option[T]]:
-    val schema = atPath.schema
+  given ExprSchema: TaggedSchema[Expr] = identity(Schema.AnyExpr)
 
-  given VectorDecoder: [T] => (atPath: AtPath["", Vector[T]]) => TaggedSchema[Vector[T]]:
-    val schema = atPath.schema
+  given StringSchema: TaggedSchema[String] = identity(Schema.String)
 
-  given NamedTupleDecoder: [NT <: NamedTuple.AnyNamedTuple]
-    => (atPath: AtPath["", NT]) => TaggedSchema[NT]:
-    val schema = atPath.schema
+  given CharSchema: TaggedSchema[Char] = identity(Schema.Char)
+
+  given IntSchema: TaggedSchema[Int] = identity(Schema.Int)
+
+  given LongSchema: TaggedSchema[Long] = identity(Schema.Long)
+
+  given FloatSchema: TaggedSchema[Float] = identity(Schema.Float)
+
+  given DoubleSchema: TaggedSchema[Double] = identity(Schema.Double)
+
+  given BooleanSchema: TaggedSchema[Boolean] = identity(Schema.Boolean)
+
+  given OptionSchema: [T] => (atPath: AtPath["", Option[T]]) => TaggedSchema[Option[T]] =
+    atPath.decoder
+
+  given VectorSchema: [T] => (atPath: AtPath["", Vector[T]]) => TaggedSchema[Vector[T]] =
+    atPath.decoder
+
+  given NamedTupleSchema: [NT <: NamedTuple.AnyNamedTuple]
+    => (atPath: AtPath["", NT]) => TaggedSchema[NT] =
+    atPath.decoder
 
   object Builders {
-    import Internal.showType
+    import AtPath.decoder
 
     inline def formatPath[Path <: String]: String = ("'" + compiletime.constValue[Path] + "'")
+
+    opaque type ProductFieldsAtPath[Path <: String, Labels <: Tuple, Values <: Tuple] =
+      List[Schema.Field[?]]
+
+    object ProductFieldsAtPath:
+      import compiletime.ops.string.+
+
+      extension [Path <: String, Labels <: Tuple, Values <: Tuple](
+          atPath: ProductFieldsAtPath[Path, Labels, Values]
+      ) def fields: List[Schema.Field[?]] = atPath
+
+      given Empty: [Path <: String] => ProductFieldsAtPath[Path, EmptyTuple, EmptyTuple] = Nil
+
+      given Cons: [Path <: String, Label <: String, Value, Labels <: Tuple, Values <: Tuple]
+        => (valueOf: ValueOf[Label])
+        => (atPath: AtPath[Path + "." + Label, Value])
+        => (rest: ProductFieldsAtPath[Path, Labels, Values])
+        => ProductFieldsAtPath[Path, Label *: Labels, Value *: Values] =
+        val decoder = atPath.decoder
+        Schema.Field(valueOf.value, decoder) :: rest.fields
 
     opaque type NonNestedOption[Path <: String, T] = Unit
 
@@ -315,19 +381,22 @@ object TaggedSchema {
             ()
         }
 
-    opaque type AtPath[Path <: String, T] = Schema | List[Schema.Field]
+    opaque type AtPath[Path <: String, T] = TaggedSchema[T] | List[Schema.Field[?]]
 
     object AtPath:
       import compiletime.ops.string.+
 
       extension [Path <: String, T](schema: AtPath[Path, T])
-        def schema: Schema = schema match
-          case s: Schema              => s
-          case ls: List[Schema.Field] => Schema.NamedTuple(IArray.from(ls))
+        def decoder: TaggedSchema[T] = schema match
+          case d: TaggedSchema[T]        => d
+          case ls: List[Schema.Field[?]] =>
+            identity(Schema.NamedTuple(IArray.from(ls), Internal.buildNamedTuple))
+
+        def schema: Schema = decoder.schema
 
       inline given DefaultAtPath: [Path <: String, T] => AtPath[Path, T] =
         compiletime.summonFrom {
-          case d: TaggedSchema[T] => d.schema
+          case d: TaggedSchema[T] => d
           case _                  =>
             compiletime.error(
               "at path " + formatPath[Path] + ": Could not find TaggedSchema[" + showType[T] + "]."
@@ -337,20 +406,21 @@ object TaggedSchema {
       given VectorAtPath: [Path <: String, T]
         => (wrapped: AtPath[Path + "[]", T])
         => AtPath[Path, Vector[T]] =
-        Schema.Vector(wrapped.schema)
+        identity(Schema.Vector(wrapped.decoder))
 
       given OptionAtPath: [Path <: String, T]
         => NonNestedOption[Path, T]
         => (wrapped: AtPath[Path, T])
         => AtPath[Path, Option[T]] =
-        Schema.Option(wrapped.schema)
+        identity(Schema.Option(wrapped.decoder))
 
       given NamedTupleCons: [Path <: String, N <: String, V, Ns <: Tuple, Vs <: Tuple]
         => (vn: ValueOf[N], ap: AtPath[Path + "." + N, V], rest: AtPath[Path, NamedTuple[Ns, Vs]])
         => AtPath[Path, NamedTuple[N *: Ns, V *: Vs]] =
         rest match
-          case fs: List[Schema.Field] =>
-            Schema.Field(vn.value, ap.schema) :: fs
+          case fs: List[Schema.Field[?]] =>
+            val decoder: TaggedSchema[V] = ap.decoder
+            Schema.Field(vn.value, decoder) :: fs
           case _ =>
             throw IllegalArgumentException(
               "Expected the rest of the named tuple to be a NamedTuple schema"
@@ -376,8 +446,26 @@ private[scalanotation] object Internal {
     inline def break[A](a: A)(using Label[A]): A = boundary.break(a)
   }
 
+  val buildNamedTuple: (values: Array[AnyRef]) => AnyNamedTuple = values =>
+    val asTuple = Tuple.fromIArray(IArray.unsafeFromArray(values))
+    NamedTuple.build()(asTuple)
+
   // TODO: add to standard library!
   inline def showType[T] = ${ showTypeImpl[T] }
+
+  private object ArrProduct extends Product:
+    private var arr: Array[AnyRef]                      = uninitialized
+    def push(arr: Array[AnyRef])[A](f: Product => A): A =
+      this.arr = arr
+      try f(this)
+      finally this.arr = null
+    def productArity: Int            = arr.length
+    def productElement(n: Int): Any  = arr(n)
+    def canEqual(that: Any): Boolean = false
+  def arrAsProduct[A](f: Product => A)(arr: Array[AnyRef]): A =
+    ArrProduct.push(arr)(f)
+  def caseClassBuilder[T](using m: Mirror.ProductOf[T]): Array[AnyRef] => T =
+    arrAsProduct(m.fromProduct)
 
   def showTypeImpl[T: Type](using Quotes): QExpr[String] =
     import quotes.reflect.*
@@ -387,7 +475,12 @@ private[scalanotation] object Internal {
     def Default: T
   }
 
-  class TokenStream[T: Internal.HasDefault as default](@constructorOnly tokens: List[T]) {
+  /** a small abstraction around token iteration - but perhaps we would change to a fused char
+    * reader with tokenizer.
+    */
+  private[scalanotation] class TokenStream[T: Internal.HasDefault as default](
+      @constructorOnly tokens: List[T]
+  ) {
     private var curr: T       = uninitialized
     private var rest: List[T] = tokens
     advance() // initialize curr and rest
@@ -411,13 +504,15 @@ private[scalanotation] object Internal {
 }
 
 private[scalanotation] object TokenDecoder:
-  def decode[T](
+
+  private[scalanotation] def decode[T](
       tokens: List[Token],
       rootName: String,
       decoder: TaggedSchema[T]
   ): Result[T, DecodeError] =
     TokenDecoder(tokens).decodeRoot(decoder, rootName)
-  def decodeAnyRoot[T](
+
+  private[scalanotation] def decodeAnyRoot[T](
       tokens: List[Token],
       decoder: TaggedSchema[T]
   ): Result[SourceFile[T], DecodeError] =
@@ -483,7 +578,8 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
       }
     )
   private val namesRing = mutable.ArrayDeque.empty[SharedBitSet]
-  class SharedBitSet(@constructorOnly elems0: Array[Long]) extends mutable.BitSet(elems0):
+  private final class SharedBitSet(@constructorOnly elems0: Array[Long])
+      extends mutable.BitSet(elems0):
     val initialSize            = elems0.length
     def resized: Boolean       = initialSize != this.elems.length
     override def clear(): Unit = java.util.Arrays.fill(this.elems, 0L)
@@ -500,9 +596,9 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
       unsafeMask
   private def releaseNames(bitmask: SharedBitSet): Unit =
     namesRing.append(bitmask)
-  private val schemaStateCache = mutable.HashMap.empty[IArray[Schema.Field], Boolean]
+  private val schemaStateCache = mutable.HashMap.empty[IArray[Schema.Field[?]], Boolean]
   private def validateFields(
-      fields: IArray[Schema.Field]
+      fields: IArray[Schema.Field[?]]
   ): Boolean =
     schemaStateCache.getOrElseUpdate(
       fields,
@@ -519,7 +615,7 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
       }
     )
   private def duplicateField(
-      fields: IArray[Schema.Field]
+      fields: IArray[Schema.Field[?]]
   ): String =
     // called after validation fails so we can use a slower path
     fields
@@ -547,7 +643,7 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
       expectEquals().ok
       val value = decodeTaggedAs(schema).ok
       expectEof().ok
-      value.value
+      value
 
   def decodeAnyRoot[T](
       schema: TaggedSchema[T]
@@ -558,12 +654,15 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
       expectEquals().ok
       val value = decodeTaggedAs(schema).ok
       expectEof().ok
-      SourceFile(ValDecl(declaredName, value.value))
+      SourceFile(ValDecl(declaredName, value))
 
   private trait DecodingVisitor[A]:
-    def onNamedTuple(fields: IArray[Schema.Field]): Result[A, DecodeError]
-    def onVector(element: Schema): Result[A, DecodeError]
-    def onOption(inner: Schema): Result[A, DecodeError]
+    def onNamedTuple[B](
+        fields: IArray[Schema.Field[?]],
+        build: Array[AnyRef] => B
+    ): Result[A, DecodeError]
+    def onVector[B](element: TaggedSchema[B]): Result[A, DecodeError]
+    def onOption[B](inner: TaggedSchema[B]): Result[A, DecodeError]
     def onString(): Result[A, DecodeError]
     def onChar(): Result[A, DecodeError]
     def onInt(): Result[A, DecodeError]
@@ -573,113 +672,107 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
     def onBoolean(): Result[A, DecodeError]
     def onNull(): Result[A, DecodeError]
 
-  private object checkedVisitor extends DecodingVisitor[Checked[Any]]:
-    def decodeChecked(schema: Schema): Result[Checked[Any], DecodeError] =
+  private object checkedVisitor extends DecodingVisitor[Any]:
+    def decodeChecked(schema: Schema): Result[Any, DecodeError] =
       schema match
-        case Schema.NamedTuple(fields) => onNamedTuple(fields)
-        case Schema.Vector(element)    => onVector(element)
-        case Schema.String             => onString()
-        case Schema.Char               => onChar()
-        case Schema.Int                => onInt()
-        case Schema.Long               => onLong()
-        case Schema.Float              => onFloat()
-        case Schema.Double             => onDouble()
-        case Schema.Boolean            => onBoolean()
-        case Schema.Option(inner)      => onOption(inner)
-        case Schema.AnyExpr            =>
+        case Schema.NamedTuple(fields, build) => onNamedTuple(fields, build)
+        case Schema.Vector(element)           => onVector(element)
+        case Schema.String                    => onString()
+        case Schema.Char                      => onChar()
+        case Schema.Int                       => onInt()
+        case Schema.Long                      => onLong()
+        case Schema.Float                     => onFloat()
+        case Schema.Double                    => onDouble()
+        case Schema.Boolean                   => onBoolean()
+        case Schema.Option(inner)             => onOption(inner)
+        case Schema.AnyExpr                   =>
           // possible to decode some parts to typed, and have a nested part that is Expr
           exprVisitor.inferExpr()
 
-    def onNamedTuple(
-        fields: IArray[Schema.Field]
-    ): Result[Checked[AnyNamedTuple], DecodeError] = {
-      Result {
-        if !validateFields(fields) then
-          def dupErr = DecodeError.DuplicateField(duplicateField(fields))
-          raise(dupErr)
-        val values = new Array[AnyRef](fields.length)
+    def onNamedTuple[A](
+        fields: IArray[Schema.Field[?]],
+        factory: Array[AnyRef] => A
+    ): Result[A, DecodeError] = Result {
+      if !validateFields(fields) then
+        def dupErr = DecodeError.DuplicateField(duplicateField(fields))
+        raise(dupErr)
+      val values = new Array[AnyRef](fields.length)
 
-        // FIXME: need to lift out or else the boundary/break optimisation fails.
-        val emptyFields = fields.isEmpty
+      // FIXME: need to lift out or else the boundary/break optimisation fails.
+      val emptyFields = fields.isEmpty
 
-        val parsed = parseNamedTupleStructure(allowEmpty = emptyFields) {
-          (actualName, nameSpan, fieldIndex) =>
-            if fieldIndex >= fields.length then
-              def tooManyFieldsErr =
-                DecodeError
-                  .FieldCountMismatch(fields.length, fieldIndex + 1)
-                  .atPath(s".${actualName}")
-                  .atToken(nameSpan)
-              raise(tooManyFieldsErr)
+      val parsed = parseNamedTupleStructure(allowEmpty = emptyFields) {
+        (actualName, nameSpan, fieldIndex) =>
+          if fieldIndex >= fields.length then
+            def tooManyFieldsErr =
+              DecodeError
+                .FieldCountMismatch(fields.length, fieldIndex + 1)
+                .atPath(s".${actualName}")
+                .atToken(nameSpan)
+            raise(tooManyFieldsErr)
+          else
+            val expectedField = fields(fieldIndex)
+            if actualName != expectedField.name then
+              def wrongNameErr = DecodeError
+                .FieldOrderMismatch(expectedField.name, actualName)
+                .atPath(s".${actualName}")
+                .atToken(nameSpan)
+              raise(wrongNameErr)
             else
-              val expectedField = fields(fieldIndex)
-              if actualName != expectedField.name then
-                def wrongNameErr = DecodeError
-                  .FieldOrderMismatch(expectedField.name, actualName)
-                  .atPath(s".${actualName}")
-                  .atToken(nameSpan)
-                raise(wrongNameErr)
-              else
-                def decoded = decodeChecked(expectedField.schema)
-                  .mapErr(_.atPath(s".${expectedField.name}"))
-                val value = decoded.ok
-                values(fieldIndex) = value.value.asInstanceOf[AnyRef]
-        }
-        if parsed.fieldCount != fields.length then
-          def countErr = DecodeError
-            .FieldCountMismatch(fields.length, parsed.fieldCount)
-            .atToken(parsed.closingSpan)
-          raise(countErr)
-        else
-          val asTuple = Tuple.fromIArray(IArray.unsafeFromArray(values))
-          Checked(NamedTuple.build()(asTuple))
+              def decoded = decodeTaggedAs(expectedField.decoder)
+                .mapErr(_.atPath(s".${expectedField.name}"))
+              val value = decoded.ok
+              values(fieldIndex) = value.asInstanceOf[AnyRef]
       }
+      if parsed.fieldCount != fields.length then
+        def countErr = DecodeError
+          .FieldCountMismatch(fields.length, parsed.fieldCount)
+          .atToken(parsed.closingSpan)
+        raise(countErr)
+      factory(values)
     }
 
-    def onVector(element: Schema): Result[Checked[Vector[Any]], DecodeError] =
+    def onVector[A](element: TaggedSchema[A]): Result[Vector[A], DecodeError] =
       Result {
-        val values = scala.Vector.newBuilder[Any]
+        val values = scala.Vector.newBuilder[A]
         parseVectorStructure { indexInVector =>
-          val value = decodeChecked(element)
+          val value = decodeTaggedAs(element)
             .mapErr(_.atPath(s"[$indexInVector]"))
             .ok
-          values += value.value
+          values += value
         }
-        Checked(values.result())
+        values.result()
       }
 
-    def onOption(inner: Schema): Result[Checked[Option[Any]], DecodeError] =
+    def onOption[A](inner: TaggedSchema[A]): Result[Option[A], DecodeError] =
       Result {
         currentToken() match
           case Token.NullKw(_) =>
             advance()
-            Checked(None)
+            None
           case _ =>
-            val value = decodeChecked(inner).ok
-            Checked(Some(value.value))
+            Some(decodeTaggedAs(inner).ok)
       }
 
-    def onString(): Result[Checked[String], DecodeError] = decodeString(
-      Checked(_)
+    def onString(): Result[String, DecodeError] = decodeString(
+      identity
     )
-    def onChar(): Result[Checked[Char], DecodeError]     = decodeChar(Checked(_))
-    def onInt(): Result[Checked[Int], DecodeError]       = decodeInt(Checked(_))
-    def onLong(): Result[Checked[Long], DecodeError]     = decodeLong(Checked(_))
-    def onFloat(): Result[Checked[Float], DecodeError]   = decodeFloat(Checked(_))
-    def onDouble(): Result[Checked[Double], DecodeError] = decodeDouble(
-      Checked(_)
-    )
-    def onBoolean(): Result[Checked[Boolean], DecodeError] = decodeBoolean(
-      Checked(_)
-    )
-    def onNull(): Result[Checked[Null], DecodeError] = decodeNull(Checked(_))
+    def onChar(): Result[Char, DecodeError]       = decodeChar(identity)
+    def onInt(): Result[Int, DecodeError]         = decodeInt(identity)
+    def onLong(): Result[Long, DecodeError]       = decodeLong(identity)
+    def onFloat(): Result[Float, DecodeError]     = decodeFloat(identity)
+    def onDouble(): Result[Double, DecodeError]   = decodeDouble(identity)
+    def onBoolean(): Result[Boolean, DecodeError] = decodeBoolean(identity)
+    def onNull(): Result[Null, DecodeError]       = decodeNull(identity)
 
-  private object exprVisitor extends DecodingVisitor[Checked[Expr]]:
-    private val AnyNamedTupleSchemaFields                     = IArray.empty[Schema.Field]
-    final def inferExpr(): Result[Checked[Expr], DecodeError] =
+  private object exprVisitor extends DecodingVisitor[Expr]:
+    private val AnyNamedTupleSchemaFields = IArray.empty[Schema.Field[?]]
+
+    final def inferExpr(): Result[Expr, DecodeError] =
       currentToken() match
-        case Token.LParen(_)                    => onNamedTuple(AnyNamedTupleSchemaFields)
-        case Token.VectorId(_)                  => onVector(Schema.AnyExpr)
+        case Token.LParen(_)   => onNamedTuple(AnyNamedTupleSchemaFields, Internal.buildNamedTuple)
+        case Token.VectorId(_) =>
+          onVector(summon[TaggedSchema[Expr]])
         case Token.StringLit(_, _, _)           => onString()
         case Token.CharLit(_, _, _)             => onChar()
         case Token.IntLit(_, _, _)              => onInt()
@@ -699,9 +792,10 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
         case other =>
           Result.Err(DecodeError.ExpectedExpression(other).atToken(other.span))
 
-    def onNamedTuple(
-        fields: IArray[Schema.Field]
-    ): Result[Checked[Expr], DecodeError] = withNames { seenNames =>
+    def onNamedTuple[A](
+        fields: IArray[Schema.Field[?]],
+        factory: Array[AnyRef] => A
+    ): Result[Expr, DecodeError] = withNames { seenNames =>
       Result {
         val names    = IArray.newBuilder[String]
         val elements = IArray.newBuilder[Expr]
@@ -714,49 +808,49 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
           def tryExpr = inferExpr().mapErr(_.atPath(s".${name}"))
           val elem    = tryExpr.ok
           names += name
-          elements += elem.value
+          elements += elem
         }
         val _ = buf.closingSpan // consume result
         val _ = buf.fieldCount  // consume result
-        Checked(Expr.NamedTupleExpr(names.result(), elements.result()))
+        Expr.NamedTupleExpr(names.result(), elements.result())
       }
     }
 
-    def onVector(element: Schema): Result[Checked[Expr], DecodeError] = Result {
+    def onVector[A](element: TaggedSchema[A]): Result[Expr, DecodeError] = Result {
       val elements = IArray.newBuilder[Expr]
       parseVectorStructure { _ =>
-        elements += inferExpr().ok.value
+        elements += inferExpr().ok
       }
-      Checked(Expr.VectorExpr(elements.result()))
+      Expr.VectorExpr(elements.result())
     }
 
-    def onOption(inner: Schema): Result[Checked[Expr], DecodeError] =
+    def onOption[A](inner: TaggedSchema[A]): Result[Expr, DecodeError] =
       inferExpr()
 
-    def onString(): Result[Checked[Expr], DecodeError] =
-      decodeString(s => Checked(Expr.StringConstant(s)))
-    def onChar(): Result[Checked[Expr], DecodeError] =
-      decodeChar(c => Checked(Expr.CharConstant(c)))
-    def onInt(): Result[Checked[Expr], DecodeError] =
-      decodeInt(i => Checked(Expr.IntConstant(i)))
-    def onLong(): Result[Checked[Expr], DecodeError] =
-      decodeLong(l => Checked(Expr.LongConstant(l)))
-    def onFloat(): Result[Checked[Expr], DecodeError] =
-      decodeFloat(f => Checked(Expr.FloatConstant(f)))
-    def onDouble(): Result[Checked[Expr], DecodeError] =
-      decodeDouble(d => Checked(Expr.DoubleConstant(d)))
-    def onBoolean(): Result[Checked[Expr], DecodeError] =
-      decodeBoolean(b => Checked(Expr.BooleanConstant(b)))
-    def onNull(): Result[Checked[Expr], DecodeError] =
-      decodeNull(_ => Checked(Expr.NullConstant))
+    def onString(): Result[Expr, DecodeError] =
+      decodeString(s => Expr.StringConstant(s))
+    def onChar(): Result[Expr, DecodeError] =
+      decodeChar(c => Expr.CharConstant(c))
+    def onInt(): Result[Expr, DecodeError] =
+      decodeInt(i => Expr.IntConstant(i))
+    def onLong(): Result[Expr, DecodeError] =
+      decodeLong(l => Expr.LongConstant(l))
+    def onFloat(): Result[Expr, DecodeError] =
+      decodeFloat(f => Expr.FloatConstant(f))
+    def onDouble(): Result[Expr, DecodeError] =
+      decodeDouble(d => Expr.DoubleConstant(d))
+    def onBoolean(): Result[Expr, DecodeError] =
+      decodeBoolean(b => Expr.BooleanConstant(b))
+    def onNull(): Result[Expr, DecodeError] =
+      decodeNull(_ => Expr.NullConstant)
 
   private def decodeTaggedAs[T](
       schema: TaggedSchema[T]
-  ): Result[Checked[T], DecodeError] =
+  ): Result[T, DecodeError] =
     val result = schema.schema match
       case Schema.AnyExpr => exprVisitor.inferExpr()
       case other          => checkedVisitor.decodeChecked(other)
-    result.map(_.asInstanceOf[Checked[T]])
+    TaggedSchema.finalize(schema, result)
 
   private class NamedTupleParseResultBuf() {
     var fieldCount: Int   = uninitialized

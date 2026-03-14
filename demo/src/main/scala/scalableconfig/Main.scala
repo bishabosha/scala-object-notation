@@ -44,17 +44,10 @@ object Main:
     if nameIdx == -1 || nameIdx == args.length - 1 then
       System.err.println("Error: --name flag must be followed by a name")
       System.exit(1)
-    val name   = args(nameIdx + 1)
-    val input  = Files.readString(path)
-    val tokens = Tokenizer.tokenize(input) match
-      case Result.Ok(value)  => value
-      case Result.Err(error) =>
-        System.err.println(error.format)
-        sys.exit(1)
+    val name  = args(nameIdx + 1)
+    val input = Files.readString(path)
 
-    if showTokens then tokens.foreach(println)
-
-    val ast = Parser.parseAs[Expr](tokens) match
+    val ast = Parser.parseAs[Expr](input, debugTokens = showTokens) match
       case Result.Ok(value)  => value
       case Result.Err(error) =>
         System.err.println(error.format)
