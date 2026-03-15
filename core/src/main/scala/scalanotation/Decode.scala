@@ -144,6 +144,7 @@ enum DecodeError:
 
 private[scalanotation] enum Schema:
   case NamedTuple[A](fields: IArray[Schema.Field[?]], build: Array[AnyRef] => A)
+  case Sum(cases: Map[String, Schema.SumCase[?]])
   case Vector[A](element: TaggedSchema[A])
   case AnyExpr
   case String
@@ -153,9 +154,10 @@ private[scalanotation] enum Schema:
   case Float
   case Double
   case Boolean
+  case Nullary[A](value: A)
   case Option[A](inner: TaggedSchema[A])
 
-  def validate(expr: Expr): Result[Any, DecodeError] = Result:
+  private[scalanotation] def validate(expr: Expr): Result[Any, DecodeError] = Result:
     this match
       case Schema.NamedTuple(fields, build) =>
         expr match
@@ -179,6 +181,20 @@ private[scalanotation] enum Schema:
               index += 1
 
             build(values)
+          case other =>
+            raise(DecodeError.ExpectedNamedTuple(other))
+
+      case Schema.Sum(cases) =>
+        expr match
+          case Expr.NamedTupleExpr(names, elements) =>
+            if names.length != 1 then raise(DecodeError.FieldCountMismatch(1, names.length))
+
+            val caseName = names(0)
+            val value    = elements(0)
+            val sumCase  = cases.get(caseName) match
+              case Some(c) => c
+              case _       => raise(DecodeError.UnexpectedField(caseName).atPath(s".$caseName"))
+            sumCase.decoder.decode(value).mapErr(_.atPath(s".$caseName")).ok
           case other =>
             raise(DecodeError.ExpectedNamedTuple(other))
       case Schema.Vector(elementDecoder) =>
@@ -235,6 +251,11 @@ private[scalanotation] enum Schema:
           case Expr.BooleanConstant(value) => value
           case other                       => raise(DecodeError.ExpectedBoolean(other))
 
+      case Schema.Nullary(value) =>
+        expr match
+          case Expr.NullConstant => value
+          case other             => raise(DecodeError.ExpectedNull(other))
+
       case Schema.Option(innerDecoder) =>
         expr match
           case Expr.NullConstant => None
@@ -243,6 +264,8 @@ private[scalanotation] enum Schema:
 private[scalanotation] object Schema:
   final case class Field[A](name: String, decoder: TaggedSchema[A]):
     def schema: Schema = decoder.schema
+
+  final case class SumCase[A](name: String, decoder: TaggedSchema[A])
 
 sealed trait TaggedSchema[T]:
   private[scalanotation] def schema: Schema
@@ -296,18 +319,27 @@ object TaggedSchema {
     inline mirror match
       case m: Mirror.ProductOf[T] =>
         compiletime.summonFrom({
-          case atPath: Builders.ProductFieldsAtPath[
-                "",
-                m.MirroredElemLabels,
-                m.MirroredElemTypes
-              ] =>
-            caseClass[T](using m)(using atPath)
+          case _: (m.MirroredElemTypes =:= EmptyTuple) =>
+            val label = compiletime.constValue[m.MirroredLabel]
+            singleton[T](using m)(using ValueOf(label))
+          case _ =>
+            ofFields[T](using m)(
+              using compiletime.summonInline[
+                Builders.ProductFieldsAtPath["", m.MirroredElemLabels, m.MirroredElemTypes]
+              ]
+            )
         })
-      case _ => compiletime.error("Cannot derive TaggedSchema for non-product type " + showType[T])
+      case m: Mirror.SumOf[T] =>
+        ofCases[T](using m)(
+          using compiletime.summonInline[
+            Builders.SumCasesAtPath["", m.MirroredElemLabels, m.MirroredElemTypes]
+          ]
+        )
 
-  def caseClass[T](using mirror: Mirror.ProductOf[T])(
+  def ofFields[T](using mirror: Mirror.ProductOf[T])(
       using
-      atPath: Builders.ProductFieldsAtPath["", mirror.MirroredElemLabels, mirror.MirroredElemTypes]
+      atPath: Builders.ProductFieldsAtPath["", mirror.MirroredElemLabels, mirror.MirroredElemTypes],
+      hasFields: NotGiven[mirror.MirroredElemTypes =:= EmptyTuple]
   ): TaggedSchema[T] =
     identity(
       Schema.NamedTuple(
@@ -315,6 +347,20 @@ object TaggedSchema {
         Internal.caseClassBuilder[T]
       )
     )
+
+  def singleton[T](using mirror: Mirror.ProductOf[T])(
+      using label: ValueOf[mirror.MirroredLabel],
+      noFields: mirror.MirroredElemTypes =:= EmptyTuple
+  ): TaggedSchema[T] =
+    Builders.singleton(label.value)
+
+  def ofCases[T](using mirror: Mirror.SumOf[T])(
+      using
+      casesAtPath: Builders.SumCasesAtPath["", mirror.MirroredElemLabels, mirror.MirroredElemTypes]
+  ): TaggedSchema[T] =
+    var buf = Map.empty[String, Schema.SumCase[?]]
+    for sumCase <- casesAtPath.cases do buf = buf.updated(sumCase.name, sumCase)
+    identity(Schema.Sum(buf))
 
   given ExprSchema: TaggedSchema[Expr] = identity(Schema.AnyExpr)
 
@@ -344,8 +390,22 @@ object TaggedSchema {
 
   object Builders {
     import AtPath.decoder
+    import compiletime.{erasedValue, summonInline}
+    import ProductFieldsAtPath.{Cons as ProductFieldsCons, Empty as ProductFieldsEmpty}
+    import ProductFieldsAtPath.fields
 
     inline def formatPath[Path <: String]: String = ("'" + compiletime.constValue[Path] + "'")
+
+    private def nullaryCase[T](value: T): TaggedSchema[T] =
+      identity(Schema.Nullary(value))
+
+    def singleton[T](name: String)(using mirror: Mirror.ProductOf[T]): TaggedSchema[T] =
+      identity(
+        Schema.NamedTuple(
+          IArray(Schema.Field(name, nullaryCase(null))),
+          _ => mirror.fromProduct(EmptyTuple)
+        )
+      )
 
     opaque type ProductFieldsAtPath[Path <: String, Labels <: Tuple, Values <: Tuple] =
       List[Schema.Field[?]]
@@ -366,6 +426,50 @@ object TaggedSchema {
         => ProductFieldsAtPath[Path, Label *: Labels, Value *: Values] =
         val decoder = atPath.decoder
         Schema.Field(valueOf.value, decoder) :: rest.fields
+
+    opaque type SumCasesAtPath[Path <: String, Labels <: Tuple, Cases <: Tuple] =
+      List[Schema.SumCase[?]]
+
+    opaque type DerivedEnumCaseAtPath[Path <: String, T] = TaggedSchema[T]
+
+    object DerivedEnumCaseAtPath:
+      given Nullary[Path <: String, T](
+          using mirror: Mirror.ProductOf[T],
+          empty: mirror.MirroredElemTypes =:= EmptyTuple
+      ): DerivedEnumCaseAtPath[Path, T] =
+        nullaryCase(mirror.fromProduct(EmptyTuple))
+
+      given Product[Path <: String, T](
+          using mirror: Mirror.ProductOf[T],
+          fieldsAtPath: ProductFieldsAtPath[
+            Path,
+            mirror.MirroredElemLabels,
+            mirror.MirroredElemTypes
+          ],
+          nonEmpty: NotGiven[mirror.MirroredElemTypes =:= EmptyTuple]
+      ): DerivedEnumCaseAtPath[Path, T] =
+        identity(
+          Schema.NamedTuple(
+            IArray.from(fieldsAtPath.fields),
+            Internal.caseClassBuilder[T]
+          )
+        )
+
+    object SumCasesAtPath:
+      import compiletime.ops.string.+
+
+      extension [Path <: String, Labels <: Tuple, Cases <: Tuple](
+          atPath: SumCasesAtPath[Path, Labels, Cases]
+      ) def cases: List[Schema.SumCase[?]] = atPath
+
+      given Empty: [Path <: String] => SumCasesAtPath[Path, EmptyTuple, EmptyTuple] = Nil
+
+      given Cons: [Path <: String, Label <: String, Case, Labels <: Tuple, Cases <: Tuple]
+        => (valueOf: ValueOf[Label])
+        => (caseDecoder: DerivedEnumCaseAtPath[Path + "." + Label, Case])
+        => (rest: SumCasesAtPath[Path, Labels, Cases])
+        => SumCasesAtPath[Path, Label *: Labels, Case *: Cases] =
+        Schema.SumCase(valueOf.value, caseDecoder.decoder) :: rest.cases
 
     opaque type NonNestedOption[Path <: String, T] = Unit
 
@@ -661,6 +765,7 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
         fields: IArray[Schema.Field[?]],
         build: Array[AnyRef] => B
     ): Result[A, DecodeError]
+    def onSum(cases: Map[String, Schema.SumCase[?]]): Result[A, DecodeError]
     def onVector[B](element: TaggedSchema[B]): Result[A, DecodeError]
     def onOption[B](inner: TaggedSchema[B]): Result[A, DecodeError]
     def onString(): Result[A, DecodeError]
@@ -670,12 +775,14 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
     def onFloat(): Result[A, DecodeError]
     def onDouble(): Result[A, DecodeError]
     def onBoolean(): Result[A, DecodeError]
+    def onNullary[B](value: B): Result[A, DecodeError]
     def onNull(): Result[A, DecodeError]
 
   private object checkedVisitor extends DecodingVisitor[Any]:
     def decodeChecked(schema: Schema): Result[Any, DecodeError] =
       schema match
         case Schema.NamedTuple(fields, build) => onNamedTuple(fields, build)
+        case Schema.Sum(cases)                => onSum(cases)
         case Schema.Vector(element)           => onVector(element)
         case Schema.String                    => onString()
         case Schema.Char                      => onChar()
@@ -684,6 +791,7 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
         case Schema.Float                     => onFloat()
         case Schema.Double                    => onDouble()
         case Schema.Boolean                   => onBoolean()
+        case Schema.Nullary(value)            => onNullary(value)
         case Schema.Option(inner)             => onOption(inner)
         case Schema.AnyExpr                   =>
           // possible to decode some parts to typed, and have a nested part that is Expr
@@ -732,6 +840,37 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
       factory(values)
     }
 
+    def onSum(cases: Map[String, Schema.SumCase[?]]): Result[Any, DecodeError] =
+      Result {
+        var decoded: Any = null
+        val parsed       = parseNamedTupleStructure(allowEmpty = false) {
+          (actualName, nameSpan, fieldIndex) =>
+            if fieldIndex >= 1 then
+              def tooManyFieldsErr =
+                DecodeError
+                  .FieldCountMismatch(1, fieldIndex + 1)
+                  .atPath(s".${actualName}")
+                  .atToken(nameSpan)
+              raise(tooManyFieldsErr)
+            else
+              val sumCase = cases.get(actualName) match
+                case Some(c) => c
+                case _       =>
+                  def unexpectedCase =
+                    DecodeError
+                      .UnexpectedField(actualName)
+                      .atPath(s".${actualName}")
+                      .atToken(nameSpan)
+                  raise(unexpectedCase)
+              decoded = decodeTaggedAs(sumCase.decoder)
+                .mapErr(_.atPath(s".${actualName}"))
+                .ok
+        }
+        if parsed.fieldCount != 1 then
+          raise(DecodeError.FieldCountMismatch(1, parsed.fieldCount).atToken(parsed.closingSpan))
+        decoded
+      }
+
     def onVector[A](element: TaggedSchema[A]): Result[Vector[A], DecodeError] =
       Result {
         val values = scala.Vector.newBuilder[A]
@@ -757,13 +896,14 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
     def onString(): Result[String, DecodeError] = decodeString(
       identity
     )
-    def onChar(): Result[Char, DecodeError]       = decodeChar(identity)
-    def onInt(): Result[Int, DecodeError]         = decodeInt(identity)
-    def onLong(): Result[Long, DecodeError]       = decodeLong(identity)
-    def onFloat(): Result[Float, DecodeError]     = decodeFloat(identity)
-    def onDouble(): Result[Double, DecodeError]   = decodeDouble(identity)
-    def onBoolean(): Result[Boolean, DecodeError] = decodeBoolean(identity)
-    def onNull(): Result[Null, DecodeError]       = decodeNull(identity)
+    def onChar(): Result[Char, DecodeError]            = decodeChar(identity)
+    def onInt(): Result[Int, DecodeError]              = decodeInt(identity)
+    def onLong(): Result[Long, DecodeError]            = decodeLong(identity)
+    def onFloat(): Result[Float, DecodeError]          = decodeFloat(identity)
+    def onDouble(): Result[Double, DecodeError]        = decodeDouble(identity)
+    def onBoolean(): Result[Boolean, DecodeError]      = decodeBoolean(identity)
+    def onNullary[A](value: A): Result[A, DecodeError] = decodeNull(_ => value)
+    def onNull(): Result[Null, DecodeError]            = decodeNull(identity)
 
   private object exprVisitor extends DecodingVisitor[Expr]:
     private val AnyNamedTupleSchemaFields = IArray.empty[Schema.Field[?]]
@@ -827,6 +967,9 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
     def onOption[A](inner: TaggedSchema[A]): Result[Expr, DecodeError] =
       inferExpr()
 
+    def onSum(cases: Map[String, Schema.SumCase[?]]): Result[Expr, DecodeError] =
+      inferExpr()
+
     def onString(): Result[Expr, DecodeError] =
       decodeString(s => Expr.StringConstant(s))
     def onChar(): Result[Expr, DecodeError] =
@@ -841,6 +984,8 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
       decodeDouble(d => Expr.DoubleConstant(d))
     def onBoolean(): Result[Expr, DecodeError] =
       decodeBoolean(b => Expr.BooleanConstant(b))
+    def onNullary[A](value: A): Result[Expr, DecodeError] =
+      inferExpr()
     def onNull(): Result[Expr, DecodeError] =
       decodeNull(_ => Expr.NullConstant)
 
