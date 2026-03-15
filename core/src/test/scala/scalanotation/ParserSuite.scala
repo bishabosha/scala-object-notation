@@ -464,8 +464,8 @@ class ParserSuite extends FunSuite:
         }
       }
 
-    given TaggedSchema[Metadata] = TaggedSchema.caseClass[Metadata]
-    given TaggedSchema[User]     = TaggedSchema.caseClass[User]
+    given TaggedSchema[Metadata] = TaggedSchema.ofFields[Metadata]
+    given TaggedSchema[User]     = TaggedSchema.ofFields[User]
 
     val input =
       """val data = (
@@ -478,6 +478,82 @@ class ParserSuite extends FunSuite:
     Parser.parseValueAs[User](input, name = "data") match
       case Result.Err(error) =>
         assertEquals(error.path, List(".metadata", ".created"))
+        assertEquals(error.rootCause, DecodeError.Custom("Invalid ISO date 'bad-date'"))
+      case Result.Ok(value) => fail(s"Expected a decode failure, got $value")
+
+  test("derive enum schemas with nullary and structured cases"):
+    import java.time.LocalDate
+
+    enum Mode derives TaggedSchema:
+      case Fast
+      case Scheduled(at: LocalDate, retries: Int)
+
+    given TaggedSchema[LocalDate] =
+      summon[TaggedSchema[String]].emap { raw =>
+        Result.catchException({ case _: java.time.format.DateTimeParseException =>
+          DecodeError.Custom(s"Invalid ISO date '$raw'")
+        }) {
+          LocalDate.parse(raw)
+        }
+      }
+
+    val fast      = Parser.parseValueAs[Mode]("val data = (Fast = null)", name = "data")
+    val scheduled = Parser.parseValueAs[Mode](
+      """val data = (
+        |  Scheduled = (
+        |    at = "2026-03-15",
+        |    retries = 2
+        |  )
+        |)
+        |""".stripMargin,
+      name = "data"
+    )
+
+    assertEquals(fast, Result.Ok(Mode.Fast))
+    assertEquals(
+      scheduled,
+      Result.Ok(Mode.Scheduled(LocalDate.parse("2026-03-15"), 2))
+    )
+
+  test("derive case object schemas"):
+    import java.time.LocalDate
+
+    case object Foo derives TaggedSchema
+
+    val foo = Parser.parseValueAs[Foo.type]("val data = (Foo = null)", name = "data")
+    assertEquals(foo, Result.Ok(Foo))
+
+  test("report nested enum case paths"):
+    import java.time.LocalDate
+
+    enum Mode derives TaggedSchema:
+      case Fast
+      case Scheduled(at: LocalDate)
+
+    given TaggedSchema[LocalDate] =
+      summon[TaggedSchema[String]].emap { raw =>
+        Result.catchException({ case _: java.time.format.DateTimeParseException =>
+          DecodeError.Custom(s"Invalid ISO date '$raw'")
+        }) {
+          LocalDate.parse(raw)
+        }
+      }
+
+    type Data = (mode: Mode)
+
+    val input =
+      """val data = (
+        |  mode = (
+        |    Scheduled = (
+        |      at = "bad-date"
+        |    )
+        |  )
+        |)
+        |""".stripMargin
+
+    Parser.parseValueAs[Data](input, name = "data") match
+      case Result.Err(error) =>
+        assertEquals(error.path, List(".mode", ".Scheduled", ".at"))
         assertEquals(error.rootCause, DecodeError.Custom("Invalid ISO date 'bad-date'"))
       case Result.Ok(value) => fail(s"Expected a decode failure, got $value")
 

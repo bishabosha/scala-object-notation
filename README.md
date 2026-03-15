@@ -94,13 +94,12 @@ Supported typed decoding targets currently include:
 - `Option[T]` for nullable values
 - `Expr`
 - `String`, `Char`, `Int`, `Long`, `Float`, `Double`, and `Boolean`
-- custom types built from one existing `TaggedSchema` transformation
-- direct case class decoding via `TaggedSchema.caseClass[T]`
-
-Custom types are supported either by mapping an existing schema, or
-derived decoders exist for product types.
+- custom types via transformation of an existing `TaggedSchema`
+- direct case class, case object, and enum decoding via `derives TaggedSchema`
 
 **Mapping an existing Schema**
+
+Preferred for direct decoding from Strings into domain objects such as Date, or simple enums.
 
 ```scala
 import scalanotation.*
@@ -120,8 +119,8 @@ given TaggedSchema[Mode] =
 ```
 
 **Derived Schemas**
-For product types, you can also derive a decoder automatically, composed of existing decoders
-for each field, that constructs the value directly:
+For product and sum types, you can derive a decoder automatically, (semi-auto)
+it is composed of exising schemas for each field.
 
 ```scala
 import scalanotation.*
@@ -139,6 +138,33 @@ given TaggedSchema[LocalDate] =
       catch case _: java.time.format.DateTimeParseException =>
         raise(DecodeError.Custom(s"Invalid ISO date '$raw'"))
   }
+```
+
+> Note: for case class with no fields or a case object, the payload should be a named tuple with a single field - the class label, and null value.
+> e.g. `case class Foo()` will derive a decoder for `(Foo = null)`
+
+Derivation also supports enums. Each case is represented as a single-field object where the field name is the case label. Cases with fields use a nested named tuple payload, and nullary cases use `null`.
+
+```scala
+import scalanotation.*
+import steps.result.Result, Result.eval.raise
+
+import java.time.LocalDate
+
+enum Mode derives TaggedSchema:
+  case Fast
+  case Scheduled(at: LocalDate, retries: Int)
+
+given TaggedSchema[LocalDate] =
+  summon[TaggedSchema[String]].emap { raw =>
+    Result:
+      try LocalDate.parse(raw)
+      catch case _: java.time.format.DateTimeParseException =>
+        raise(DecodeError.Custom(s"Invalid ISO date '$raw'"))
+  }
+
+// Fast        => (Fast = null)
+// Scheduled   => (Scheduled = (at = "2026-03-15", retries = 2))
 ```
 
 Typed decoding is strict:
