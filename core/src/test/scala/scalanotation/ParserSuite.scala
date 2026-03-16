@@ -192,7 +192,7 @@ class ParserSuite extends FunSuite:
         assertEquals(error.path, List(".x"))
         assertEquals(
           error.rootCause,
-          DecodeError.ExpectedInt(Token.TrueKw(Span(16, 1, 17)))
+          DecodeError.ExpectedType("Int", "'true'")
         )
       case Result.Ok(value) => fail(s"Expected a decode failure, got $value")
 
@@ -230,7 +230,7 @@ class ParserSuite extends FunSuite:
         assertEquals(error.path, List(".x"))
         assertEquals(
           error.rootCause,
-          DecodeError.ExpectedInt(Token.TrueKw(Span(16, 1, 17)))
+          DecodeError.ExpectedType("Int", "'true'")
         )
         assertEquals(
           error.span.map(span => (span.line, span.column)),
@@ -254,7 +254,7 @@ class ParserSuite extends FunSuite:
         assertEquals(true, error.format.contains("'.items[0].value'"))
         assertEquals(
           error.rootCause,
-          DecodeError.ExpectedInt(Token.TrueKw(Span(39, 2, 27)))
+          DecodeError.ExpectedType("Int", "'true'")
         )
         assertEquals(error.span.map(span => span.line), Some(2))
       case Result.Ok(value) => fail(s"Expected a decode failure, got $value")
@@ -276,7 +276,7 @@ class ParserSuite extends FunSuite:
         assertEquals(true, error.format.contains("'.items[0].value'"))
         assertEquals(
           error.rootCause,
-          DecodeError.ExpectedInt(Expr.BooleanConstant(true))
+          DecodeError.ExpectedType("Int", "(true: Boolean)")
         )
         assertEquals(error.span, None)
       case Result.Ok(value) => fail(s"Expected a decode failure, got $value")
@@ -624,4 +624,65 @@ class ParserSuite extends FunSuite:
     assert(
       clue(errors.head.message)
         .contains("scala.collection.immutable.List[scala.Int]")
+    )
+
+  test("Schema.describeSelf"):
+    // primitive schemas
+    assertEquals(Schema.Int.describeSelf, "Int")
+    assertEquals(Schema.Long.describeSelf, "Long")
+    assertEquals(Schema.Float.describeSelf, "Float")
+    assertEquals(Schema.Double.describeSelf, "Double")
+    assertEquals(Schema.Boolean.describeSelf, "Boolean")
+    assertEquals(Schema.Char.describeSelf, "Char")
+    assertEquals(Schema.String.describeSelf, "String")
+    assertEquals(Schema.AnyExpr.describeSelf, "Any")
+    assertEquals(Schema.Nullary(null).describeSelf, "Null")
+    // empty named tuple
+    assertEquals(
+      Schema.NamedTuple(IArray.empty, _ => ()).describeSelf,
+      "AnyNamedTuple"
+    )
+    // named tuple with fields
+    val withFields = Schema.NamedTuple(
+      IArray(
+        Schema.Field("x", summon[TaggedSchema[Int]]),
+        Schema.Field("y", summon[TaggedSchema[String]])
+      ),
+      _ => ()
+    )
+    assertEquals(withFields.describeSelf, "(x: ..., y: ...)")
+    // single-case sum schema
+    val sumSchema = Schema.Sum(
+      Map("Fast" -> Schema.SumCase("Fast", summon[TaggedSchema[Int]]))
+    )
+    assertEquals(sumSchema.describeSelf, "(Fast: ...)")
+    // multi-case sum schema
+    val multiSumDesc = Schema
+      .Sum(
+        Map(
+          "A" -> Schema.SumCase("A", summon[TaggedSchema[Int]]),
+          "B" -> Schema.SumCase("B", summon[TaggedSchema[String]])
+        )
+      )
+      .describeSelf
+    assert(clue(multiSumDesc).contains("(A: ...)"))
+    assert(clue(multiSumDesc).contains("(B: ...)"))
+    assert(clue(multiSumDesc).contains(" | "))
+    // Vector schema
+    assertEquals(
+      Schema.Vector(summon[TaggedSchema[Int]]).describeSelf,
+      "Vector[...]"
+    )
+    assertEquals(
+      Schema.Vector(summon[TaggedSchema[(x: String, y: Int)]]).describeSelf,
+      "Vector[...]"
+    )
+    // Option schema
+    assertEquals(
+      Schema.Option(summon[TaggedSchema[Int]]).describeSelf,
+      "Int | Null"
+    )
+    assertEquals(
+      Schema.Option(summon[TaggedSchema[String]]).describeSelf,
+      "String | Null"
     )

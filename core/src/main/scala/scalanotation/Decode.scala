@@ -24,25 +24,15 @@ import Internal.showType
 
 enum DecodeError:
   case TokenFormat(message: String)
-  case ExpectedExpression(found: Token)
-  case ExpectedNamedTuple(found: Expr | Token)
-  case ExpectedVector(found: Expr | Token)
-  case ExpectedString(found: Expr | Token)
-  case ExpectedChar(found: Expr | Token)
-  case ExpectedInt(found: Expr | Token)
-  case ExpectedLong(found: Expr | Token)
-  case ExpectedFloat(found: Expr | Token)
-  case ExpectedDouble(found: Expr | Token)
-  case ExpectedBoolean(found: Expr | Token)
-  case ExpectedNumber(found: Expr | Token)
-  case ExpectedNull(found: Expr | Token)
+  case ExpectedExpression(found: String)
+  case ExpectedType(expected: String, found: String)
   case UnitValueNotAllowed()
-  case ExpectedEquals(found: Token)
-  case ExpectedRParen(found: Token)
-  case ExpectedFieldName(found: Token)
-  case ExpectedVal(found: Token)
-  case ExpectedIdentifier(found: Token)
-  case ExpectedEof(found: Token)
+  case ExpectedEquals(found: String)
+  case ExpectedRParen(found: String)
+  case ExpectedFieldName(found: String)
+  case ExpectedVal(found: String)
+  case ExpectedIdentifier(found: String)
+  case ExpectedEof(found: String)
   case FieldCountMismatch(expected: Int, actual: Int)
   case FieldOrderMismatch(expected: String, actual: String)
   case MissingField(fieldName: String)
@@ -76,44 +66,24 @@ enum DecodeError:
 
   def format: String =
     this match
-      case TokenFormat(message)              => message
-      case DecodeError.ExpectedNumber(found) =>
-        s"Expected a number but found ${describe(found)}"
+      case TokenFormat(message)                      => message
+      case DecodeError.ExpectedType(expected, found) =>
+        s"Expected $expected but found ${found}"
       case DecodeError.ExpectedExpression(found) =>
-        s"Expected an expression but found ${describe(found)}"
-      case DecodeError.ExpectedNamedTuple(found) =>
-        s"Expected a named tuple but found ${describe(found)}"
-      case DecodeError.ExpectedVector(found) =>
-        s"Expected a vector but found ${describe(found)}"
-      case DecodeError.ExpectedString(found) =>
-        s"Expected a string constant but found ${describe(found)}"
-      case DecodeError.ExpectedChar(found) =>
-        s"Expected a char constant but found ${describe(found)}"
-      case DecodeError.ExpectedInt(found) =>
-        s"Expected an int constant but found ${describe(found)}"
-      case DecodeError.ExpectedLong(found) =>
-        s"Expected a long constant but found ${describe(found)}"
-      case DecodeError.ExpectedFloat(found) =>
-        s"Expected a float constant but found ${describe(found)}"
-      case DecodeError.ExpectedDouble(found) =>
-        s"Expected a double constant but found ${describe(found)}"
-      case DecodeError.ExpectedBoolean(found) =>
-        s"Expected a boolean constant but found ${describe(found)}"
-      case DecodeError.ExpectedNull(found) =>
-        s"Expected null but found ${describe(found)}"
+        s"Expected an expression but found ${found}"
       case DecodeError.UnitValueNotAllowed() => "Unit value '()' is not valid."
       case DecodeError.ExpectedEquals(found) =>
-        s"Expected '=' but found ${describe(found)}"
+        s"Expected '=' but found ${found}"
       case DecodeError.ExpectedRParen(found) =>
-        s"Expected ')' but found ${describe(found)}"
+        s"Expected ')' but found ${found}"
       case DecodeError.ExpectedFieldName(found) =>
-        s"expected field name 'x = ' but found ${describe(found)}"
+        s"expected field name 'x = ' but found ${found}"
       case DecodeError.ExpectedVal(found) =>
-        s"Expected 'val' but found ${describe(found)}"
+        s"Expected 'val' but found ${found}"
       case DecodeError.ExpectedIdentifier(found) =>
-        s"Expected an identifier but found ${describe(found)}"
+        s"Expected an identifier but found ${found}"
       case DecodeError.ExpectedEof(found) =>
-        s"Expected end of input but found ${describe(found)}"
+        s"Expected end of input but found ${found}"
       case DecodeError.FieldCountMismatch(expected, actual) =>
         s"Expected $expected fields but found $actual"
       case DecodeError.FieldOrderMismatch(expected, actual) =>
@@ -157,9 +127,33 @@ private[scalanotation] enum Schema:
   case Nullary[A](value: A)
   case Option[A](inner: TaggedSchema[A])
 
+  private[scalanotation] final def describeSelf: String =
+    // doesnt go deeper than one level of nesting.
+    this match
+      case NamedTuple(fields, build) =>
+        if fields.isEmpty then "AnyNamedTuple"
+        else fields.map(f => s"${f.name}: ...").mkString("(", ", ", ")")
+      case Sum(cases) =>
+        if cases.isEmpty then "AnyNamedTuple"
+        else (cases.keysIterator.map(k => s"($k: ...)").mkString(" | "))
+      case Vector(element) => s"Vector[...]"
+      case AnyExpr         => "Any"
+      case String          => "String"
+      case Char            => "Char"
+      case Int             => "Int"
+      case Long            => "Long"
+      case Float           => "Float"
+      case Double          => "Double"
+      case Boolean         => "Boolean"
+      case Nullary(value)  => "Null"
+      case Option(inner)   =>
+        inner.schema match
+          case Schema.Option(_) => "... | Null" // break recursion
+          case other            => s"${other.describeSelf} | Null"
+
   private[scalanotation] def validate(expr: Expr): Result[Any, DecodeError] = Result:
     this match
-      case Schema.NamedTuple(fields, build) =>
+      case sc @ Schema.NamedTuple(fields, build) =>
         expr match
           case Expr.NamedTupleExpr(names, elements) =>
             if names.length != fields.length then
@@ -182,9 +176,9 @@ private[scalanotation] enum Schema:
 
             build(values)
           case other =>
-            raise(DecodeError.ExpectedNamedTuple(other))
+            raise(DecodeError.ExpectedType(sc.describeSelf, describe(other)))
 
-      case Schema.Sum(cases) =>
+      case sc @ Schema.Sum(cases) =>
         expr match
           case Expr.NamedTupleExpr(names, elements) =>
             if names.length != 1 then raise(DecodeError.FieldCountMismatch(1, names.length))
@@ -196,8 +190,8 @@ private[scalanotation] enum Schema:
               case _       => raise(DecodeError.UnexpectedField(caseName).atPath(s".$caseName"))
             sumCase.decoder.decode(value).mapErr(_.atPath(s".$caseName")).ok
           case other =>
-            raise(DecodeError.ExpectedNamedTuple(other))
-      case Schema.Vector(elementDecoder) =>
+            raise(DecodeError.ExpectedType(sc.describeSelf, describe(other)))
+      case sc @ Schema.Vector(elementDecoder) =>
         expr match
           case Expr.VectorExpr(elements) =>
             val values = scala.Vector.newBuilder[Any]
@@ -211,50 +205,50 @@ private[scalanotation] enum Schema:
               index += 1
             values.result()
           case other =>
-            raise(DecodeError.ExpectedVector(other))
+            raise(DecodeError.ExpectedType(sc.describeSelf, describe(other)))
 
       case Schema.AnyExpr =>
         expr
 
-      case Schema.String =>
+      case sc @ Schema.String =>
         expr match
           case Expr.StringConstant(value) => value
-          case other                      => raise(DecodeError.ExpectedString(other))
+          case other => raise(DecodeError.ExpectedType(sc.describeSelf, describe(other)))
 
-      case Schema.Char =>
+      case sc @ Schema.Char =>
         expr match
           case Expr.CharConstant(value) => value
-          case other                    => raise(DecodeError.ExpectedChar(other))
+          case other => raise(DecodeError.ExpectedType(sc.describeSelf, describe(other)))
 
-      case Schema.Int =>
+      case sc @ Schema.Int =>
         expr match
           case Expr.IntConstant(value) => value
-          case other                   => raise(DecodeError.ExpectedInt(other))
+          case other => raise(DecodeError.ExpectedType(sc.describeSelf, describe(other)))
 
-      case Schema.Long =>
+      case sc @ Schema.Long =>
         expr match
           case Expr.LongConstant(value) => value
-          case other                    => raise(DecodeError.ExpectedLong(other))
+          case other => raise(DecodeError.ExpectedType(sc.describeSelf, describe(other)))
 
-      case Schema.Float =>
+      case sc @ Schema.Float =>
         expr match
           case Expr.FloatConstant(value) => value
-          case other                     => raise(DecodeError.ExpectedFloat(other))
+          case other => raise(DecodeError.ExpectedType(sc.describeSelf, describe(other)))
 
-      case Schema.Double =>
+      case sc @ Schema.Double =>
         expr match
           case Expr.DoubleConstant(value) => value
-          case other                      => raise(DecodeError.ExpectedDouble(other))
+          case other => raise(DecodeError.ExpectedType(sc.describeSelf, describe(other)))
 
-      case Schema.Boolean =>
+      case sc @ Schema.Boolean =>
         expr match
           case Expr.BooleanConstant(value) => value
-          case other                       => raise(DecodeError.ExpectedBoolean(other))
+          case other => raise(DecodeError.ExpectedType(sc.describeSelf, describe(other)))
 
-      case Schema.Nullary(value) =>
+      case sc @ Schema.Nullary(value) =>
         expr match
           case Expr.NullConstant => value
-          case other             => raise(DecodeError.ExpectedNull(other))
+          case other => raise(DecodeError.ExpectedType(sc.describeSelf, describe(other)))
 
       case Schema.Option(innerDecoder) =>
         expr match
@@ -291,7 +285,7 @@ object TaggedSchema {
   private[scalanotation] sealed trait MappedSchema[T] extends TaggedSchema[T]:
     private[scalanotation] def decodeValidated[Z](value: Z): Result[T, DecodeError]
 
-  private def identity[T](schema0: Schema): TaggedSchema[T] =
+  private[scalanotation] def identity[T](schema0: Schema): TaggedSchema[T] =
     new TaggedSchema[T]:
       val schema: Schema = schema0
 
@@ -639,8 +633,8 @@ private[scalanotation] object TokenDecoder:
       case Token.LongLit(raw, _, _)   => s"long literal '$raw'"
       case Token.FloatLit(raw, _, _)  => s"float literal '$raw'"
       case Token.DoubleLit(raw, _, _) => s"double literal '$raw'"
-      case Token.StringLit(raw, _, _) => s"string literal $raw"
-      case Token.CharLit(raw, _, _)   => s"character literal $raw"
+      case Token.StringLit(raw, _, _) => s"string literal $"$raw$""
+      case Token.CharLit(raw, _, _)   => s"character literal '$raw'"
       case Token.Equals(_)            => "'='"
       case Token.Plus(_)              => "'+'"
       case Token.Minus(_)             => "'-'"
@@ -651,16 +645,16 @@ private[scalanotation] object TokenDecoder:
 
   private[scalanotation] def describe(expr: Expr): String =
     expr match
-      case Expr.VectorExpr(elements)            => "vector"
-      case Expr.NamedTupleExpr(names, elements) => "named tuple"
-      case Expr.StringConstant(_)               => "string constant"
-      case Expr.CharConstant(_)                 => "char constant"
-      case Expr.IntConstant(_)                  => "int constant"
-      case Expr.LongConstant(_)                 => "long constant"
-      case Expr.FloatConstant(_)                => "float constant"
-      case Expr.DoubleConstant(_)               => "double constant"
-      case Expr.BooleanConstant(_)              => "boolean constant"
-      case Expr.NullConstant                    => "null constant"
+      case Expr.VectorExpr(elements)            => "Vector(...)"
+      case Expr.NamedTupleExpr(names, elements) => s"(${names.head} = ...)"
+      case Expr.StringConstant(value)           => s"($"$value$": String)"
+      case Expr.CharConstant(value)             => s"('$value': Char)"
+      case Expr.IntConstant(value)              => s"($value: Int)"
+      case Expr.LongConstant(value)             => s"($value: Long)"
+      case Expr.FloatConstant(value)            => s"($value: Float)"
+      case Expr.DoubleConstant(value)           => s"($value: Double)"
+      case Expr.BooleanConstant(value)          => s"($value: Boolean)"
+      case Expr.NullConstant                    => "null"
 
 private final class TokenDecoder(@constructorOnly tokens: List[Token])
     extends Internal.TokenStream(tokens) {
@@ -761,12 +755,9 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
       SourceFile(ValDecl(declaredName, value))
 
   private trait DecodingVisitor[A]:
-    def onNamedTuple[B](
-        fields: IArray[Schema.Field[?]],
-        build: Array[AnyRef] => B
-    ): Result[A, DecodeError]
-    def onSum(cases: Map[String, Schema.SumCase[?]]): Result[A, DecodeError]
-    def onVector[B](element: TaggedSchema[B]): Result[A, DecodeError]
+    def onNamedTuple[B](schema: Schema.NamedTuple[B]): Result[A, DecodeError]
+    def onSum(schema: Schema.Sum): Result[A, DecodeError]
+    def onVector[B](schema: Schema.Vector[B]): Result[A, DecodeError]
     def onOption[B](inner: TaggedSchema[B]): Result[A, DecodeError]
     def onString(): Result[A, DecodeError]
     def onChar(): Result[A, DecodeError]
@@ -781,26 +772,27 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
   private object checkedVisitor extends DecodingVisitor[Any]:
     def decodeChecked(schema: Schema): Result[Any, DecodeError] =
       schema match
-        case Schema.NamedTuple(fields, build) => onNamedTuple(fields, build)
-        case Schema.Sum(cases)                => onSum(cases)
-        case Schema.Vector(element)           => onVector(element)
-        case Schema.String                    => onString()
-        case Schema.Char                      => onChar()
-        case Schema.Int                       => onInt()
-        case Schema.Long                      => onLong()
-        case Schema.Float                     => onFloat()
-        case Schema.Double                    => onDouble()
-        case Schema.Boolean                   => onBoolean()
-        case Schema.Nullary(value)            => onNullary(value)
-        case Schema.Option(inner)             => onOption(inner)
-        case Schema.AnyExpr                   =>
+        case sc @ Schema.NamedTuple(_, _) => onNamedTuple(sc)
+        case sc @ Schema.Sum(_)           => onSum(sc)
+        case sc @ Schema.Vector(_)        => onVector(sc)
+        case Schema.String                => onString()
+        case Schema.Char                  => onChar()
+        case Schema.Int                   => onInt()
+        case Schema.Long                  => onLong()
+        case Schema.Float                 => onFloat()
+        case Schema.Double                => onDouble()
+        case Schema.Boolean               => onBoolean()
+        case Schema.Nullary(value)        => onNullary(value)
+        case Schema.Option(inner)         => onOption(inner)
+        case Schema.AnyExpr               =>
           // possible to decode some parts to typed, and have a nested part that is Expr
           exprVisitor.inferExpr()
 
     def onNamedTuple[A](
-        fields: IArray[Schema.Field[?]],
-        factory: Array[AnyRef] => A
+        schema: Schema.NamedTuple[A]
     ): Result[A, DecodeError] = Result {
+      val fields  = schema.fields
+      val factory = schema.build
       if !validateFields(fields) then
         def dupErr = DecodeError.DuplicateField(duplicateField(fields))
         raise(dupErr)
@@ -809,7 +801,7 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
       // FIXME: need to lift out or else the boundary/break optimisation fails.
       val emptyFields = fields.isEmpty
 
-      val parsed = parseNamedTupleStructure(allowEmpty = emptyFields) {
+      val parsed = parseNamedTupleStructure(schema, allowEmpty = emptyFields) {
         (actualName, nameSpan, fieldIndex) =>
           if fieldIndex >= fields.length then
             def tooManyFieldsErr =
@@ -840,10 +832,11 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
       factory(values)
     }
 
-    def onSum(cases: Map[String, Schema.SumCase[?]]): Result[Any, DecodeError] =
+    def onSum(schema: Schema.Sum): Result[Any, DecodeError] =
       Result {
+        val cases        = schema.cases
         var decoded: Any = null
-        val parsed       = parseNamedTupleStructure(allowEmpty = false) {
+        val parsed       = parseNamedTupleStructure(schema, allowEmpty = false) {
           (actualName, nameSpan, fieldIndex) =>
             if fieldIndex >= 1 then
               def tooManyFieldsErr =
@@ -871,10 +864,11 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
         decoded
       }
 
-    def onVector[A](element: TaggedSchema[A]): Result[Vector[A], DecodeError] =
+    def onVector[A](schema: Schema.Vector[A]): Result[Vector[A], DecodeError] =
       Result {
-        val values = scala.Vector.newBuilder[A]
-        parseVectorStructure { indexInVector =>
+        val values  = scala.Vector.newBuilder[A]
+        val element = schema.element
+        parseVectorStructure(schema) { indexInVector =>
           val value = decodeTaggedAs(element)
             .mapErr(_.atPath(s"[$indexInVector]"))
             .ok
@@ -906,13 +900,15 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
     def onNull(): Result[Null, DecodeError]            = decodeNull(identity)
 
   private object exprVisitor extends DecodingVisitor[Expr]:
-    private val AnyNamedTupleSchemaFields = IArray.empty[Schema.Field[?]]
+    private val AnyNamedTupleSchema: Schema.NamedTuple[Expr] =
+      Schema.NamedTuple[Expr](IArray.empty[Schema.Field[?]], _ => ???)
+    private val AnyVectorSchema: Schema.Vector[Expr] =
+      Schema.Vector[Expr](TaggedSchema.identity(Schema.AnyExpr))
 
     final def inferExpr(): Result[Expr, DecodeError] =
       currentToken() match
-        case Token.LParen(_)   => onNamedTuple(AnyNamedTupleSchemaFields, Internal.buildNamedTuple)
-        case Token.VectorId(_) =>
-          onVector(summon[TaggedSchema[Expr]])
+        case Token.LParen(_)                    => onNamedTuple(AnyNamedTupleSchema)
+        case Token.VectorId(_)                  => onVector(AnyVectorSchema)
         case Token.StringLit(_, _, _)           => onString()
         case Token.CharLit(_, _, _)             => onChar()
         case Token.IntLit(_, _, _)              => onInt()
@@ -928,37 +924,36 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
             case Token.FloatLit(_, _, _)  => onFloat()
             case Token.DoubleLit(_, _, _) => onDouble()
             case token                    =>
-              Result.Err(DecodeError.ExpectedNumber(token).atToken(token.span))
+              Result.Err(DecodeError.ExpectedType("Number", describe(token)).atToken(token.span))
         case other =>
-          Result.Err(DecodeError.ExpectedExpression(other).atToken(other.span))
+          Result.Err(DecodeError.ExpectedExpression(describe(other)).atToken(other.span))
 
-    def onNamedTuple[A](
-        fields: IArray[Schema.Field[?]],
-        factory: Array[AnyRef] => A
-    ): Result[Expr, DecodeError] = withNames { seenNames =>
-      Result {
-        val names    = IArray.newBuilder[String]
-        val elements = IArray.newBuilder[Expr]
-        val buf      = parseNamedTupleStructure(allowEmpty = false) { (name, nameSpan, _) =>
-          val id            = nameId(name)
-          def testDuplicate = seenNames.contains(id) || { seenNames.addOne(id); false }
-          if testDuplicate then
-            def dupErr = DecodeError.DuplicateField(name).atPath(s".${name}").atToken(nameSpan)
-            raise(dupErr)
-          def tryExpr = inferExpr().mapErr(_.atPath(s".${name}"))
-          val elem    = tryExpr.ok
-          names += name
-          elements += elem
+    def onNamedTuple[A](schema: Schema.NamedTuple[A]): Result[Expr, DecodeError] = withNames {
+      seenNames =>
+        Result {
+          val fields   = schema.fields
+          val names    = IArray.newBuilder[String]
+          val elements = IArray.newBuilder[Expr]
+          val buf = parseNamedTupleStructure(schema, allowEmpty = false) { (name, nameSpan, _) =>
+            val id            = nameId(name)
+            def testDuplicate = seenNames.contains(id) || { seenNames.addOne(id); false }
+            if testDuplicate then
+              def dupErr = DecodeError.DuplicateField(name).atPath(s".${name}").atToken(nameSpan)
+              raise(dupErr)
+            def tryExpr = inferExpr().mapErr(_.atPath(s".${name}"))
+            val elem    = tryExpr.ok
+            names += name
+            elements += elem
+          }
+          val _ = buf.closingSpan // consume result
+          val _ = buf.fieldCount  // consume result
+          Expr.NamedTupleExpr(names.result(), elements.result())
         }
-        val _ = buf.closingSpan // consume result
-        val _ = buf.fieldCount  // consume result
-        Expr.NamedTupleExpr(names.result(), elements.result())
-      }
     }
 
-    def onVector[A](element: TaggedSchema[A]): Result[Expr, DecodeError] = Result {
+    def onVector[A](schema: Schema.Vector[A]): Result[Expr, DecodeError] = Result {
       val elements = IArray.newBuilder[Expr]
-      parseVectorStructure { _ =>
+      parseVectorStructure(schema) { _ =>
         elements += inferExpr().ok
       }
       Expr.VectorExpr(elements.result())
@@ -967,7 +962,7 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
     def onOption[A](inner: TaggedSchema[A]): Result[Expr, DecodeError] =
       inferExpr()
 
-    def onSum(cases: Map[String, Schema.SumCase[?]]): Result[Expr, DecodeError] =
+    def onSum(schema: Schema.Sum): Result[Expr, DecodeError] =
       inferExpr()
 
     def onString(): Result[Expr, DecodeError] =
@@ -1010,6 +1005,7 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
       this
   }
   private inline def parseNamedTupleStructure(
+      schema: Schema,
       allowEmpty: Boolean
   )(
       inline consumeFieldValue: Resulting[(String, Span, Int) => Unit, DecodeError]
@@ -1018,7 +1014,9 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
     currentToken() match
       case Token.LParen(_) => advance()
       case other           =>
-        raise(DecodeError.ExpectedNamedTuple(other).atToken(other.span))
+        def expectedNT =
+          DecodeError.ExpectedType(schema.describeSelf, describe(other)).atToken(other.span)
+        raise(expectedNT)
 
     currentToken() match
       case token @ Token.RParen(_) =>
@@ -1041,7 +1039,7 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
               skipToValue() match
                 case null  => // continue loop
                 case other =>
-                  raise(DecodeError.ExpectedEquals(other).atToken(other.span))
+                  raise(DecodeError.ExpectedEquals(describe(other)).atToken(other.span))
 
               consumeFieldValue(actualName, nameSpan, fieldIndex)
               fieldIndex += 1
@@ -1060,16 +1058,16 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
                 case rparen @ Token.RParen(_) => loop.break(rparen)
                 case null                     => // continue loop
                 case other                    =>
-                  raise(DecodeError.ExpectedRParen(other).atToken(other.span))
+                  raise(DecodeError.ExpectedRParen(describe(other)).atToken(other.span))
 
             case other =>
-              raise(DecodeError.ExpectedFieldName(other).atToken(other.span))
+              raise(DecodeError.ExpectedFieldName(describe(other)).atToken(other.span))
         }
         advance()
         NamedTupleParseResultBuf.push(fieldIndex, rparen.span)
   }
 
-  private inline def parseVectorStructure(
+  private inline def parseVectorStructure(schema: Schema.Vector[?])(
       inline consumeElementValue: Resulting[Int => Unit, DecodeError]
   ): Resulting[Unit, DecodeError] = {
     (currentToken(), peekToken()) match
@@ -1077,7 +1075,9 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
         advance()
         advance()
       case (other, _) =>
-        raise(DecodeError.ExpectedVector(other).atToken(other.span))
+        def expectedVec =
+          DecodeError.ExpectedType(schema.describeSelf, describe(other)).atToken(other.span)
+        raise(expectedVec)
 
     var indexInVector = 0
 
@@ -1094,13 +1094,13 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
             if currentToken().isInstanceOf[Token.RParen] then done = true
           case Token.RParen(_) => done = true
           case other           =>
-            raise(DecodeError.ExpectedRParen(other).atToken(other.span))
+            raise(DecodeError.ExpectedRParen(describe(other)).atToken(other.span))
 
       currentToken() match
         case Token.RParen(_) =>
           advance()
         case other =>
-          raise(DecodeError.ExpectedRParen(other).atToken(other.span))
+          raise(DecodeError.ExpectedRParen(describe(other)).atToken(other.span))
     }
   }
 
@@ -1124,7 +1124,9 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
         advance()
         value
       case other =>
-        raise(DecodeError.ExpectedString(other).atToken(other.span))
+        raise(
+          DecodeError.ExpectedType(Schema.String.describeSelf, describe(other)).atToken(other.span)
+        )
 
   private def decodeChar[A](wrap: Char => A): Result[A, DecodeError] = Result:
     currentToken() match
@@ -1132,13 +1134,18 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
         advance()
         wrap(value)
       case other =>
-        raise(DecodeError.ExpectedChar(other).atToken(other.span))
+        raise(
+          DecodeError.ExpectedType(Schema.Char.describeSelf, describe(other)).atToken(other.span)
+        )
 
   private def decodeInt[A](wrap: Int => A): Result[A, DecodeError] = Result:
     decodeSigned(
       literal = {
         case Token.IntLit(value = value) => value
-        case token => raise(DecodeError.ExpectedInt(token).atToken(token.span))
+        case other                       =>
+          raise(
+            DecodeError.ExpectedType(Schema.Int.describeSelf, describe(other)).atToken(other.span)
+          )
       },
       negator = -1,
       one = 1,
@@ -1150,7 +1157,10 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
     decodeSigned(
       literal = {
         case Token.LongLit(value = value) => value
-        case token => raise(DecodeError.ExpectedLong(token).atToken(token.span))
+        case other                        =>
+          raise(
+            DecodeError.ExpectedType(Schema.Long.describeSelf, describe(other)).atToken(other.span)
+          )
       },
       negator = -1L,
       one = 1L,
@@ -1162,7 +1172,10 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
     decodeSigned(
       literal = {
         case Token.FloatLit(value = value) => value
-        case token => raise(DecodeError.ExpectedFloat(token).atToken(token.span))
+        case other                         =>
+          raise(
+            DecodeError.ExpectedType(Schema.Float.describeSelf, describe(other)).atToken(other.span)
+          )
       },
       negator = -1.0f,
       one = 1.0f,
@@ -1174,7 +1187,12 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
     decodeSigned(
       literal = {
         case Token.DoubleLit(value = value) => value
-        case token => raise(DecodeError.ExpectedDouble(token).atToken(token.span))
+        case other                          =>
+          raise(
+            DecodeError
+              .ExpectedType(Schema.Double.describeSelf, describe(other))
+              .atToken(other.span)
+          )
       },
       negator = -1.0,
       one = 1.0,
@@ -1210,22 +1228,29 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
           advance()
           wrap(false)
         case other =>
-          raise(DecodeError.ExpectedBoolean(other).atToken(other.span))
+          raise(
+            DecodeError
+              .ExpectedType(Schema.Boolean.describeSelf, describe(other))
+              .atToken(other.span)
+          )
 
+  private val AnyNullSchema: Schema.Nullary[Null]                    = Schema.Nullary[Null](null)
   private def decodeNull[A](wrap: Null => A): Result[A, DecodeError] = Result:
     currentToken() match
       case Token.NullKw(_) =>
         advance()
         wrap(null)
       case other =>
-        raise(DecodeError.ExpectedNull(other).atToken(other.span))
+        raise(
+          DecodeError.ExpectedType(AnyNullSchema.describeSelf, describe(other)).atToken(other.span)
+        )
 
   private def expectVal(): Result[Unit, DecodeError] = Result:
     currentToken() match
       case Token.ValKw(_) =>
         advance()
       case other =>
-        raise(DecodeError.ExpectedVal(other).atToken(other.span))
+        raise(DecodeError.ExpectedVal(describe(other)).atToken(other.span))
 
   private def expectIdentifier(): Result[String, DecodeError] = Result:
     currentToken() match
@@ -1233,17 +1258,17 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
         advance()
         name
       case other =>
-        raise(DecodeError.ExpectedIdentifier(other).atToken(other.span))
+        raise(DecodeError.ExpectedIdentifier(describe(other)).atToken(other.span))
 
   private def expectEquals(): Result[Unit, DecodeError] = Result:
     currentToken() match
       case Token.Equals(_) =>
         advance()
       case other =>
-        raise(DecodeError.ExpectedEquals(other).atToken(other.span))
+        raise(DecodeError.ExpectedEquals(describe(other)).atToken(other.span))
 
   private def expectEof(): Result[Unit, DecodeError] = Result:
     currentToken() match
       case Token.Eof(_) => ()
-      case other        => raise(DecodeError.ExpectedEof(other).atToken(other.span))
+      case other        => raise(DecodeError.ExpectedEof(describe(other)).atToken(other.span))
 }
