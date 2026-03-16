@@ -2,55 +2,93 @@
 
 This repository contains a small Scala 3 parser and decoder for a constrained, data-oriented subset of Scala syntax.
 
-The current project state is:
+Currently the supported use case is decoding data from text into either:
+- a Syntax tree (`Expr`),
+- a Scala type that directly matches the structure as written, (preserving nested named tuple types)
+- or advanced decoders into custom types.
 
-- `core`: tokenizer, AST model, parser, schema validation, and typed decoding into Scala 3 named tuples
-- `demo`: a CLI that reads a config-like Scala file, optionally prints tokens, and can render the parsed value as JSON or YAML
-- `example/config.scala`: a minimal input file used by the demo
+Decoding into custom types is theoretically faster than from JSON as the order of fields is significant,
+and repeated field names are forbidden.
 
-The code currently lives in the `scalanotation` package.
+This can be used as an alternative configuration file format for applications.
+Currently encoders are not supported but this is an area of interest.
 
-## What It Parses
+## What Is Supported
 
-The parser is intentionally narrow. It is designed for files shaped like a single top-level `val` declaration:
+A source file deliberately supports only syntax that is valid with the default imports and classpath
+of Scala 3.8.1. (So no references to external classes)
+
+Only allowed are expressions of the types:
+- String literal (and `+` concatenation)
+- Int, Long, Float, Double literal
+- `null`
+- `true` or `false`
+- NamedTuple literal (for structured objects)
+- `Vector(...)` literal (for random-access sequences)
 
 ```scala
+/** comments are valid too! */
 val conf = (
   x = (
     label = "abc" + "def",
-    ys = Vector(1, 2L, -0x1A, 3.14f)
+    ys = Vector(1, 2L, -0x1A, 3.14f, 1_000_000)
   ),
   y = null,
+  // z = temp removal
   ok = true
 )
 ```
 
-Supported syntax currently includes:
+A source file consists of a single top-level `val` declaration (of any name), meaning it should
+be a valid `.scala` file.
 
-- one top-level `val name = ...` declaration
-- named tuples using parentheses and `field = value`
-- nested named tuples and `Vector(...)` values
-- strings, chars, booleans, and `null`
-- integers, longs, floats, and doubles
-- decimal, binary (`0b...`), and hexadecimal (`0x...`) integer literals
-- numeric separators such as `1_000` and `0x00_1A`
-- unary minus for numeric literals
-- string literal concatenation with `+`
-- line comments `// ...`
-- nested block comments `/* ... */`
-
-## What It Does Not Parse
-
-This is still a subset parser, not a general Scala parser.
+> If tooling permits we could envision a `.scon` file format that only consists of an expression,
+> and no declaration.
 
 Not supported:
-
 - multiple declarations in one file
 - arbitrary Scala expressions
 - methods, classes, imports, or type definitions
 - general collection syntax beyond `Vector(...)`
 - string interpolation or advanced string forms
-- automatic derivation for arbitrary Scala types
+
+### Why not support class constructors and object references?
+
+> i.e. why no `val data = Foo(23)` and `val data = Bar` in a source file?
+
+It is still possible to derive decoders automatically for these types, just the syntax may be awkward for enums,
+and singleton objects (i.e. a discriminator is needed) (e.g. `(Bar = null)` and `(Foo = (id = 23))`).
+
+The envisioned use case is to parse a valid Scala file with no imports needed, i.e. to encode raw data
+with the syntax of Scala. Permitting references to external classes would mean we can no longer
+copy-paste the raw data into any scala file, (ignoring import overrides)
+now we need to resolve external references!
+
+Also opening the config file would render the presentation compiler useless, so we would be required
+to build a more specialised tool that expects unknown references.
+
+How would a generic tool such as a "`jq` for Scala Object Notation" work to traverse such objects
+without type information?
+
+Likely `Foo(23)` would be illegal as it could be ambiguous with sequence syntax,
+and therefore only `Foo(id = 23)` allowed i.e. require named-arguments,
+and then it can be a "labelled object literal".
+
+Perhaps these could be traversed by a new notion of path, instead of just `.name` for a field, and
+`[i]` for an index, perhaps `#Foo` to "cast down" to that type, and nothing is needed for `Bar`  as
+it is an opaque reference.
+
+It becomes tougher to understand the meaning of the document
+because now it is harder to preserve an illusion of "simple data",
+and we must now ask "what version of `Foo` is it?" what fields is it expected to have? is subtyping meaningful?
+
+And for a standalone identifier `Bar`, it can only be treated as a reference of unknown type until decoding.
+
+At least with decoding a literal like `(Foo = (id = 23))` into `Foo(23)` then it is more honest that
+it is unversioned, and now the document itself should carry that information.
+
+Another potential enabler could be to support explicit schemas to encode such definitions,
+but then they have to be included or referenced somehow in the document (again requiring tooling support).
 
 ## Public API
 
@@ -199,6 +237,15 @@ Examples:
 ./mill demo.run example/config.scala --name conf --yaml
 ./mill demo.run example/config.scala --name conf --json --safe-nums
 ```
+
+## Structure
+The current project state is:
+
+- `core`: tokenizer, AST model, parser, schema validation, and typed decoding into Scala 3 named tuples
+- `demo`: a CLI that reads a config-like Scala file, optionally prints tokens, and can render the parsed value as JSON or YAML
+- `example/config.scala`: a minimal input file used by the demo
+
+The code currently lives in the `scalanotation` package.
 
 ## Build And Test
 
