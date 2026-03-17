@@ -161,7 +161,13 @@ object TaggedSchema {
   given ArraySchema: [T] => (atPath: AtPath["", Array[T]]) => TaggedSchema[Array[T]] =
     atPath.decoder
 
-  given SeqSchema: [Col[X] <: Seq[X], T] => (atPath: AtPath["", Col[T]]) => TaggedSchema[Col[T]] =
+  given SeqSchema: [Col[X] <: scala.collection.Seq[X], T] => (atPath: AtPath["", Col[T]])
+    => TaggedSchema[Col[T]] =
+    atPath.decoder
+
+  given MapSchema
+      : [Col[X, Y] <: scala.collection.Map[X, Y], T] => (atPath: AtPath["", Col[String, T]])
+        => TaggedSchema[Col[String, T]] =
     atPath.decoder
 
   given NamedTupleSchema: [NT <: NamedTuple.AnyNamedTuple]
@@ -304,6 +310,12 @@ object TaggedSchema {
         => (wrapped: AtPath[Path + "[]", T])
         => AtPath[Path, Array[T]] =
         identity(Schema.Vector(wrapped.decoder, Internal.BuildArray[T]))
+
+      given MapAtPath: [Path <: String, T, Col[X, Y] <: scala.collection.Map[X, Y]]
+        => (wrapped: AtPath[Path + ".*", T])
+        => (factory: scala.collection.Factory[(String, T), Col[String, T]])
+        => AtPath[Path, Col[String, T]] =
+        identity(Schema.Dict(wrapped.decoder, Internal.MapFactoryDict[T, Col]))
 
       given OptionAtPath: [Path <: String, T]
         => NonNestedOption[Path, T]

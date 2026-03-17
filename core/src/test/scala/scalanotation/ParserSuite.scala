@@ -3,6 +3,7 @@ package scalanotation
 import steps.result.Result
 import munit.FunSuite
 import scala.compiletime.testing.typeCheckErrors
+import scala.collection.mutable
 
 class ParserSuite extends FunSuite:
   test("parse the sample named tuple file"):
@@ -283,6 +284,27 @@ class ParserSuite extends FunSuite:
     assertEquals(
       true,
       expected.isDefinedAt(decoded.getOrElse(fail(s"Expected successful parse, got $decoded")))
+    )
+  }
+
+  test("parse arbitrary map") {
+    type Data = mutable.LinkedHashMap[String, Int]
+
+    val sc = summon[TaggedSchema[Data]]
+    sc.schema match
+      case Schema.Dict(_, builder: Internal.MapFactoryDict[Int, mutable.LinkedHashMap]) =>
+        ()
+      case _ => fail(s"Expected a MapFactoryDict schema, got ${sc.schema.describeSelf}")
+
+    val input =
+      """val data = (x = 1, y = 2, z = 3)
+        |""".stripMargin
+
+    val decoded  = Parser.parseValueAs[Data](input, name = "data")
+    val expected = mutable.LinkedHashMap("x" -> 1, "y" -> 2, "z" -> 3)
+    assertEquals(
+      expected,
+      decoded.getOrElse(fail(s"Expected successful parse, got $decoded"))
     )
   }
 

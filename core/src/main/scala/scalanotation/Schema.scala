@@ -12,6 +12,10 @@ private[scalanotation] enum Schema:
       element: TaggedSchema[Elem],
       builder: Schema.VectorBuilder[Elem, Repr, A]
   )
+  case Dict[Elem, Repr, A](
+      element: TaggedSchema[Elem],
+      builder: Schema.DictBuilder[Elem, Repr, A]
+  )
   case AnyExpr
   case String
   case Char
@@ -33,6 +37,7 @@ private[scalanotation] enum Schema:
         if cases.isEmpty then "AnyNamedTuple"
         else (cases.keysIterator.map(k => s"($k: ...)").mkString(" | "))
       case Vector(element, _) => s"Vector[...]"
+      case Dict(element, _)   => "AnyNamedTuple"
       case AnyExpr            => "Any"
       case String             => "String"
       case Char               => "Char"
@@ -51,6 +56,11 @@ private[scalanotation] object Schema:
   private[scalanotation] trait VectorBuilder[Elem, Repr, A]:
     def init(): Repr
     def add(repr: Repr, elem: Elem): Repr
+    def finish(repr: Repr): A
+
+  private[scalanotation] trait DictBuilder[Elem, Repr, A]:
+    def init(): Repr
+    def add(repr: Repr, key: String, elem: Elem): Repr
     def finish(repr: Repr): A
 
   final case class Field[A](name: String, decoder: TaggedSchema[A]):

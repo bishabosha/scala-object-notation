@@ -22,6 +22,7 @@ import TaggedSchema.Builders.AtPath
 import TokenDecoder.describe
 import Internal.showType
 import scala.reflect.ClassTag
+import scalanotation.Schema.Dict
 
 private[scalanotation] object ExprDecoder:
 
@@ -75,6 +76,28 @@ private[scalanotation] object ExprDecoder:
       case other =>
         raise(DecodeError.ExpectedType(schema.describeSelf, describe(other)))
 
+  def decodeDict[Elem, Repr, A](
+      schema: Schema.Dict[Elem, Repr, A],
+      expr: Expr
+  ): Result[A, DecodeError] = Result:
+    expr match
+      case Expr.NamedTupleExpr(names, elements) =>
+        val element = schema.element
+        val buf     = schema.builder
+        var index   = 0
+        var state   = buf.init()
+        while index < names.length do
+          val fieldName = names(index)
+          val value     = decodeTagged(element, elements(index))
+            .mapErr(_.atPath(s".${fieldName}"))
+            .ok
+          state = buf.add(state, fieldName, value)
+          index += 1
+
+        buf.finish(state)
+      case other =>
+        raise(DecodeError.ExpectedType(schema.describeSelf, describe(other)))
+
   def decodeSum[A](
       schema: Schema.Sum { val cases: Map[String, Schema.SumCase[A]] },
       expr: Expr
@@ -105,6 +128,8 @@ private[scalanotation] object ExprDecoder:
         break(decodeSum(sc0, expr))
       case sc @ Schema.Vector(_, _) =>
         break(decodeVector(sc, expr))
+      case sc @ Schema.Dict(_, _) =>
+        break(decodeDict(sc, expr))
 
       case Schema.AnyExpr =>
         expr
@@ -321,6 +346,7 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
 
   private trait ExtendedDecodingVisitor[A] extends BasicDecodingVisitor[A]:
     def onSum(schema: Schema.Sum): Result[A, DecodeError]
+    def onDict[Elem, Repr, B](schema: Schema.Dict[Elem, Repr, B]): Result[A, DecodeError]
     def onOption[B](inner: TaggedSchema[B]): Result[A, DecodeError]
     def onNullary[B](value: B): Result[A, DecodeError]
 
@@ -330,6 +356,7 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
         case sc @ Schema.NamedTuple(_, _) => onNamedTuple(sc)
         case sc @ Schema.Sum(_)           => onSum(sc)
         case sc @ Schema.Vector(_, _)     => onVector(sc)
+        case sc @ Schema.Dict(_, _)       => onDict(sc)
         case Schema.String                => onString()
         case Schema.Char                  => onChar()
         case Schema.Int                   => onInt()
@@ -435,6 +462,28 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
         buf.finish(values)
       }
 
+    def onDict[Elem, Repr, A](schema: Dict[Elem, Repr, A]): Result[A, DecodeError] = withNames {
+      seenNames =>
+        Result {
+          val buf     = schema.builder
+          val element = schema.element
+          var state   = buf.init()
+          val res = parseNamedTupleStructure(schema, allowEmpty = false) { (name, nameSpan, _) =>
+            val id            = nameId(name)
+            def testDuplicate = seenNames.contains(id) || { seenNames.addOne(id); false }
+            if testDuplicate then
+              def dupErr = DecodeError.DuplicateField(name).atPath(s".${name}").atToken(nameSpan)
+              raise(dupErr)
+            def tryExpr = decodeTaggedAs(element).mapErr(_.atPath(s".${name}"))
+            val elem    = tryExpr.ok
+            state = buf.add(state, name, elem)
+          }
+          val _ = res.closingSpan // consume result
+          val _ = res.fieldCount  // consume result
+          buf.finish(state)
+        }
+    }
+
     def onOption[A](inner: TaggedSchema[A]): Result[Option[A], DecodeError] =
       Result {
         currentToken() match
@@ -489,7 +538,6 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
     def onNamedTuple[A](schema: Schema.NamedTuple[A]): Result[Expr, DecodeError] = withNames {
       seenNames =>
         Result {
-          val fields   = schema.fields
           val names    = IArray.newBuilder[String]
           val elements = IArray.newBuilder[Expr]
           val buf = parseNamedTupleStructure(schema, allowEmpty = false) { (name, nameSpan, _) =>

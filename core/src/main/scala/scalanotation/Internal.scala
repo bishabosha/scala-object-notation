@@ -48,6 +48,21 @@ private[scalanotation] object Internal {
     ): mutable.Builder[Elem, Col[Elem]] =
       repr += elem
     def finish(repr: mutable.Builder[Elem, Col[Elem]]): Col[Elem] = repr.result()
+  class MapFactoryDict[Elem, Col[X, Y] <: scala.collection.Map[X, Y]](
+      using factory: scala.collection.Factory[(String, Elem), Col[String, Elem]]
+  ) extends Schema.DictBuilder[Elem, mutable.Builder[(String, Elem), Col[String, Elem]], Col[
+        String,
+        Elem
+      ]]:
+    def init(): mutable.Builder[(String, Elem), Col[String, Elem]] = factory.newBuilder
+    def add(
+        repr: mutable.Builder[(String, Elem), Col[String, Elem]],
+        key: String,
+        elem: Elem
+    ): mutable.Builder[(String, Elem), Col[String, Elem]] =
+      repr.addOne((key, elem))
+    def finish(repr: mutable.Builder[(String, Elem), Col[String, Elem]]): Col[String, Elem] =
+      repr.result()
 
   class BuildArray[Elem: ClassTag]
       extends Schema.VectorBuilder[Elem, mutable.Builder[Elem, Array[Elem]], Array[Elem]]:

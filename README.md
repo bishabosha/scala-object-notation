@@ -83,11 +83,13 @@ val decoded = expr.decodeAs[Data]
 
 Supported typed decoding targets currently include:
 
-- nested Scala 3 named tuples
-- `Vector[T]`, `Array[T]`, `IArray[T]`
+- arbitrary `Repr <: AnyNamedTuple`
+- `Vector[T]`,
+- `String`, `Char`, `Int`, `Long`, `Float`, `Double`, and `Boolean`
+- `Array[T]`, `IArray[T]`, arbitrary `Arr <: scala.collection.Seq[T]`
+- arbitrary `Dict <: scala.collection.Map[String, T]`,
 - `Option[T]` for nullable values
 - `Expr` (generic syntax tree)
-- `String`, `Char`, `Int`, `Long`, `Float`, `Double`, and `Boolean`
 - custom types via transformation of an existing `TaggedSchema[T]`
 - case class, case object, and enum derived encoders via `derives TaggedSchema`
 
