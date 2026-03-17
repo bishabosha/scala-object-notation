@@ -3,6 +3,7 @@ package scalanotation
 import steps.result.Result
 import munit.FunSuite
 import scala.compiletime.testing.typeCheckErrors
+import scala.collection.mutable
 
 class ParserSuite extends FunSuite:
   test("parse the sample named tuple file"):
@@ -195,6 +196,117 @@ class ParserSuite extends FunSuite:
           DecodeError.ExpectedType("Int", "'true'")
         )
       case Result.Ok(value) => fail(s"Expected a decode failure, got $value")
+
+  test("parse dense immutable arrays"):
+    type Data = IArray[Int]
+
+    val sc = summon[TaggedSchema[Data]]
+    sc.schema match
+      case Schema.Vector(_, builder: Internal.BuildIArray[Int]) =>
+        ()
+      case _ => fail(s"Expected a BuildIArray schema, got ${sc.schema.describeSelf}")
+
+    val input =
+      """val data = Vector(1, 2, 3)
+        |""".stripMargin
+
+    val decoded                               = Parser.parseValueAs[Data](input, name = "data")
+    val expected: PartialFunction[Data, Unit] = { case IArray(1, 2, 3) =>
+      ()
+    }
+    assertEquals(
+      true,
+      expected.isDefinedAt(decoded.getOrElse(fail(s"Expected successful parse, got $decoded")))
+    )
+
+  test("parse dense arrays"):
+    type Data = Array[Int]
+
+    val sc = summon[TaggedSchema[Data]]
+    sc.schema match
+      case Schema.Vector(_, builder: Internal.BuildArray[Int]) =>
+        ()
+      case _ => fail(s"Expected a BuildArray schema, got ${sc.schema.describeSelf}")
+
+    val input =
+      """val data = Vector(1, 2, 3)
+        |""".stripMargin
+
+    val decoded                               = Parser.parseValueAs[Data](input, name = "data")
+    val expected: PartialFunction[Data, Unit] = { case Array(1, 2, 3) =>
+      ()
+    }
+    assertEquals(
+      true,
+      expected.isDefinedAt(decoded.getOrElse(fail(s"Expected successful parse, got $decoded")))
+    )
+
+  test("parse arbitrary sequence") {
+    type Data = List[Int]
+
+    val sc = summon[TaggedSchema[Data]]
+    sc.schema match
+      case Schema.Vector(_, builder: Internal.SeqFactoryVector[Int, List]) =>
+        ()
+      case _ => fail(s"Expected a SeqFactoryVector schema, got ${sc.schema.describeSelf}")
+
+    val input =
+      """val data = Vector(1, 2, 3)
+        |""".stripMargin
+
+    val decoded                               = Parser.parseValueAs[Data](input, name = "data")
+    val expected: PartialFunction[Data, Unit] = { case List(1, 2, 3) =>
+      ()
+    }
+    assertEquals(
+      true,
+      expected.isDefinedAt(decoded.getOrElse(fail(s"Expected successful parse, got $decoded")))
+    )
+  }
+
+  test("parse specialized vector") {
+    type Data = Vector[Int]
+
+    val sc = summon[TaggedSchema[Data]]
+    sc.schema match
+      case Schema.Vector(_, builder: Internal.BuildVector[Int]) =>
+        ()
+      case _ => fail(s"Expected a BuildVector schema, got ${sc.schema.describeSelf}")
+
+    val input =
+      """val data = Vector(1, 2, 3)
+        |""".stripMargin
+
+    val decoded                               = Parser.parseValueAs[Data](input, name = "data")
+    val expected: PartialFunction[Data, Unit] = { case Vector(1, 2, 3) =>
+      ()
+    }
+    assertEquals(
+      true,
+      expected.isDefinedAt(decoded.getOrElse(fail(s"Expected successful parse, got $decoded")))
+    )
+  }
+
+  test("parse arbitrary map") {
+    type Data = mutable.LinkedHashMap[String, Int]
+
+    val sc = summon[TaggedSchema[Data]]
+    sc.schema match
+      case Schema.Dict(_, builder: Internal.MapFactoryDict[Int, mutable.LinkedHashMap]) =>
+        ()
+      case _ => fail(s"Expected a MapFactoryDict schema, got ${sc.schema.describeSelf}")
+
+    val input =
+      """val data = (x = 1, y = 2, z = 3)
+        |""".stripMargin
+
+    val decoded  = Parser.parseValueAs[Data](input, name = "data")
+    val expected = mutable.LinkedHashMap("x" -> 1, "y" -> 2, "z" -> 3)
+    assertEquals(
+      expected,
+      decoded.getOrElse(fail(s"Expected successful parse, got $decoded"))
+    )
+  }
 
   test("decode vectors of nested named tuples"):
     type Entry = (name: String, value: Int)
@@ -579,51 +691,55 @@ class ParserSuite extends FunSuite:
     )
 
   test("compile-time derivation error includes nested field path"):
+    class Box[T]
     val errors = typeCheckErrors(
-      "type Data = (outer: (bad: List[Int]))\nsummon[scalanotation.TaggedSchema[Data]]"
+      "type Data = (outer: (bad: Box[Int]))\nsummon[scalanotation.TaggedSchema[Data]]"
     )
 
     assert(errors.nonEmpty)
     assert(clue(errors.head.message).contains("outer.bad"))
     assert(
       clue(errors.head.message)
-        .contains("scala.collection.immutable.List[scala.Int]")
+        .contains("Box[scala.Int]")
     )
 
   test("compile-time derivation error includes nested field path Vector"):
+    class Box[T]
     val errors = typeCheckErrors(
-      "type Data = (outer: (inner: Vector[(sub1: (bad: List[Int]))]))\nsummon[scalanotation.TaggedSchema[Data]]"
+      "type Data = (outer: (inner: Vector[(sub1: (bad: Box[Int]))]))\nsummon[scalanotation.TaggedSchema[Data]]"
     )
 
     assert(errors.nonEmpty)
     assert(clue(errors.head.message).contains(".outer.inner[].sub1.bad"))
     assert(
       clue(errors.head.message)
-        .contains("scala.collection.immutable.List[scala.Int]")
+        .contains("Box[scala.Int]")
     )
 
   test("compile-time derivation error includes nested field path Vector root"):
+    class Box[T]
     val errors = typeCheckErrors(
-      "type Data = Vector[(sub1: (bad: List[Int]))]\nsummon[scalanotation.TaggedSchema[Data]]"
+      "type Data = Vector[(sub1: (bad: Box[Int]))]\nsummon[scalanotation.TaggedSchema[Data]]"
     )
 
     assert(errors.nonEmpty)
     assert(clue(errors.head.message).contains("'[].sub1.bad'"))
     assert(
       clue(errors.head.message)
-        .contains("scala.collection.immutable.List[scala.Int]")
+        .contains("Box[scala.Int]")
     )
 
   test("compile-time derivation error includes vector path segment"):
+    class Box[T]
     val errors = typeCheckErrors(
-      "type Data = (items: Vector[(bad: List[Int])])\nsummon[scalanotation.TaggedSchema[Data]]"
+      "type Data = (items: Vector[(bad: Box[Int])])\nsummon[scalanotation.TaggedSchema[Data]]"
     )
 
     assert(errors.nonEmpty)
     assert(clue(errors.head.message).contains("'.items[].bad'"))
     assert(
       clue(errors.head.message)
-        .contains("scala.collection.immutable.List[scala.Int]")
+        .contains("Box[scala.Int]")
     )
 
   test("Schema.describeSelf"):
@@ -656,12 +772,15 @@ class ParserSuite extends FunSuite:
       Map("Fast" -> Schema.SumCase("Fast", summon[TaggedSchema[Int]]))
     )
     assertEquals(sumSchema.describeSelf, "(Fast: ...)")
+    enum AorB:
+      case A, B
+
     // multi-case sum schema
     val multiSumDesc = Schema
       .Sum(
         Map(
-          "A" -> Schema.SumCase("A", summon[TaggedSchema[Int]]),
-          "B" -> Schema.SumCase("B", summon[TaggedSchema[String]])
+          "A" -> Schema.SumCase("A", TaggedSchema.forNull(AorB.A)),
+          "B" -> Schema.SumCase("B", TaggedSchema.forNull(AorB.B))
         )
       )
       .describeSelf
@@ -670,11 +789,11 @@ class ParserSuite extends FunSuite:
     assert(clue(multiSumDesc).contains(" | "))
     // Vector schema
     assertEquals(
-      Schema.Vector(summon[TaggedSchema[Int]]).describeSelf,
+      summon[TaggedSchema[Vector[Int]]].schema.describeSelf,
       "Vector[...]"
     )
     assertEquals(
-      Schema.Vector(summon[TaggedSchema[(x: String, y: Int)]]).describeSelf,
+      summon[TaggedSchema[Vector[(x: String, y: Int)]]].schema.describeSelf,
       "Vector[...]"
     )
     // Option schema
