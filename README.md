@@ -52,69 +52,25 @@ Not supported:
 - general collection syntax beyond `Vector(...)`
 - string interpolation or advanced string forms
 
-### Why not support class constructors and object references?
-
-> i.e. why no `val data = Foo(23)` and `val data = Bar` in a source file?
-
-It is still possible to derive decoders automatically for these types, just the syntax may be awkward for enums,
-and singleton objects (i.e. a discriminator is needed) (e.g. `(Bar = null)` and `(Foo = (id = 23))`).
-
-The envisioned use case is to parse a valid Scala file with no imports needed, i.e. to encode raw data
-with the syntax of Scala. Permitting references to external classes would mean we can no longer
-copy-paste the raw data into any scala file, (ignoring import overrides)
-now we need to resolve external references!
-
-Also opening the config file would render the presentation compiler useless, so we would be required
-to build a more specialised tool that expects unknown references.
-
-How would a generic tool such as a "`jq` for Scala Object Notation" work to traverse such objects
-without type information?
-
-Likely `Foo(23)` would be illegal as it could be ambiguous with sequence syntax,
-and therefore only `Foo(id = 23)` allowed i.e. require named-arguments,
-and then it can be a "labelled object literal".
-
-Perhaps these could be traversed by a new notion of path, instead of just `.name` for a field, and
-`[i]` for an index, perhaps `#Foo` to "cast down" to that type, and nothing is needed for `Bar`  as
-it is an opaque reference.
-
-It becomes tougher to understand the meaning of the document
-because now it is harder to preserve an illusion of "simple data",
-and we must now ask "what version of `Foo` is it?" what fields is it expected to have? is subtyping meaningful?
-
-And for a standalone identifier `Bar`, it can only be treated as a reference of unknown type until decoding.
-
-At least with decoding a literal like `(Foo = (id = 23))` into `Foo(23)` then it is more honest that
-it is unversioned, and now the document itself should carry that information.
-
-Another potential enabler could be to support explicit schemas to encode such definitions,
-but then they have to be included or referenced somehow in the document (again requiring tooling support).
-
-## Public API
+## Decoding
 
 The `core` module exposes two main flows.
 
-Parse into the generic AST:
-
-```scala
-import scalanotation.*
-
-val parsed = Parser.parseAs[Expr](input)
-val ast = parsed.get.declaration.value
-```
-
-Parse and decode directly into a Scala 3 named tuple:
+Parse and decode directly into type that matches the structure of data using a contextual `TaggedDecoder[T]`:
 
 ```scala
 import scalanotation.*
 
 type Data =
-  (x: (label: String, ys: Vector[Int]), y: Option[Int], ok: Boolean)
+  (x: (label: String, xs: Vector[String], ys: IArray[Int]), y: Option[Int], ok: Boolean)
 
-val decoded = Parser.parseValueAs[Data](input, name = "conf")
+// `given TaggedDecoder[Data]` is derived automatically
+val decoded: Result[Data, DecodeError] =
+  Parser.parseValueAs[Data](input, name = "conf")
 ```
 
-You can also parse as `Expr` first and validate later:
+You can also parse as a generic syntax tree (`Expr`) first and use that, or decode into
+structured data afterwords:
 
 ```scala
 import scalanotation.*
@@ -128,12 +84,12 @@ val decoded = expr.decodeAs[Data]
 Supported typed decoding targets currently include:
 
 - nested Scala 3 named tuples
-- `Vector[T]`
+- `Vector[T]`, `Array[T]`, `IArray[T]`
 - `Option[T]` for nullable values
-- `Expr`
+- `Expr` (generic syntax tree)
 - `String`, `Char`, `Int`, `Long`, `Float`, `Double`, and `Boolean`
-- custom types via transformation of an existing `TaggedSchema`
-- direct case class, case object, and enum decoding via `derives TaggedSchema`
+- custom types via transformation of an existing `TaggedSchema[T]`
+- case class, case object, and enum derived encoders via `derives TaggedSchema`
 
 **Mapping an existing Schema**
 
@@ -212,6 +168,44 @@ Typed decoding is strict:
 - field count and field names must match exactly
 - decode errors include nested path information such as `.items[0].value`
 - token-based parsing errors include line and column information
+
+### Why not support class constructors and object references?
+
+> i.e. why no `val data = Foo(23)` and `val data = Bar` in a source file?
+
+It is still possible to derive decoders automatically for these types, just the syntax may be awkward for enums,
+and singleton objects (i.e. a discriminator is needed) (e.g. `(Bar = null)` and `(Foo = (id = 23))`).
+
+The envisioned use case is to parse a valid Scala file with no imports needed, i.e. to encode raw data
+with the syntax of Scala. Permitting references to external classes would mean we can no longer
+copy-paste the raw data into any scala file, (ignoring import overrides)
+now we need to resolve external references!
+
+Also opening the config file would render the presentation compiler useless, so we would be required
+to build a more specialised tool that expects unknown references.
+
+How would a generic tool such as a "`jq` for Scala Object Notation" work to traverse such objects
+without type information?
+
+Likely `Foo(23)` would be illegal as it could be ambiguous with sequence syntax,
+and therefore only `Foo(id = 23)` allowed i.e. require named-arguments,
+and then it can be a "labelled object literal".
+
+Perhaps these could be traversed by a new notion of path, instead of just `.name` for a field, and
+`[i]` for an index, perhaps `#Foo` to "cast down" to that type, and nothing is needed for `Bar`  as
+it is an opaque reference.
+
+It becomes tougher to understand the meaning of the document
+because now it is harder to preserve an illusion of "simple data",
+and we must now ask "what version of `Foo` is it?" what fields is it expected to have? is subtyping meaningful?
+
+And for a standalone identifier `Bar`, it can only be treated as a reference of unknown type until decoding.
+
+At least with decoding a literal like `(Foo = (id = 23))` into `Foo(23)` then it is more honest that
+it is unversioned, and now the document itself should carry that information.
+
+Another potential enabler could be to support explicit schemas to encode such definitions,
+but then they have to be included or referenced somehow in the document (again requiring tooling support).
 
 ## Demo CLI
 
