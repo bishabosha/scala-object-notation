@@ -24,13 +24,11 @@ class ParserSuite extends FunSuite:
             ValDecl(
               "data",
               Expr.NamedTupleExpr(
-                IArray("x", "y"),
-                IArray(
-                  Expr.NamedTupleExpr(
-                    IArray("ls", "ys"),
-                    IArray(
-                      Expr.VectorExpr(
-                        IArray(
+                IndexedSeq(
+                  "x" -> Expr.NamedTupleExpr(
+                    IndexedSeq(
+                      "ls" -> Expr.VectorExpr(
+                        IndexedSeq(
                           Expr.StringConstant("abcdef"),
                           Expr.CharConstant('b'),
                           Expr.IntConstant(123),
@@ -39,8 +37,8 @@ class ParserSuite extends FunSuite:
                           Expr.LongConstant(23L)
                         )
                       ),
-                      Expr.VectorExpr(
-                        IArray(
+                      "ys" -> Expr.VectorExpr(
+                        IndexedSeq(
                           Expr.IntConstant(-1),
                           Expr.IntConstant(-0b0000_0011),
                           Expr.IntConstant(-0x00_1a)
@@ -48,7 +46,7 @@ class ParserSuite extends FunSuite:
                       )
                     )
                   ),
-                  Expr.NullConstant
+                  "y" -> Expr.NullConstant
                 )
               )
             )
@@ -62,8 +60,8 @@ class ParserSuite extends FunSuite:
     val input  = "val data = (a = true, b = false, c = -12, d = -1.5f)"
     val parsed = Parser.quick.parse(input)
 
-    val Expr.NamedTupleExpr(_, elements) = parsed.declaration.value: @unchecked
-    assertEquals(elements.length, 4)
+    val Expr.NamedTupleExpr(fieldExprs) = parsed.declaration.value: @unchecked
+    assertEquals(fieldExprs.length, 4)
 
   test("top level Vector"):
     val input  = "val data = Vector(true)"
@@ -90,8 +88,10 @@ class ParserSuite extends FunSuite:
             ValDecl(
               "data",
               Expr.NamedTupleExpr(
-                IArray("x", "y"),
-                IArray(Expr.IntConstant(1), Expr.BooleanConstant(true))
+                IndexedSeq(
+                  "x" -> Expr.IntConstant(1),
+                  "y" -> Expr.BooleanConstant(true)
+                )
               )
             )
           ) =>
@@ -141,6 +141,26 @@ class ParserSuite extends FunSuite:
     assertEquals(decoded.getErr.rootCause, DecodeError.DuplicateField("x"))
     assertEquals(decoded.getErr.path, List(".b", ".x"))
     assertEquals(decoded.getErr.span.map(span => (span.line, span.column)), Some((1, 35)))
+
+  test("reject duplicate field decls with typed named tuples"):
+    type Data = (x: Int, y: Int)
+
+    val input   = "val data = (x = 1, x = 2)"
+    val decoded = Parser.parseValueAs[Data](input, name = "data")
+
+    assertEquals(decoded.getErr.rootCause, DecodeError.DuplicateField("x"))
+    assertEquals(decoded.getErr.path, List(".x"))
+    assertEquals(decoded.getErr.span.map(span => (span.line, span.column)), Some((1, 20)))
+
+  test("reject duplicate field decls in schema!"):
+    type Data = NamedTuple.NamedTuple[("x", "x"), (Int, Int)]
+
+    val input   = "val data = (x = 1, y = 2)"
+    val decoded = Parser.parseValueAs[Data](input, name = "data")
+
+    assertEquals(decoded.getErr.rootCause, DecodeError.DuplicateSchemaField("x"))
+    assertEquals(decoded.getErr.path, List(".x"))
+    assertEquals(decoded.getErr.span, None)
 
   test("decode directly into a typed named tuple"):
     type Data =

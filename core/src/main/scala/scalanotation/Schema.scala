@@ -1,6 +1,8 @@
 package scalanotation
 
+import scala.collection.mutable
 import scala.reflect.ClassTag
+import steps.result.Result, Result.eval.raise
 
 /** Internal API of scalanotation that describes the structure of expected data, used to control how
   * to decode from either a token stream or an expression
@@ -26,6 +28,21 @@ private[scalanotation] enum Schema:
   case Boolean
   case Nullary[A](value: A)
   case Option[A](inner: TaggedSchema[A])
+
+  private[scalanotation] lazy val validNamedTuple: Result[Unit, DecodeError] =
+    this match
+      case NamedTuple(fields, _) =>
+        val seenNames = Internal.JumboNameSet.alloc() // TODO: weak global pool?
+        Result:
+          val len = fields.length
+          var i   = 0
+          while i < len do
+            val name = fields(i).name
+            if seenNames.alreadySeen(name) then
+              def dupErr = DecodeError.DuplicateSchemaField(name).atPath(s".${name}")
+              raise(dupErr)
+            i += 1
+      case _ => Result.Ok(())
 
   private[scalanotation] final def describeSelf: String =
     // doesnt go deeper than one level of nesting.
@@ -53,6 +70,7 @@ private[scalanotation] enum Schema:
           case other            => s"${other.describeSelf} | Null"
 
 private[scalanotation] object Schema:
+
   private[scalanotation] trait VectorBuilder[Elem, Repr, A]:
     def init(): Repr
     def add(repr: Repr, elem: Elem): Repr

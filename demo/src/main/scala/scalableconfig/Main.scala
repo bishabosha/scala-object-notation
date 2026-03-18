@@ -76,8 +76,8 @@ object Main:
 
   private def exprToJson(expr: Expr, preserveNums: Boolean): Value =
     expr match
-      case Expr.NamedTupleExpr(names, elements) =>
-        val fields = names.view.zip(elements.view).map { (name, element) =>
+      case Expr.NamedTupleExpr(fieldExprs) =>
+        val fields = fieldExprs.map { (name, element) =>
           name -> exprToJson(element, preserveNums)
         }
         Obj.from(fields)
@@ -100,8 +100,8 @@ object Main:
 
   private[scalableconfig] def exprToYamlNode(expr: Expr): Node =
     expr match
-      case Expr.NamedTupleExpr(names, elements) =>
-        val fields = names.view.zip(elements.view).map { (name, element) =>
+      case Expr.NamedTupleExpr(fieldExprs) =>
+        val fields = fieldExprs.map { (name, element) =>
           Node.ScalarNode(name) -> exprToYamlNode(element)
         }
         Node.MappingNode(ListMap.from(fields))

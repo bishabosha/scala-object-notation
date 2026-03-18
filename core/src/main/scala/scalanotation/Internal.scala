@@ -13,6 +13,45 @@ import scala.reflect.ClassTag
 private[scalanotation] object Internal {
   import quoted.{Expr as QExpr, *}
 
+  private[scalanotation] abstract class LocalPool[T]:
+    // non-atomic pull/push, but this should be single-threaded code
+    private val pool = mutable.ArrayDeque.empty[T]
+    protected def factory(): T
+    protected def prepare(t: T): t.type
+    def borrow(): T =
+      if pool.isEmpty then factory() else prepare(pool.removeHead())
+    def release(t: T): Unit =
+      pool.prepend(t)
+    inline def withBorrowed[A](inline f: T => A): A =
+      val t = borrow()
+      try f(t)
+      finally release(t)
+
+  private[scalanotation] class JumboNameSet:
+    val underlying: mutable.HashSet[String] = mutable.HashSet.empty[String]
+  private[scalanotation] object JumboNameSet:
+    def alloc(): JumboNameSet = new JumboNameSet
+
+    given NameSet[JumboNameSet] {
+      extension (seen: JumboNameSet)
+        def alreadySeen(name: String): Boolean =
+          !seen.underlying.add(name)
+
+        def clear(): Unit = seen.underlying.clear()
+    }
+
+  private[scalanotation] trait NameSet[T] {
+    extension (seen: T)
+      def alreadySeen(name: String): Boolean
+      def clear(): Unit
+  }
+
+  private[scalanotation] final class HashNamesLocalPool extends LocalPool[JumboNameSet]:
+    protected def factory(): JumboNameSet          = JumboNameSet.alloc()
+    protected def prepare(t: JumboNameSet): t.type =
+      t.clear()
+      t
+
   import scala.util.boundary.Label
   inline def loop[A](inline body: Label[A] ?=> Unit): A = {
     boundary[A] {

@@ -1,6 +1,7 @@
 package scalanotation
 
 import steps.result.Result
+import scala.collection.immutable.SeqMap
 
 final case class SourceFile[T](declaration: ValDecl[T])
 
@@ -14,8 +15,8 @@ object SourceFile:
 final case class ValDecl[T](name: String, value: T)
 
 enum Expr:
-  case NamedTupleExpr(names: IArray[String], elements: IArray[Expr])
-  case VectorExpr(elements: IArray[Expr])
+  case NamedTupleExpr(elements: IndexedSeq[(name: String, value: Expr)])
+  case VectorExpr(elements: IndexedSeq[Expr])
   case StringConstant(value: String)
   case CharConstant(value: Char)
   case IntConstant(value: Int)
