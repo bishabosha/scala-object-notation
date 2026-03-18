@@ -52,21 +52,24 @@ private[scalanotation] object ExprDecoder:
       schema: Schema.NamedTuple[A],
       expr: Expr
   ): Result[A, DecodeError] = Result:
+    schema.validNamedTuple.ok
     expr match
-      case Expr.NamedTupleExpr(names, elements) =>
+      case Expr.NamedTupleExpr(fieldExprs) =>
         val fields = schema.fields
-        if names.length != fields.length then
-          raise(DecodeError.FieldCountMismatch(fields.length, names.length))
-
+        if fieldExprs.length != fields.length then
+          raise(DecodeError.FieldCountMismatch(fields.length, fieldExprs.length))
+        val seen   = Internal.JumboNameSet.alloc() // TODO: weak global pool?
         var index  = 0
         val values = new Array[AnyRef](fields.length)
         while index < fields.length do
           val field     = fields(index)
-          val fieldName = names(index)
+          val fieldExpr = fieldExprs(index)
+          val fieldName = fieldExpr.name
+          if seen.alreadySeen(fieldName) then raise(DecodeError.DuplicateField(fieldName))
           if fieldName != field.name then
             raise(DecodeError.FieldOrderMismatch(field.name, fieldName))
 
-          val value = decodeTagged(field.decoder, elements(index))
+          val value = decodeTagged(field.decoder, fieldExpr.value)
             .mapErr(_.atPath(s".${field.name}"))
             .ok
           values(index) = value.asInstanceOf[AnyRef]
@@ -81,14 +84,17 @@ private[scalanotation] object ExprDecoder:
       expr: Expr
   ): Result[A, DecodeError] = Result:
     expr match
-      case Expr.NamedTupleExpr(names, elements) =>
+      case Expr.NamedTupleExpr(fieldExprs) =>
+        val seen    = Internal.JumboNameSet.alloc() // TODO: weak global pool?
         val element = schema.element
         val buf     = schema.builder
         var index   = 0
         var state   = buf.init()
-        while index < names.length do
-          val fieldName = names(index)
-          val value     = decodeTagged(element, elements(index))
+        while index < fieldExprs.length do
+          val fieldExpr = fieldExprs(index)
+          val fieldName = fieldExpr.name
+          if seen.alreadySeen(fieldName) then raise(DecodeError.DuplicateField(fieldName))
+          val value = decodeTagged(element, fieldExpr.value)
             .mapErr(_.atPath(s".${fieldName}"))
             .ok
           state = buf.add(state, fieldName, value)
@@ -103,13 +109,13 @@ private[scalanotation] object ExprDecoder:
       expr: Expr
   ): Result[A, DecodeError] = Result:
     expr match
-      case Expr.NamedTupleExpr(names, elements) =>
+      case Expr.NamedTupleExpr(fieldExprs) =>
         val cases = schema.cases
-        if names.length != 1 then raise(DecodeError.FieldCountMismatch(1, names.length))
-
-        val caseName = names(0)
-        val value    = elements(0)
-        val sumCase  = cases.get(caseName) match
+        if fieldExprs.length != 1 then raise(DecodeError.FieldCountMismatch(1, fieldExprs.length))
+        val fieldExpr = fieldExprs(0)
+        val caseName  = fieldExpr.name
+        val value     = fieldExpr.value
+        val sumCase   = cases.get(caseName) match
           case Some(c) => c
           case _       => raise(DecodeError.UnexpectedField(caseName).atPath(s".$caseName"))
         break(decodeTagged(sumCase.decoder, value).mapErr(_.atPath(s".$caseName")))
@@ -223,90 +229,25 @@ private[scalanotation] object TokenDecoder:
 
   private[scalanotation] def describe(expr: Expr): String =
     expr match
-      case Expr.VectorExpr(elements)            => "Vector(...)"
-      case Expr.NamedTupleExpr(names, elements) => s"(${names.head} = ...)"
-      case Expr.StringConstant(value)           => s"($"$value$": String)"
-      case Expr.CharConstant(value)             => s"('$value': Char)"
-      case Expr.IntConstant(value)              => s"($value: Int)"
-      case Expr.LongConstant(value)             => s"($value: Long)"
-      case Expr.FloatConstant(value)            => s"($value: Float)"
-      case Expr.DoubleConstant(value)           => s"($value: Double)"
-      case Expr.BooleanConstant(value)          => s"($value: Boolean)"
-      case Expr.NullConstant                    => "null"
+      case Expr.VectorExpr(elements)       => "Vector(...)"
+      case Expr.NamedTupleExpr(fieldExprs) =>
+        if fieldExprs.isEmpty then "NamedTuple.Empty" else s"(${fieldExprs.head.name} = ...)"
+      case Expr.StringConstant(value)  => s"($"$value$": String)"
+      case Expr.CharConstant(value)    => s"('$value': Char)"
+      case Expr.IntConstant(value)     => s"($value: Int)"
+      case Expr.LongConstant(value)    => s"($value: Long)"
+      case Expr.FloatConstant(value)   => s"($value: Float)"
+      case Expr.DoubleConstant(value)  => s"($value: Double)"
+      case Expr.BooleanConstant(value) => s"($value: Boolean)"
+      case Expr.NullConstant           => "null"
 
 private final class TokenDecoder(@constructorOnly tokens: List[Token])
     extends Internal.TokenStream(tokens) {
   import scala.util.boundary.Label
   type Resulting[+A, +E] = Label[Result.Err[E]] ?=> A
 
-  // NOTE: currently as we make one decoder per token stream then there is no issue
-  // of leaked shared state.
-  // if we switch to a design based on a reusable decoder for multiple token streams
-  // (e.g. batch processing), then either state explicit thread unsafe, or
-  // we should switch to concurrent safe state.
-  private var identCount                = 0
-  private val perfectNamesCache         = mutable.HashMap[String, Int]()
-  private def nameId(name: String): Int =
-    perfectNamesCache.getOrElseUpdate(
-      name, {
-        try identCount
-        finally identCount += 1
-      }
-    )
-  private val namesRing = mutable.ArrayDeque.empty[SharedBitSet]
-  private final class SharedBitSet(@constructorOnly elems0: Array[Long])
-      extends mutable.BitSet(elems0):
-    val initialSize            = elems0.length
-    def resized: Boolean       = initialSize != this.elems.length
-    override def clear(): Unit = java.util.Arrays.fill(this.elems, 0L)
-  private def borrowNames(): SharedBitSet =
-    // non-atomic pull, but this should be single-threaded code
-    if namesRing.isEmpty then
-      // if identCount grows to >= 1024 then
-      // SharedBitSet will resize on observing the 1024th identifier and not pool.
-      // this is probably rare? unless we have an attacker.
-      new SharedBitSet(new Array[Long](16))
-    else
-      val unsafeMask = namesRing.removeHead()
-      unsafeMask.clear()
-      unsafeMask
-  private def releaseNames(bitmask: SharedBitSet): Unit =
-    namesRing.append(bitmask)
-  private val schemaStateCache = mutable.HashMap.empty[IArray[Schema.Field[?]], Boolean]
-  private def validateFields(
-      fields: IArray[Schema.Field[?]]
-  ): Boolean =
-    schemaStateCache.getOrElseUpdate(
-      fields,
-      withNames { seenNames =>
-        boundary {
-          var i   = 0
-          val len = fields.length
-          while i < len do
-            val id = nameId(fields(i).name)
-            if seenNames.contains(id) || { seenNames.addOne(id); false } then boundary.break(false)
-            i += 1
-          true
-        }
-      }
-    )
-  private def duplicateField(
-      fields: IArray[Schema.Field[?]]
-  ): String =
-    // called after validation fails so we can use a slower path
-    fields
-      .groupBy(_.name)
-      .collectFirst {
-        case (name, fieldGroup) if fieldGroup.length > 1 => name
-      }
-      .getOrElse("...")
-
-  private inline def withNames[A](inline body: mutable.BitSet => A): A = {
-    val unsafeMask = borrowNames()
-    try body(unsafeMask)
-    finally
-      if !unsafeMask.resized then releaseNames(unsafeMask)
-  }
+  // TODO: should think how this could scale to making a global shared object.
+  private val namesPool = Internal.HashNamesLocalPool()
 
   def decodeRoot[T](
       schema: TaggedSchema[T],
@@ -372,46 +313,44 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
 
     def onNamedTuple[A](
         schema: Schema.NamedTuple[A]
-    ): Result[A, DecodeError] = Result {
-      val fields  = schema.fields
-      val factory = schema.build
-      if !validateFields(fields) then
-        def dupErr = DecodeError.DuplicateField(duplicateField(fields))
-        raise(dupErr)
-      val values = new Array[AnyRef](fields.length)
+    ): Result[A, DecodeError] = namesPool.withBorrowed { seenNames =>
+      Result {
+        schema.validNamedTuple.ok
+        val fields  = schema.fields
+        val factory = schema.build
+        val values  = new Array[AnyRef](fields.length)
 
-      // FIXME: need to lift out or else the boundary/break optimisation fails.
-      val emptyFields = fields.isEmpty
+        // FIXME: need to lift out or else the boundary/break optimisation fails.
+        val emptyFields = fields.isEmpty
 
-      val parsed = parseNamedTupleStructure(schema, allowEmpty = emptyFields) {
-        (actualName, nameSpan, fieldIndex) =>
-          if fieldIndex >= fields.length then
-            def tooManyFieldsErr =
-              DecodeError
-                .FieldCountMismatch(fields.length, fieldIndex + 1)
-                .atPath(s".${actualName}")
-                .atToken(nameSpan)
-            raise(tooManyFieldsErr)
-          else
-            val expectedField = fields(fieldIndex)
-            if actualName != expectedField.name then
-              def wrongNameErr = DecodeError
-                .FieldOrderMismatch(expectedField.name, actualName)
-                .atPath(s".${actualName}")
-                .atToken(nameSpan)
-              raise(wrongNameErr)
+        val parsed = parseNamedTupleStructure(schema, allowEmpty = emptyFields) {
+          (actualName, nameSpan, fieldIndex) =>
+            def actualFieldErr[T](err: DecodeError): DecodeError =
+              err.atPath(s".${actualName}").atToken(nameSpan)
+            if fieldIndex >= fields.length then
+              raise(actualFieldErr(DecodeError.FieldCountMismatch(fields.length, fieldIndex + 1)))
+            else if seenNames.alreadySeen(actualName) then
+              def dupErr = actualFieldErr(DecodeError.DuplicateField(actualName))
+              raise(dupErr)
             else
-              def decoded = decodeTaggedAs(expectedField.decoder)
-                .mapErr(_.atPath(s".${expectedField.name}"))
-              val value = decoded.ok
-              values(fieldIndex) = value.asInstanceOf[AnyRef]
+              val expectedField = fields(fieldIndex)
+              if actualName != expectedField.name then
+                def wrongNameErr =
+                  actualFieldErr(DecodeError.FieldOrderMismatch(expectedField.name, actualName))
+                raise(wrongNameErr)
+              else
+                def decoded = decodeTaggedAs(expectedField.decoder).mapErr(actualFieldErr)
+                val value   = decoded.ok
+                values(fieldIndex) = value.asInstanceOf[AnyRef]
+        }
+        if parsed.fieldCount != fields.length then
+          def tooManyFieldsErr =
+            var err = DecodeError.FieldCountMismatch(fields.length, parsed.fieldCount)
+            if parsed.fieldName != null then err = err.atPath(s".${parsed.fieldName}")
+            err.atToken(parsed.closingSpan)
+          raise(tooManyFieldsErr)
+        factory(values)
       }
-      if parsed.fieldCount != fields.length then
-        def countErr = DecodeError
-          .FieldCountMismatch(fields.length, parsed.fieldCount)
-          .atToken(parsed.closingSpan)
-        raise(countErr)
-      factory(values)
     }
 
     def onSum(schema: Schema.Sum): Result[Any, DecodeError] =
@@ -442,7 +381,9 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
                 .ok
         }
         if parsed.fieldCount != 1 then
-          raise(DecodeError.FieldCountMismatch(1, parsed.fieldCount).atToken(parsed.closingSpan))
+          var err = DecodeError.FieldCountMismatch(1, parsed.fieldCount)
+          if parsed.fieldName != null then err = err.atPath(s".${parsed.fieldName}")
+          raise(err.atToken(parsed.closingSpan))
         decoded
       }
 
@@ -462,16 +403,14 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
         buf.finish(values)
       }
 
-    def onDict[Elem, Repr, A](schema: Dict[Elem, Repr, A]): Result[A, DecodeError] = withNames {
-      seenNames =>
+    def onDict[Elem, Repr, A](schema: Dict[Elem, Repr, A]): Result[A, DecodeError] =
+      namesPool.withBorrowed { seenNames =>
         Result {
           val buf     = schema.builder
           val element = schema.element
           var state   = buf.init()
           val res = parseNamedTupleStructure(schema, allowEmpty = false) { (name, nameSpan, _) =>
-            val id            = nameId(name)
-            def testDuplicate = seenNames.contains(id) || { seenNames.addOne(id); false }
-            if testDuplicate then
+            if seenNames.alreadySeen(name) then
               def dupErr = DecodeError.DuplicateField(name).atPath(s".${name}").atToken(nameSpan)
               raise(dupErr)
             def tryExpr = decodeTaggedAs(element).mapErr(_.atPath(s".${name}"))
@@ -479,10 +418,11 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
             state = buf.add(state, name, elem)
           }
           val _ = res.closingSpan // consume result
+          val _ = res.fieldName   // consume result
           val _ = res.fieldCount  // consume result
           buf.finish(state)
         }
-    }
+      }
 
     def onOption[A](inner: TaggedSchema[A]): Result[Option[A], DecodeError] =
       Result {
@@ -535,27 +475,24 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
         case other =>
           Result.Err(DecodeError.ExpectedExpression(describe(other)).atToken(other.span))
 
-    def onNamedTuple[A](schema: Schema.NamedTuple[A]): Result[Expr, DecodeError] = withNames {
-      seenNames =>
+    def onNamedTuple[A](schema: Schema.NamedTuple[A]): Result[Expr, DecodeError] =
+      namesPool.withBorrowed { seenNames =>
         Result {
-          val names    = IArray.newBuilder[String]
-          val elements = IArray.newBuilder[Expr]
+          val fieldExprs = IArray.newBuilder[(name: String, value: Expr)]
           val buf = parseNamedTupleStructure(schema, allowEmpty = false) { (name, nameSpan, _) =>
-            val id            = nameId(name)
-            def testDuplicate = seenNames.contains(id) || { seenNames.addOne(id); false }
-            if testDuplicate then
+            if seenNames.alreadySeen(name) then
               def dupErr = DecodeError.DuplicateField(name).atPath(s".${name}").atToken(nameSpan)
               raise(dupErr)
             def tryExpr = inferExpr().mapErr(_.atPath(s".${name}"))
             val elem    = tryExpr.ok
-            names += name
-            elements += elem
+            fieldExprs += ((name, elem))
           }
           val _ = buf.closingSpan // consume result
+          val _ = buf.fieldName   // consume result
           val _ = buf.fieldCount  // consume result
-          Expr.NamedTupleExpr(names.result(), elements.result())
+          Expr.NamedTupleExpr(fieldExprs.result())
         }
-    }
+      }
 
     def onVector[Elem, Repr, A](
         schema: Schema.Vector[Elem, Repr, A]
@@ -593,14 +530,16 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
     TaggedSchema.finalize(schema, result)
 
   private class NamedTupleParseResultBuf() {
-    var fieldCount: Int   = uninitialized
-    var closingSpan: Span = uninitialized
+    var fieldCount: Int          = uninitialized
+    var fieldName: String | Null = uninitialized
+    var closingSpan: Span        = uninitialized
   }
   // have to be careful not to share this! currently we have single threaded decode.
   // just have to ensure that results are processed before calling parseNamedTupleStructure again.
   private object NamedTupleParseResultBuf extends NamedTupleParseResultBuf() {
-    def push(fieldCount: Int, closingSpan: Span): this.type =
+    def push(fieldCount: Int, fieldName: String | Null, closingSpan: Span): this.type =
       this.fieldCount = fieldCount
+      this.fieldName = fieldName
       this.closingSpan = closingSpan
       this
   }
@@ -623,11 +562,12 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
         advance()
         if allowEmpty then
           // TODO: add early ok return as well!
-          NamedTupleParseResultBuf.push(0, token.span)
+          NamedTupleParseResultBuf.push(0, null, token.span)
         else raise(DecodeError.UnitValueNotAllowed().atToken(token.span))
       case _ =>
-        var fieldIndex           = 0
-        val rparen: Token.RParen = loop {
+        var fieldIndex                   = 0
+        var lastFieldName: String | Null = null
+        val rparen: Token.RParen         = loop {
           currentToken() match
             case Token.Identifier(actualName, nameSpan) =>
               def skipToValue(): Token | Null =
@@ -642,6 +582,7 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
                   raise(DecodeError.ExpectedEquals(describe(other)).atToken(other.span))
 
               consumeFieldValue(actualName, nameSpan, fieldIndex)
+              lastFieldName = actualName
               fieldIndex += 1
 
               def nextParen(): Token | Null =
@@ -664,7 +605,7 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
               raise(DecodeError.ExpectedFieldName(describe(other)).atToken(other.span))
         }
         advance()
-        NamedTupleParseResultBuf.push(fieldIndex, rparen.span)
+        NamedTupleParseResultBuf.push(fieldIndex, lastFieldName, rparen.span)
   }
 
   private inline def parseVectorStructure(schema: Schema)(

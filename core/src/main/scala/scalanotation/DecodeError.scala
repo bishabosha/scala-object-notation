@@ -1,5 +1,7 @@
 package scalanotation
 
+import scala.annotation.tailrec
+
 enum DecodeError:
   case TokenFormat(message: String)
   case ExpectedExpression(found: String)
@@ -17,33 +19,35 @@ enum DecodeError:
   case UnexpectedField(fieldName: String)
   case UnexpectedRoot(rootName: String)
   case DuplicateField(fieldName: String)
+  case DuplicateSchemaField(fieldName: String)
   case Custom(message: String)
-  case AtPath(segment: String, cause: DecodeError)
-  case AtToken(tokenSpan: Span, cause: DecodeError)
+  case AtPath(cause: DecodeError, segment: String)
+  case AtToken(cause: DecodeError, tokenSpan: Span)
 
-  def atPath(segment: String): DecodeError = DecodeError.AtPath(segment, this)
-  def atToken(span: Span): DecodeError     = DecodeError.AtToken(span, this)
+  def atPath(segment: String): DecodeError = DecodeError.AtPath(this, segment)
+  def atToken(span: Span): DecodeError     = DecodeError.AtToken(this, span)
 
   def path: List[String] =
     this match
-      case DecodeError.AtPath(segment, cause) => segment :: cause.path
-      case DecodeError.AtToken(_, cause)      => cause.path
+      case DecodeError.AtPath(cause, segment) => segment :: cause.path
+      case DecodeError.AtToken(cause, _)      => cause.path
       case _                                  => Nil
 
   def span: Option[Span] =
     this match
-      case DecodeError.AtToken(tokenSpan, _) => Some(tokenSpan)
-      case DecodeError.AtPath(_, cause)      => cause.span
-      case _                                 => None
+      case DecodeError.AtToken(cause, tokenSpan) => cause.span.orElse(Some(tokenSpan))
+      case DecodeError.AtPath(cause, _)          => cause.span
+      case _                                     => None
 
   def rootCause: DecodeError =
     this match
-      case DecodeError.AtPath(_, cause)  => cause.rootCause
-      case DecodeError.AtToken(_, cause) => cause.rootCause
+      case DecodeError.AtPath(cause, _)  => cause.rootCause
+      case DecodeError.AtToken(cause, _) => cause.rootCause
       case other                         => other
 
-  def format: String =
-    this match
+  def format: String = {
+    @tailrec
+    def baseMessage(error: DecodeError): String = error match {
       case TokenFormat(message)                      => message
       case DecodeError.ExpectedType(expected, found) =>
         s"Expected $expected but found ${found}"
@@ -74,18 +78,22 @@ enum DecodeError:
         s"Unexpected root declaration '$rootName'"
       case DecodeError.DuplicateField(fieldName) =>
         s"Duplicate field '$fieldName'"
+      case DecodeError.DuplicateSchemaField(fieldName) =>
+        s"Duplicate field '$fieldName' in schema"
       case DecodeError.Custom(message) =>
         message
-      case DecodeError.AtPath(segment, cause) =>
-        def loop(cause: DecodeError, acc: List[String]): String =
-          cause match
-            case DecodeError.AtPath(segment, innerCause) =>
-              loop(innerCause, segment :: acc)
-            case DecodeError.AtToken(tokenSpan, innerCause) =>
-              s"${tokenSpan.line}:${tokenSpan.column}: In path '${acc.reverseIterator.mkString}': ${innerCause.format}"
-            case other =>
-              s"In path '${acc.reverseIterator.mkString}': ${other.format}"
+      case DecodeError.AtPath(cause, _) =>
+        baseMessage(cause)
+      case DecodeError.AtToken(cause, _) =>
+        baseMessage(cause)
+    }
 
-        loop(cause, List(segment))
-      case DecodeError.AtToken(tokenSpan, cause) =>
-        s"${tokenSpan.line}:${tokenSpan.column}: ${cause.format}"
+    val finalSpan =
+      span.map(span => Seq(s"${span.line}", ":", s"${span.column}", ": ")).getOrElse(Nil)
+    val pathStr =
+      val base = path
+      if base.isEmpty then Nil
+      else "In path '" +: base :+ "': "
+    val msg = baseMessage(rootCause)
+    (finalSpan ++: pathStr :+ msg).mkString
+  }
