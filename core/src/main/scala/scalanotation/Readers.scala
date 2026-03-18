@@ -6,15 +6,15 @@ import steps.result.Result.eval.{ok, raise, break}
 
 import scala.collection.mutable
 
-object Parser:
+object Readers:
   object quick:
-    def parse(input: String, debugTokens: Boolean = false): SourceFile[Expr] =
+    def read(input: String, debugTokens: Boolean = false): SourceFile[Expr] =
       // TODO: add an okOrElse method that can recover the error somehow or return the value.
-      parseAs[Expr](input, debugTokens) match
+      readAs[Expr](input, debugTokens) match
         case Result.Ok(value) => value
         case Result.Err(err)  => throw IllegalArgumentException(err.format)
 
-  def parseAs[T: TaggedSchema as decoder](
+  def readAs[T: TaggedSchema as decoder](
       input: String,
       debugTokens: Boolean = false
   ): Result[SourceFile[T], DecodeError] =
@@ -22,7 +22,7 @@ object Parser:
       val tokens = Tokenizer.tokenize(input, debugTokens).ok
       break(TokenDecoder.decodeAnyRoot(tokens, decoder))
 
-  def parseValueAs[T: TaggedSchema as decoder](
+  def readValueAs[T: TaggedSchema as decoder](
       input: String,
       name: String,
       debugTokens: Boolean = false

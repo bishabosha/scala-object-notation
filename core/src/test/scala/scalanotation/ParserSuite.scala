@@ -6,7 +6,7 @@ import scala.compiletime.testing.typeCheckErrors
 import scala.collection.mutable
 
 class ParserSuite extends FunSuite:
-  test("parse the sample named tuple file"):
+  test("read the sample named tuple file"):
     val input =
       """val data = (
         |  x = (
@@ -17,7 +17,7 @@ class ParserSuite extends FunSuite:
         |)
         |""".stripMargin
 
-    val parsed = Parser.quick.parse(input)
+    val parsed = Readers.quick.read(input)
 
     val expected: PartialFunction[SourceFile[Expr], Unit] = {
       case SourceFile(
@@ -58,14 +58,14 @@ class ParserSuite extends FunSuite:
 
   test("tokenize booleans and negative numbers"):
     val input  = "val data = (a = true, b = false, c = -12, d = -1.5f)"
-    val parsed = Parser.quick.parse(input)
+    val parsed = Readers.quick.read(input)
 
     val Expr.NamedTupleExpr(fieldExprs) = parsed.declaration.value: @unchecked
     assertEquals(fieldExprs.length, 4)
 
   test("top level Vector"):
     val input  = "val data = Vector(true)"
-    val parsed = Parser.quick.parse(input)
+    val parsed = Readers.quick.read(input)
 
     val Expr.VectorExpr(elements) = parsed.declaration.value: @unchecked
     assertEquals(elements.length, 1)
@@ -81,7 +81,7 @@ class ParserSuite extends FunSuite:
         |// trailing comment
         |""".stripMargin
 
-    val parsed = Parser.quick.parse(input)
+    val parsed = Readers.quick.read(input)
 
     val expected: PartialFunction[SourceFile[Expr], Unit] = {
       case SourceFile(
@@ -118,7 +118,7 @@ class ParserSuite extends FunSuite:
     type Data =
       (x: (label: String, ys: Vector[Int]), y: Option[String], ok: Boolean)
 
-    val decoded        = Parser.parseValueAs[Data](input, name = "data")
+    val decoded        = Readers.readValueAs[Data](input, name = "data")
     val expected: Data =
       (x = (label = "abc", ys = Vector(1, 2)), y = None, ok = true)
 
@@ -126,18 +126,18 @@ class ParserSuite extends FunSuite:
 
   test("reject wrong root declaration name"):
     val input   = "val data = (x = 1)"
-    val decoded = Parser.parseValueAs[Expr](input, name = "other")
+    val decoded = Readers.readValueAs[Expr](input, name = "other")
     assertEquals(decoded, Result.Err(DecodeError.UnexpectedRoot("data")))
 
   test("reject duplicate field decls with Expr"):
     val input   = "val data = (x = 1, x = 2)"
-    val decoded = Parser.parseValueAs[Expr](input, name = "data")
+    val decoded = Readers.readValueAs[Expr](input, name = "data")
     assertEquals(decoded.getErr.rootCause, DecodeError.DuplicateField("x"))
     assertEquals(decoded.getErr.path, List(".x"))
 
   test("reject duplicate field decls with Expr, nested"):
     val input   = "val data = (a = 1, b = (x = true, x = null), c = 3)"
-    val decoded = Parser.parseValueAs[Expr](input, name = "data")
+    val decoded = Readers.readValueAs[Expr](input, name = "data")
     assertEquals(decoded.getErr.rootCause, DecodeError.DuplicateField("x"))
     assertEquals(decoded.getErr.path, List(".b", ".x"))
     assertEquals(decoded.getErr.span.map(span => (span.line, span.column)), Some((1, 35)))
@@ -146,7 +146,7 @@ class ParserSuite extends FunSuite:
     type Data = (x: Int, y: Int)
 
     val input   = "val data = (x = 1, x = 2)"
-    val decoded = Parser.parseValueAs[Data](input, name = "data")
+    val decoded = Readers.readValueAs[Data](input, name = "data")
 
     assertEquals(decoded.getErr.rootCause, DecodeError.DuplicateField("x"))
     assertEquals(decoded.getErr.path, List(".x"))
@@ -156,7 +156,7 @@ class ParserSuite extends FunSuite:
     type Data = NamedTuple.NamedTuple[("x", "x"), (Int, Int)]
 
     val input   = "val data = (x = 1, y = 2)"
-    val decoded = Parser.parseValueAs[Data](input, name = "data")
+    val decoded = Readers.readValueAs[Data](input, name = "data")
 
     assertEquals(decoded.getErr.rootCause, DecodeError.DuplicateSchemaField("x"))
     assertEquals(decoded.getErr.path, List(".x"))
@@ -177,7 +177,7 @@ class ParserSuite extends FunSuite:
         |)
         |""".stripMargin
 
-    val decoded        = Parser.parseValueAs[Data](input, name = "data")
+    val decoded        = Readers.readValueAs[Data](input, name = "data")
     val expected: Data =
       (
         x = (label = "abcdef", ys = Vector(-1, -3, -26)),
@@ -197,7 +197,7 @@ class ParserSuite extends FunSuite:
         |)
         |""".stripMargin
 
-    val decoded        = Parser.parseValueAs[Data](input, name = "data")
+    val decoded        = Readers.readValueAs[Data](input, name = "data")
     val expected: Data = (missing = None, present = Some(41))
 
     assertEquals(decoded, Result.Ok(expected))
@@ -206,7 +206,7 @@ class ParserSuite extends FunSuite:
     type Data = (x: Option[Int])
 
     val input    = "val data = (x = true)"
-    val obtained = Parser.parseValueAs[Data](input, name = "data")
+    val obtained = Readers.readValueAs[Data](input, name = "data")
 
     obtained match
       case Result.Err(error) =>
@@ -230,7 +230,7 @@ class ParserSuite extends FunSuite:
       """val data = Vector(1, 2, 3)
         |""".stripMargin
 
-    val decoded                               = Parser.parseValueAs[Data](input, name = "data")
+    val decoded                               = Readers.readValueAs[Data](input, name = "data")
     val expected: PartialFunction[Data, Unit] = { case IArray(1, 2, 3) =>
       ()
     }
@@ -252,7 +252,7 @@ class ParserSuite extends FunSuite:
       """val data = Vector(1, 2, 3)
         |""".stripMargin
 
-    val decoded                               = Parser.parseValueAs[Data](input, name = "data")
+    val decoded                               = Readers.readValueAs[Data](input, name = "data")
     val expected: PartialFunction[Data, Unit] = { case Array(1, 2, 3) =>
       ()
     }
@@ -274,7 +274,7 @@ class ParserSuite extends FunSuite:
       """val data = Vector(1, 2, 3)
         |""".stripMargin
 
-    val decoded                               = Parser.parseValueAs[Data](input, name = "data")
+    val decoded                               = Readers.readValueAs[Data](input, name = "data")
     val expected: PartialFunction[Data, Unit] = { case List(1, 2, 3) =>
       ()
     }
@@ -297,7 +297,7 @@ class ParserSuite extends FunSuite:
       """val data = Vector(1, 2, 3)
         |""".stripMargin
 
-    val decoded                               = Parser.parseValueAs[Data](input, name = "data")
+    val decoded                               = Readers.readValueAs[Data](input, name = "data")
     val expected: PartialFunction[Data, Unit] = { case Vector(1, 2, 3) =>
       ()
     }
@@ -320,7 +320,7 @@ class ParserSuite extends FunSuite:
       """val data = (x = 1, y = 2, z = 3)
         |""".stripMargin
 
-    val decoded  = Parser.parseValueAs[Data](input, name = "data")
+    val decoded  = Readers.readValueAs[Data](input, name = "data")
     val expected = mutable.LinkedHashMap("x" -> 1, "y" -> 2, "z" -> 3)
     assertEquals(
       expected,
@@ -342,7 +342,7 @@ class ParserSuite extends FunSuite:
         |)
         |""".stripMargin
 
-    val decoded        = Parser.parseValueAs[Data](input, name = "data")
+    val decoded        = Readers.readValueAs[Data](input, name = "data")
     val expected: Data =
       (
         items = Vector((name = "a", value = 1), (name = "b", value = 2)),
@@ -355,7 +355,7 @@ class ParserSuite extends FunSuite:
     type Data = (x: Int)
 
     val input    = "val data = (x = true)"
-    val obtained = Parser.parseValueAs[Data](input, name = "data")
+    val obtained = Readers.readValueAs[Data](input, name = "data")
 
     obtained match
       case Result.Err(error) =>
@@ -379,7 +379,7 @@ class ParserSuite extends FunSuite:
         |)
         |""".stripMargin
 
-    val obtained = Parser.parseValueAs[Data](input, name = "data")
+    val obtained = Readers.readValueAs[Data](input, name = "data")
     obtained match
       case Result.Err(error) =>
         assertEquals(error.path, List(".items", "[0]", ".value"))
@@ -400,7 +400,7 @@ class ParserSuite extends FunSuite:
         |)
         |""".stripMargin
 
-    val obtained  = Parser.parseValueAs[Expr](input, name = "data").get
+    val obtained  = Readers.readValueAs[Expr](input, name = "data").get
     val validated = obtained.decodeAs[Data]
     validated match
       case Result.Err(error) =>
@@ -417,7 +417,7 @@ class ParserSuite extends FunSuite:
     type Data = (x: Int, y: (q: Vector[Expr]))
 
     val input                                 = "val data = (x = 23, y = (q = Vector(41)))"
-    val obtained                              = Parser.parseValueAs[Data](input, name = "data")
+    val obtained                              = Readers.readValueAs[Data](input, name = "data")
     val expected: PartialFunction[Data, Unit] = {
       case (
             x = 23,
@@ -436,7 +436,7 @@ class ParserSuite extends FunSuite:
 
     val input = "val data = (y = true, x = 1)"
 
-    val obtained = Parser.parseValueAs[Data](input, name = "data")
+    val obtained = Readers.readValueAs[Data](input, name = "data")
     obtained match
       case Result.Err(error) =>
         assertEquals(error.rootCause, DecodeError.FieldOrderMismatch("x", "y"))
@@ -489,7 +489,7 @@ class ParserSuite extends FunSuite:
         |)
         |""".stripMargin
 
-    val decoded        = Parser.parseValueAs[Data](input, name = "data")
+    val decoded        = Readers.readValueAs[Data](input, name = "data")
     val expected: Data =
       (
         owner = User("Ada", 41),
@@ -518,7 +518,7 @@ class ParserSuite extends FunSuite:
         |)
         |""".stripMargin
 
-    val obtained = Parser.parseValueAs[Data](input, name = "data")
+    val obtained = Readers.readValueAs[Data](input, name = "data")
     obtained match
       case Result.Err(error) =>
         assertEquals(error.path, List(".dates", "[1]"))
@@ -536,7 +536,7 @@ class ParserSuite extends FunSuite:
 
     type Data = (items: NonEmptyInts)
 
-    val obtained = Parser.parseValueAs[Data]("val data = (items = Vector())", name = "data")
+    val obtained = Readers.readValueAs[Data]("val data = (items = Vector())", name = "data")
     obtained match
       case Result.Err(error) =>
         assertEquals(error.path, List(".items"))
@@ -569,7 +569,7 @@ class ParserSuite extends FunSuite:
         |)
         |""".stripMargin
 
-    val decoded  = Parser.parseValueAs[User](input, name = "data")
+    val decoded  = Readers.readValueAs[User](input, name = "data")
     val expected = User(
       name = "Ada",
       age = 41,
@@ -607,7 +607,7 @@ class ParserSuite extends FunSuite:
         |)
         |""".stripMargin
 
-    Parser.parseValueAs[User](input, name = "data") match
+    Readers.readValueAs[User](input, name = "data") match
       case Result.Err(error) =>
         assertEquals(error.path, List(".metadata", ".created"))
         assertEquals(error.rootCause, DecodeError.Custom("Invalid ISO date 'bad-date'"))
@@ -629,8 +629,8 @@ class ParserSuite extends FunSuite:
         }
       }
 
-    val fast      = Parser.parseValueAs[Mode]("val data = (Fast = null)", name = "data")
-    val scheduled = Parser.parseValueAs[Mode](
+    val fast      = Readers.readValueAs[Mode]("val data = (Fast = null)", name = "data")
+    val scheduled = Readers.readValueAs[Mode](
       """val data = (
         |  Scheduled = (
         |    at = "2026-03-15",
@@ -652,7 +652,7 @@ class ParserSuite extends FunSuite:
 
     case object Foo derives TaggedSchema
 
-    val foo = Parser.parseValueAs[Foo.type]("val data = (Foo = null)", name = "data")
+    val foo = Readers.readValueAs[Foo.type]("val data = (Foo = null)", name = "data")
     assertEquals(foo, Result.Ok(Foo))
 
   test("report nested enum case paths"):
@@ -683,7 +683,7 @@ class ParserSuite extends FunSuite:
         |)
         |""".stripMargin
 
-    Parser.parseValueAs[Data](input, name = "data") match
+    Readers.readValueAs[Data](input, name = "data") match
       case Result.Err(error) =>
         assertEquals(error.path, List(".mode", ".Scheduled", ".at"))
         assertEquals(error.rootCause, DecodeError.Custom("Invalid ISO date 'bad-date'"))

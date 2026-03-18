@@ -66,10 +66,10 @@ type Data =
 
 // `given TaggedDecoder[Data]` is derived automatically
 val decoded: Result[Data, DecodeError] =
-  Parser.parseValueAs[Data](input, name = "conf")
+  Readers.readValueAs[Data](input, name = "conf")
 ```
 
-You can also parse as a generic syntax tree (`Expr`) first and use that, or decode into
+You can also read as a generic syntax tree (`Expr`) first and use that, or decode into
 structured data afterwords:
 
 ```scala
@@ -77,7 +77,7 @@ import scalanotation.*
 
 type Data = (ok: Boolean)
 
-val expr = Parser.parseValueAs[Expr](input, name = "conf").get
+val expr = Readers.readValueAs[Expr](input, name = "conf").get
 val decoded = expr.decodeAs[Data]
 ```
 
@@ -178,7 +178,7 @@ Typed decoding is strict:
 It is still possible to derive decoders automatically for these types, just the syntax may be awkward for enums,
 and singleton objects (i.e. a discriminator is needed) (e.g. `(Bar = null)` and `(Foo = (id = 23))`).
 
-The envisioned use case is to parse a valid Scala file with no imports needed, i.e. to encode raw data
+The envisioned use case is to read a valid Scala file with no imports needed, i.e. to encode raw data
 with the syntax of Scala. Permitting references to external classes would mean we can no longer
 copy-paste the raw data into any scala file, (ignoring import overrides)
 now we need to resolve external references!
