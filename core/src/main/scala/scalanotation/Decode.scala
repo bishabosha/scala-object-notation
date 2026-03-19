@@ -200,6 +200,12 @@ private[scalanotation] object TokenDecoder:
   ): Result[SourceFile[T], DecodeError] =
     TokenDecoder(tokens).decodeAnyRoot(decoder)
 
+  private[scalanotation] def decodeExpression[T](
+      tokens: List[Token],
+      decoder: TaggedSchema[T]
+  ): Result[T, DecodeError] =
+    TokenDecoder(tokens).decodeExpression(decoder)
+
   private[scalanotation] def describe(token: Token | Expr): String =
     token match
       case t: Token => describe(t)
@@ -272,6 +278,12 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
       val value = decodeTaggedAs(schema).ok
       expectEof().ok
       SourceFile(ValDecl(declaredName, value))
+
+  def decodeExpression[T](schema: TaggedSchema[T]): Result[T, DecodeError] =
+    Result:
+      val value = decodeTaggedAs(schema).ok
+      expectEof().ok
+      value
 
   private trait BasicDecodingVisitor[A]:
     def onNamedTuple[B](schema: Schema.NamedTuple[B]): Result[A, DecodeError]

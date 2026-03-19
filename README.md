@@ -66,7 +66,7 @@ type Data =
 
 // `given TaggedDecoder[Data]` is derived automatically
 val decoded: Result[Data, DecodeError] =
-  Readers.readValueAs[Data](input, name = "conf")
+  Readers.readDeclAs[Data](input, rootName = "conf")
 ```
 
 You can also read as a generic syntax tree (`Expr`) first and use that, or decode into
@@ -75,10 +75,23 @@ structured data afterwords:
 ```scala
 import scalanotation.*
 
+val `foo.scala` = "val conf = (ok = true)"
 type Data = (ok: Boolean)
 
-val expr = Readers.readValueAs[Expr](input, name = "conf").get
+val expr = Readers.readDeclAs[Expr](`foo.scala`, rootName = "conf").get
 val decoded = expr.decodeAs[Data]
+```
+
+or read just a top-level expression, without a declaration (e.g. `foo.sc` file)
+
+```scala
+import scalanotation.*
+
+val `foo.sc` = "(ok = true)"
+
+type Data = (ok: Boolean)
+
+val expr = Readers.readAs[Data](`foo.sc`).get
 ```
 
 Supported typed decoding targets currently include:
