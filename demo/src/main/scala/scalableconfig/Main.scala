@@ -47,7 +47,7 @@ object Main:
     val name  = args(nameIdx + 1)
     val input = Files.readString(path)
 
-    val ast = Readers.readAs[Expr](input, debugTokens = showTokens) match
+    val ast = Readers.readDeclsAs[Expr](input, debugTokens = showTokens) match
       case Result.Ok(value)  => value
       case Result.Err(error) =>
         System.err.println(error.format)
