@@ -1,17 +1,18 @@
 # Scala Object Notation
 
-This repository contains a small Scala 3 parser and decoder for a constrained, data-oriented subset of Scala syntax.
+This repository contains a small Scala 3 parser, decoder, and writer for a constrained, data-oriented subset of Scala syntax.
 
-Currently the supported use case is decoding data from text into either:
+The supported use case is reading data from text into either:
 - a Syntax tree (`Expr`),
 - a Scala type that directly matches the structure as written, (preserving nested named tuple types)
 - or advanced decoders into custom types.
+
+It can also write typed Scala values back into either `Expr` or text in the same Scala Object Notation syntax.
 
 Decoding into custom types is theoretically faster than from JSON as the order of fields is significant,
 and repeated field names are forbidden.
 
 This can be used as an alternative configuration file format for applications.
-Currently encoders are not supported but this is an area of interest.
 
 ## What Is Supported
 
@@ -54,7 +55,7 @@ Not supported:
 
 ## Decoding
 
-The `core` module exposes two main flows.
+The `core` module exposes paired read and write flows.
 
 Parse and decode directly into type that matches the structure of data using a contextual `TaggedDecoder[T]`:
 
@@ -104,7 +105,62 @@ Supported typed decoding targets currently include:
 - `Option[T]` for nullable values
 - `Expr` (generic syntax tree)
 - custom types via transformation of an existing `Reader[T]`
-- case class, case object, and enum derived encoders via `derives Reader`
+- case class, case object, and enum derived decoders via `derives Reader`
+
+## Writing
+
+You can render a typed value directly to either `Expr` or text:
+
+```scala
+import scalanotation.*
+
+type Data = (ok: Boolean, items: Vector[Int], note: Option[String])
+
+val value: Data = (ok = true, items = Vector(1, 2, 3), note = Some("done"))
+
+val expr: Expr = Writers.writeExpr(value)
+val text: String = Writers.write(value)
+val declText: String = Writers.writeDecl("conf", value)
+```
+
+Text output can be compact or pretty-printed. Pretty printing accepts an indentation width in spaces:
+
+```scala
+import scalanotation.*
+
+val compact = Writers.write(value)
+val pretty = Writers.writePretty(value, indent = 4)
+val alsoPretty = Writers.write(value, TextFormat.pretty(indent = 4))
+val declPretty = Writers.writeDecl("conf", value, TextFormat.pretty(indent = 4))
+```
+
+`Writers.write(...)` writes text directly from the typed value. It does not need to build an intermediate `Expr` first.
+
+`Expr` values can also be rendered directly, with the same formatting options:
+
+```scala
+import scalanotation.*
+
+val expr = Writers.writeExpr((ok = true))
+
+val text = expr.render
+val pretty = expr.renderPretty(indent = 4)
+val alsoPretty = expr.render(TextFormat.pretty(indent = 4))
+```
+
+Typed writing targets currently include:
+
+- arbitrary `Repr <: AnyNamedTuple`
+- `Vector[T]`,
+- `String`, `Char`, `Int`, `Long`, `Float`, `Double`, and `Boolean`
+- `Array[T]`, `IArray[T]`, arbitrary `Arr <: scala.collection.Seq[T]`
+- arbitrary `Dict <: scala.collection.Map[String, T]`,
+- `Option[T]` for nullable values
+- `Expr` (generic syntax tree)
+- custom types via transformation of an existing `Writer[T]`
+- case class, case object, and enum derived writers via `derives Writer`
+
+Read and write derivation both reuse the same internal `RawSchema`, so structural shape stays aligned across both pipelines.
 
 **Mapping an existing Schema**
 
@@ -125,6 +181,12 @@ given Reader[Mode] =
     case "safe" => Result.Ok(Mode.Safe)
     case other  => Result.Err(DecodeError.Custom(s"Unknown mode '$other'"))
   }
+
+given Writer[Mode] =
+  summon[Writer[String]].contramap {
+    case Mode.Fast => "fast"
+    case Mode.Safe => "safe"
+  }
 ```
 
 **Derived Schemas**
@@ -137,8 +199,8 @@ import steps.result.Result, Result.eval.raise
 
 import java.time.LocalDate
 
-case class Metadata(created: LocalDate, tags: Vector[String]) derives Reader
-case class User(name: String, age: Int, metadata: Metadata) derives Reader
+case class Metadata(created: LocalDate, tags: Vector[String]) derives Reader, Writer
+case class User(name: String, age: Int, metadata: Metadata) derives Reader, Writer
 
 given Reader[LocalDate] =
   summon[Reader[String]].emap { raw =>
@@ -147,6 +209,9 @@ given Reader[LocalDate] =
       catch case _: java.time.format.DateTimeParseException =>
         raise(DecodeError.Custom(s"Invalid ISO date '$raw'"))
   }
+
+given Writer[LocalDate] =
+  summon[Writer[String]].contramap(_.toString)
 ```
 
 > Note: for case class with no fields or a case object, the payload should be a named tuple with a single field - the class label, and null value.
@@ -160,7 +225,7 @@ import steps.result.Result, Result.eval.raise
 
 import java.time.LocalDate
 
-enum Mode derives Reader:
+enum Mode derives Reader, Writer:
   case Fast
   case Scheduled(at: LocalDate, retries: Int)
 
@@ -171,6 +236,9 @@ given Reader[LocalDate] =
       catch case _: java.time.format.DateTimeParseException =>
         raise(DecodeError.Custom(s"Invalid ISO date '$raw'"))
   }
+
+given Writer[LocalDate] =
+  summon[Writer[String]].contramap(_.toString)
 
 // Fast        => (Fast = null)
 // Scheduled   => (Scheduled = (at = "2026-03-15", retries = 2))

@@ -229,10 +229,11 @@ class ParserSuite extends FunSuite:
     type Data = IArray[Int]
 
     val sc = summon[Reader[Data]]
-    sc.schema match
-      case RawSchema.Vector(_, builder: PublicInternal.BuildIArray[Int]) =>
-        ()
-      case _ => fail(s"Expected a BuildIArray schema, got ${sc.schema.describeSelf}")
+    sc match
+      case vector: Reader.VectorReader[?, ?, ?] =>
+        assert(vector.builder.isInstanceOf[PublicInternal.BuildIArray[?]])
+      case _ =>
+        fail(s"Expected a vector reader, got ${sc.schema.describeSelf}")
 
     val input =
       """val data = Vector(1, 2, 3)
@@ -251,10 +252,11 @@ class ParserSuite extends FunSuite:
     type Data = Array[Int]
 
     val sc = summon[Reader[Data]]
-    sc.schema match
-      case RawSchema.Vector(_, builder: PublicInternal.BuildArray[Int]) =>
-        ()
-      case _ => fail(s"Expected a BuildArray schema, got ${sc.schema.describeSelf}")
+    sc match
+      case vector: Reader.VectorReader[?, ?, ?] =>
+        assert(vector.builder.isInstanceOf[PublicInternal.BuildArray[?]])
+      case _ =>
+        fail(s"Expected a vector reader, got ${sc.schema.describeSelf}")
 
     val input =
       """val data = Vector(1, 2, 3)
@@ -273,10 +275,11 @@ class ParserSuite extends FunSuite:
     type Data = List[Int]
 
     val sc = summon[Reader[Data]]
-    sc.schema match
-      case RawSchema.Vector(_, builder: PublicInternal.SeqFactoryVector[Int, List]) =>
-        ()
-      case _ => fail(s"Expected a SeqFactoryVector schema, got ${sc.schema.describeSelf}")
+    sc match
+      case vector: Reader.VectorReader[?, ?, ?] =>
+        assertEquals(vector.builder.getClass.getSimpleName, "SeqFactoryVector")
+      case _ =>
+        fail(s"Expected a vector reader, got ${sc.schema.describeSelf}")
 
     val input =
       """val data = Vector(1, 2, 3)
@@ -296,10 +299,11 @@ class ParserSuite extends FunSuite:
     type Data = Vector[Int]
 
     val sc = summon[Reader[Data]]
-    sc.schema match
-      case RawSchema.Vector(_, builder: PublicInternal.BuildVector[Int]) =>
-        ()
-      case _ => fail(s"Expected a BuildVector schema, got ${sc.schema.describeSelf}")
+    sc match
+      case vector: Reader.VectorReader[?, ?, ?] =>
+        assert(vector.builder.isInstanceOf[PublicInternal.BuildVector[?]])
+      case _ =>
+        fail(s"Expected a vector reader, got ${sc.schema.describeSelf}")
 
     val input =
       """val data = Vector(1, 2, 3)
@@ -319,10 +323,11 @@ class ParserSuite extends FunSuite:
     type Data = mutable.LinkedHashMap[String, Int]
 
     val sc = summon[Reader[Data]]
-    sc.schema match
-      case RawSchema.Dict(_, builder: PublicInternal.MapFactoryDict[Int, mutable.LinkedHashMap]) =>
-        ()
-      case _ => fail(s"Expected a MapFactoryDict schema, got ${sc.schema.describeSelf}")
+    sc match
+      case dict: Reader.DictReader[?, ?, ?] =>
+        assertEquals(dict.builder.getClass.getSimpleName, "MapFactoryDict")
+      case _ =>
+        fail(s"Expected a dict reader, got ${sc.schema.describeSelf}")
 
     val input =
       """val data = (x = 1, y = 2, z = 3)
@@ -697,6 +702,166 @@ class ParserSuite extends FunSuite:
         assertEquals(error.rootCause, DecodeError.Custom("Invalid ISO date 'bad-date'"))
       case Result.Ok(value) => fail(s"Expected a decode failure, got $value")
 
+  test("write typed values to Expr and read them back"):
+    type Data =
+      (x: (label: String, ys: Vector[Int]), y: Option[Int], ok: Boolean)
+
+    val value: Data =
+      (
+        x = (label = "abc", ys = Vector(-1, 2, 3)),
+        y = Some(23),
+        ok = true
+      )
+
+    val expr     = Writers.writeExpr(value)
+    val rendered = Writers.write(value)
+    val decoded  = expr.decodeAs[Data]
+    val reparsed = Readers.readAs[Data](rendered)
+
+    assertEquals(decoded, Result.Ok(value))
+    assertEquals(reparsed, Result.Ok(value))
+    assertEquals(rendered, """(x = (label = "abc", ys = Vector(-1, 2, 3)), y = 23, ok = true)""")
+
+  test("write derived case classes and enums"):
+    import java.time.LocalDate
+
+    final case class Metadata(created: LocalDate, tags: Vector[String]) derives Reader, Writer
+    enum Mode derives Reader, Writer:
+      case Fast
+      case Scheduled(at: LocalDate, retries: Int)
+    final case class User(name: String, mode: Mode, metadata: Metadata) derives Reader, Writer
+
+    given Reader[LocalDate] =
+      summon[Reader[String]].emap { raw =>
+        Result.catchException({ case _: java.time.format.DateTimeParseException =>
+          DecodeError.Custom(s"Invalid ISO date '$raw'")
+        }) {
+          LocalDate.parse(raw)
+        }
+      }
+
+    given Writer[LocalDate] =
+      summon[Writer[String]].contramap(_.toString)
+
+    val value = User(
+      name = "Ada",
+      mode = Mode.Scheduled(LocalDate.parse("2026-03-15"), 2),
+      metadata = Metadata(LocalDate.parse("2026-03-14"), Vector("compiler", "scala"))
+    )
+
+    val rendered = Writers.writeDecl("data", value)
+    val decoded  = Readers.readDeclAs[User](rendered, rootName = "data")
+
+    assertEquals(
+      rendered,
+      """val data = (name = "Ada", mode = (Scheduled = (at = "2026-03-15", retries = 2)), metadata = (created = "2026-03-14", tags = Vector("compiler", "scala")))"""
+    )
+    assertEquals(decoded, Result.Ok(value))
+
+  test("write strings and chars with escaping"):
+    val rendered = Writers.write(
+      (
+        message = "line1\nline2\t\"quoted\"",
+        mark = '\'',
+        slash = '\\'
+      )
+    )
+
+    type Data = (message: String, mark: Char, slash: Char)
+    val decoded = Readers.readAs[Data](rendered)
+
+    assertEquals(
+      rendered,
+      """(message = "line1\nline2\t\"quoted\"", mark = '\'', slash = '\\')"""
+    )
+    assertEquals(
+      decoded,
+      Result.Ok((message = "line1\nline2\t\"quoted\"", mark = '\'', slash = '\\'))
+    )
+
+  test("pretty print typed values with configurable indentation"):
+    type Data =
+      (x: (label: String, ys: Vector[Int]), y: Option[Int], ok: Boolean)
+
+    val value: Data =
+      (
+        x = (label = "abc", ys = Vector(-1, 2, 3)),
+        y = Some(23),
+        ok = true
+      )
+
+    val rendered = Writers.writePretty(value, indent = 2)
+
+    assertEquals(
+      rendered,
+      """(
+        |  x = (
+        |    label = "abc",
+        |    ys = Vector(
+        |      -1,
+        |      2,
+        |      3
+        |    )
+        |  ),
+        |  y = 23,
+        |  ok = true
+        |)""".stripMargin
+    )
+    assertEquals(Readers.readAs[Data](rendered), Result.Ok(value))
+
+  test("pretty print declarations and exprs with TextFormat"):
+    val expr = Writers.writeExpr(
+      (
+        items = Vector(1, 2),
+        nested = (ok = true)
+      )
+    )
+
+    val expected =
+      """val data = (
+        |    items = Vector(
+        |        1,
+        |        2
+        |    ),
+        |    nested = (
+        |        ok = true
+        |    )
+        |)""".stripMargin
+
+    assertEquals(
+      Writers.writeDecl("data", (items = Vector(1, 2), nested = (ok = true)), TextFormat.pretty(4)),
+      expected
+    )
+    assertEquals(
+      expr.render(TextFormat.pretty(4)),
+      expected.stripPrefix("val data = ")
+    )
+
+  test("TextFormat rejects negative indentation"):
+    interceptMessage[IllegalArgumentException]("requirement failed: indent must be >= 0, got -1") {
+      TextFormat.pretty(-1)
+    }
+
+  test("reader and writer share the same raw schema description"):
+    final case class Entry(name: String, value: Int) derives Reader, Writer
+
+    val readerSchema = summon[Reader[Entry]].schema.describeSelf
+    val writerSchema = summon[Writer[Entry]].schema.describeSelf
+
+    assertEquals(readerSchema, writerSchema)
+
+  test("no writer is derived for nested Option"):
+    val errors = typeCheckErrors(
+      "type Data = (x: Option[Option[Int]])\nsummon[scalanotation.Writer[Data]]"
+    )
+
+    assert(errors.nonEmpty)
+    assert(clue(errors.head.message).contains(".x"))
+    assert(
+      clue(errors.head.message)
+        .contains("Writer[Option[Option[?]]] is not supported")
+    )
+
   test("no decoder is derived for Any"):
     val errors = typeCheckErrors("summon[scalanotation.Reader[Any]]")
     assert(errors.nonEmpty)
@@ -780,24 +945,23 @@ class ParserSuite extends FunSuite:
     assertEquals(RawSchema.Char.describeSelf, "Char")
     assertEquals(RawSchema.String.describeSelf, "String")
     assertEquals(RawSchema.AnyExpr.describeSelf, "Any")
-    assertEquals(RawSchema.Nullary(null).describeSelf, "Null")
+    assertEquals(RawSchema.Nullary.describeSelf, "Null")
     // empty named tuple
     assertEquals(
-      RawSchema.NamedTuple(IArray.empty, _ => ()).describeSelf,
+      RawSchema.NamedTuple(IArray.empty[RawSchema.Field]).describeSelf,
       "AnyNamedTuple"
     )
     // named tuple with fields
     val withFields = RawSchema.NamedTuple(
       IArray(
-        RawSchema.Field("x", summon[Reader[Int]]),
-        RawSchema.Field("y", summon[Reader[String]])
-      ),
-      _ => ()
+        RawSchema.Field("x", summon[Reader[Int]].schema),
+        RawSchema.Field("y", summon[Reader[String]].schema)
+      )
     )
     assertEquals(withFields.describeSelf, "(x: ..., y: ...)")
     // single-case sum schema
     val sumSchema = RawSchema.Sum(
-      Map("Fast" -> RawSchema.SumCase("Fast", summon[Reader[Int]]))
+      Map("Fast" -> RawSchema.SumCase("Fast", summon[Reader[Int]].schema))
     )
     assertEquals(sumSchema.describeSelf, "(Fast: ...)")
     enum AorB:
@@ -807,8 +971,8 @@ class ParserSuite extends FunSuite:
     val multiSumDesc = RawSchema
       .Sum(
         Map(
-          "A" -> RawSchema.SumCase("A", Reader.forNull(AorB.A)),
-          "B" -> RawSchema.SumCase("B", Reader.forNull(AorB.B))
+          "A" -> RawSchema.SumCase("A", Reader.forNull(AorB.A).schema),
+          "B" -> RawSchema.SumCase("B", Reader.forNull(AorB.B).schema)
         )
       )
       .describeSelf
@@ -826,10 +990,10 @@ class ParserSuite extends FunSuite:
     )
     // Option schema
     assertEquals(
-      RawSchema.Option(summon[Reader[Int]]).describeSelf,
+      RawSchema.Option(summon[Reader[Int]].schema).describeSelf,
       "Int | Null"
     )
     assertEquals(
-      RawSchema.Option(summon[Reader[String]]).describeSelf,
+      RawSchema.Option(summon[Reader[String]].schema).describeSelf,
       "String | Null"
     )

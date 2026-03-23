@@ -1,6 +1,7 @@
 package scalanotation
 
 import scalanotation.Reader.Builders.AtPath
+import scalanotation.internal.CommonDerivationBuilders
 import scalanotation.internal.PublicInternal
 import scalanotation.internal.PublicInternal.showType
 import scalanotation.internal.RawSchema
@@ -12,8 +13,6 @@ import scala.deriving.Mirror
 import scala.reflect.ClassTag
 import scala.util.NotGiven
 
-import Result.eval.{ok, break}
-
 sealed trait Reader[T]:
   private[scalanotation] def schema: RawSchema
 
@@ -24,46 +23,64 @@ sealed trait Reader[T]:
     Reader.mappedResult(this)(f)
 
 object Reader {
-  private[scalanotation] final def finalize[Z, T](
-      decoder: Reader[T],
-      checked: Result[Z, DecodeError]
-  ): Result[T, DecodeError] =
-    decoder match
-      case mapped: MappedSchema[?, T] => mapped.parse(checked)
-      case _                          => checked.asInstanceOf[Result[T, DecodeError]]
+  trait VectorBuilder[Elem, Repr, A]:
+    def init(): Repr
+    def add(repr: Repr, elem: Elem): Repr
+    def finish(repr: Repr): A
 
-  private class MappedSchema[A, B](
-      private val base: Reader[A],
-      private val transform: A => Result[B, DecodeError]
-  ) extends Reader[B] {
+  trait DictBuilder[Elem, Repr, A]:
+    def init(): Repr
+    def add(repr: Repr, key: String, elem: Elem): Repr
+    def finish(repr: Repr): A
+
+  final case class Field[A](name: String, decoder: Reader[A]):
+    def schemaField: RawSchema.Field = RawSchema.Field(name, decoder.schema)
+
+  final case class SumCase[A](name: String, decoder: Reader[A]):
+    def schemaCase: RawSchema.SumCase = RawSchema.SumCase(name, decoder.schema)
+
+  private[scalanotation] final class PrimitiveReader[T](val schema: RawSchema) extends Reader[T]
+
+  private[scalanotation] final class NamedTupleReader[A](
+      val fields: IArray[Field[?]],
+      val build: Array[AnyRef] => A
+  ) extends Reader[A]:
+    lazy val schema: RawSchema =
+      RawSchema.NamedTuple(IArray.from(fields.iterator.map(_.schemaField)))
+
+  private[scalanotation] final class SumReader[A](
+      val cases: Map[String, SumCase[? <: A]]
+  ) extends Reader[A]:
+    lazy val schema: RawSchema =
+      RawSchema.Sum(cases.iterator.map((name, sumCase) => name -> sumCase.schemaCase).toMap)
+
+  private[scalanotation] final class VectorReader[Elem, Repr, A](
+      val element: Reader[Elem],
+      val builder: VectorBuilder[Elem, Repr, A]
+  ) extends Reader[A]:
+    lazy val schema: RawSchema = RawSchema.Vector(element.schema)
+
+  private[scalanotation] final class DictReader[Elem, Repr, A](
+      val element: Reader[Elem],
+      val builder: DictBuilder[Elem, Repr, A]
+  ) extends Reader[A]:
+    lazy val schema: RawSchema = RawSchema.Dict(element.schema)
+
+  private[scalanotation] final class NullaryReader[A](val value: A) extends Reader[A]:
+    val schema: RawSchema = RawSchema.Nullary
+
+  private[scalanotation] final class OptionReader[A](val inner: Reader[A])
+      extends Reader[Option[A]]:
+    lazy val schema: RawSchema = RawSchema.Option(inner.schema)
+
+  private[scalanotation] class MappedSchema[A, B](
+      private[scalanotation] val base: Reader[A],
+      private[scalanotation] val transform: A => Result[B, DecodeError]
+  ) extends Reader[B]:
     val schema: RawSchema = base.schema
 
-    final def parse[Z](result: Result[Z, DecodeError]): Result[B, DecodeError] =
-      @tailrec
-      def loop[X, Y](
-          res: Result[X, DecodeError],
-          base: Reader[Y],
-          stack: List[Any => Result[Any, DecodeError]]
-      ): Result[Y, DecodeError] =
-        base match
-          case mapped: MappedSchema[y1, Y] =>
-            loop[X, y1](
-              res,
-              mapped.base,
-              mapped.transform.asInstanceOf[Any => Result[Any, DecodeError]] :: stack
-            ).asInstanceOf[Result[Y, DecodeError]]
-          case _ =>
-            stack
-              .foldLeft(res.asInstanceOf[Result[Any, DecodeError]]) {
-                _.flatMap(_)
-              }
-              .asInstanceOf[Result[Y, DecodeError]]
-      loop(result, this, Nil)
-  }
-
   private[scalanotation] def identity[T](schema0: RawSchema): Reader[T] =
-    new Reader[T]:
-      val schema: RawSchema = schema0
+    PrimitiveReader(schema0)
 
   def mapped[A, B](base: Reader[A])(transform: A => B): Reader[B] =
     mappedResult(base)(value => Result.Ok(transform(value)))
@@ -71,6 +88,26 @@ object Reader {
   def mappedResult[A, B](base: Reader[A])(
       transform: A => Result[B, DecodeError]
   ): Reader[B] = MappedSchema(base, transform)
+
+  @tailrec
+  private[scalanotation] def unwrap[T](
+      reader: Reader[T],
+      stack: List[Any => Result[Any, DecodeError]] = Nil
+  ): (Reader[Any], List[Any => Result[Any, DecodeError]]) =
+    reader match
+      case mapped: MappedSchema[a, T] =>
+        unwrap[a](
+          mapped.base,
+          mapped.transform.asInstanceOf[Any => Result[Any, DecodeError]] :: stack
+        )
+      case _ =>
+        (reader.asInstanceOf[Reader[Any]], stack)
+
+  private[scalanotation] def applyTransforms[T](
+      result: Result[Any, DecodeError],
+      stack: List[Any => Result[Any, DecodeError]]
+  ): Result[T, DecodeError] =
+    stack.foldLeft(result)(_.flatMap(_)).asInstanceOf[Result[T, DecodeError]]
 
   inline def derived[T](using mirror: Mirror.Of[T]): Reader[T] =
     inline mirror match
@@ -98,27 +135,16 @@ object Reader {
       atPath: Builders.ProductFieldsAtPath["", mirror.MirroredElemLabels, mirror.MirroredElemTypes],
       hasFields: NotGiven[mirror.MirroredElemTypes =:= EmptyTuple]
   ): Reader[T] =
-    identity(
-      RawSchema.NamedTuple(
-        IArray.from(atPath.fields),
-        PublicInternal.caseClassBuilder[T]
-      )
-    )
+    Builders.productTypeClass[T](atPath.fields)
 
   def singleton[T](using mirror: Mirror.ProductOf[T])(
       using label: ValueOf[mirror.MirroredLabel],
       noFields: mirror.MirroredElemTypes =:= EmptyTuple
   ): Reader[T] =
-    val value = mirror.fromProduct(EmptyTuple)
-    identity(
-      RawSchema.NamedTuple(
-        IArray(RawSchema.Field(label.value, forNull(value))),
-        _ => value
-      )
-    )
+    Builders.singletonTypeClass[T](label.value)
 
   def forNull[T](value: T): Reader[T] =
-    Builders.nullaryCase(value)
+    NullaryReader(value)
 
   def ofCases[T](using mirror: Mirror.SumOf[T])(
       using casesAtPath: Builders.SumCasesAtPath[
@@ -128,9 +154,9 @@ object Reader {
         mirror.MirroredElemTypes
       ]
   ): Reader[T] =
-    var buf = Map.empty[String, RawSchema.SumCase[T]]
+    var buf = Map.empty[String, SumCase[? <: T]]
     for sumCase <- casesAtPath.cases do buf = buf.updated(sumCase.name, sumCase)
-    identity(RawSchema.Sum(buf))
+    SumReader(buf)
 
   given ExprSchema: Reader[Expr] = identity(RawSchema.AnyExpr)
 
@@ -149,192 +175,120 @@ object Reader {
   given BooleanSchema: Reader[Boolean] = identity(RawSchema.Boolean)
 
   given OptionSchema: [T] => (atPath: AtPath["", Option[T]]) => Reader[Option[T]] =
-    atPath.decoder
+    atPath.typeclass
 
   given VectorSchema: [T] => (atPath: AtPath["", Vector[T]]) => Reader[Vector[T]] =
-    atPath.decoder
+    atPath.typeclass
 
   given IArraySchema: [T] => (atPath: AtPath["", IArray[T]]) => Reader[IArray[T]] =
-    atPath.decoder
+    atPath.typeclass
 
   given ArraySchema: [T] => (atPath: AtPath["", Array[T]]) => Reader[Array[T]] =
-    atPath.decoder
+    atPath.typeclass
 
   given SeqSchema: [Col[X] <: scala.collection.Seq[X], T] => (atPath: AtPath["", Col[T]])
     => Reader[Col[T]] =
-    atPath.decoder
+    atPath.typeclass
 
   given MapSchema
       : [Col[X, Y] <: scala.collection.Map[X, Y], T] => (atPath: AtPath["", Col[String, T]])
         => Reader[Col[String, T]] =
-    atPath.decoder
+    atPath.typeclass
 
   given NamedTupleSchema: [NT <: NamedTuple.AnyNamedTuple]
     => (atPath: AtPath["", NT]) => Reader[NT] =
-    atPath.decoder
+    atPath.typeclass
 
-  object Builders {
-    import AtPath.decoder
-    import compiletime.{erasedValue, summonInline}
-    import ProductFieldsAtPath.{Cons as ProductFieldsCons, Empty as ProductFieldsEmpty}
-    import ProductFieldsAtPath.fields
+  object Builders extends CommonDerivationBuilders[Reader] {
+    type FieldRepr      = Field[?]
+    type SumCaseRepr[A] = SumCase[A]
 
-    inline def formatPath[Path <: String]: String = ("'" + compiletime.constValue[Path] + "'")
+    import compiletime.ops.string.+
 
-    private[scalanotation] def nullaryCase[T](value: T): Reader[T] =
-      identity(RawSchema.Nullary(value))
+    private[scalanotation] inline def typeClassName: String = "Reader"
 
-    opaque type ProductFieldsAtPath[Path <: String, Labels <: Tuple, Values <: Tuple] =
-      List[RawSchema.Field[?]]
+    private[scalanotation] def makeField[T](name: String, typeclass: Reader[T]): FieldRepr =
+      Field(name, typeclass)
 
-    object ProductFieldsAtPath:
-      import compiletime.ops.string.+
+    private[scalanotation] def namedTupleTypeClass[T](fields: List[FieldRepr]): Reader[T] =
+      NamedTupleReader(
+        IArray.from(fields),
+        PublicInternal.buildNamedTuple.asInstanceOf[Array[AnyRef] => T]
+      )
 
-      extension [Path <: String, Labels <: Tuple, Values <: Tuple](
-          atPath: ProductFieldsAtPath[Path, Labels, Values]
-      ) def fields: List[RawSchema.Field[?]] = atPath
+    private[scalanotation] def productTypeClass[T](fields: List[FieldRepr])(
+        using mirror: Mirror.ProductOf[T]
+    ): Reader[T] =
+      NamedTupleReader(
+        IArray.from(fields),
+        PublicInternal.caseClassBuilder[T]
+      )
 
-      given Empty: [Path <: String] => ProductFieldsAtPath[Path, EmptyTuple, EmptyTuple] = Nil
+    private[scalanotation] def singletonTypeClass[T](label: String)(
+        using mirror: Mirror.ProductOf[T],
+        noFields: mirror.MirroredElemTypes =:= EmptyTuple
+    ): Reader[T] =
+      val value = mirror.fromProduct(EmptyTuple)
+      NamedTupleReader(
+        IArray(Field(label, forNull(value))),
+        _ => value
+      )
 
-      given Cons: [Path <: String, Label <: String, Value, Labels <: Tuple, Values <: Tuple]
-        => (valueOf: ValueOf[Label])
-        => (atPath: AtPath[Path + "." + Label, Value])
-        => (rest: ProductFieldsAtPath[Path, Labels, Values])
-        => ProductFieldsAtPath[Path, Label *: Labels, Value *: Values] =
-        val decoder = atPath.decoder
-        RawSchema.Field(valueOf.value, decoder) :: rest.fields
+    private[scalanotation] def nullaryEnumCaseTypeClass[T](
+        using mirror: Mirror.ProductOf[T],
+        empty: mirror.MirroredElemTypes =:= EmptyTuple
+    ): Reader[T] =
+      NullaryReader(mirror.fromProduct(EmptyTuple))
 
-    opaque type SumCasesAtPath[Path <: String, A, Labels <: Tuple, Cases <: Tuple] =
-      List[RawSchema.SumCase[A]]
+    private[scalanotation] def sumCaseTypeClass[A, T <: A](
+        name: String,
+        typeclass: Reader[T]
+    ): SumCaseRepr[A] =
+      SumCase(name, typeclass.asInstanceOf[Reader[A]])
 
-    opaque type DerivedEnumCaseAtPath[Path <: String, T] = Reader[T]
+    given VectorAtPath: [Path <: String, T]
+      => (wrapped: AtPath[Path + "[]", T])
+      => AtPath[Path, Vector[T]] =
+      liftAtPath[Path, Vector[T]](
+        Reader.VectorReader(wrapped.typeclass, PublicInternal.BuildVector[T])
+      )
 
-    object DerivedEnumCaseAtPath:
-      extension [Path <: String, T](self: DerivedEnumCaseAtPath[Path, T])
-        private[scalanotation] def upcast[A >: T]: DerivedEnumCaseAtPath[Path, A] =
-          self.asInstanceOf[DerivedEnumCaseAtPath[Path, A]]
+    given SeqAtPath: [Path <: String, T, Col[X] <: scala.collection.Seq[X]]
+      => (wrapped: AtPath[Path + "[]", T])
+      => (factory: scala.collection.Factory[T, Col[T]])
+      => AtPath[Path, Col[T]] =
+      liftAtPath[Path, Col[T]](
+        Reader.VectorReader(wrapped.typeclass, PublicInternal.SeqFactoryVector[T, Col])
+      )
 
-      given Nullary[Path <: String, T](
-          using mirror: Mirror.ProductOf[T],
-          empty: mirror.MirroredElemTypes =:= EmptyTuple
-      ): DerivedEnumCaseAtPath[Path, T] =
-        nullaryCase(mirror.fromProduct(EmptyTuple))
+    given IArrayAtPath: [Path <: String, T: ClassTag as tag]
+      => (wrapped: AtPath[Path + "[]", T])
+      => AtPath[Path, IArray[T]] =
+      liftAtPath[Path, IArray[T]](
+        Reader.VectorReader(wrapped.typeclass, PublicInternal.BuildIArray[T])
+      )
 
-      given Product[Path <: String, T](
-          using mirror: Mirror.ProductOf[T],
-          fieldsAtPath: ProductFieldsAtPath[
-            Path,
-            mirror.MirroredElemLabels,
-            mirror.MirroredElemTypes
-          ],
-          nonEmpty: NotGiven[mirror.MirroredElemTypes =:= EmptyTuple]
-      ): DerivedEnumCaseAtPath[Path, T] =
-        identity(
-          RawSchema.NamedTuple(
-            IArray.from(fieldsAtPath.fields),
-            PublicInternal.caseClassBuilder[T]
-          )
-        )
+    given ArrayAtPath: [Path <: String, T: ClassTag as tag]
+      => (wrapped: AtPath[Path + "[]", T])
+      => AtPath[Path, Array[T]] =
+      liftAtPath[Path, Array[T]](
+        Reader.VectorReader(wrapped.typeclass, PublicInternal.BuildArray[T])
+      )
 
-    object SumCasesAtPath:
-      import compiletime.ops.string.+
-      import DerivedEnumCaseAtPath.upcast
+    given MapAtPath: [Path <: String, T, Col[X, Y] <: scala.collection.Map[X, Y]]
+      => (wrapped: AtPath[Path + ".*", T])
+      => (factory: scala.collection.Factory[(String, T), Col[String, T]])
+      => AtPath[Path, Col[String, T]] =
+      liftAtPath[Path, Col[String, T]](
+        Reader.DictReader(wrapped.typeclass, PublicInternal.MapFactoryDict[T, Col])
+      )
 
-      extension [Path <: String, A, Labels <: Tuple, Cases <: Tuple](
-          atPath: SumCasesAtPath[Path, A, Labels, Cases]
-      ) def cases: List[RawSchema.SumCase[A]] = atPath
-
-      given Empty: [Path <: String, A] => SumCasesAtPath[Path, A, EmptyTuple, EmptyTuple] = Nil
-
-      given Cons: [Path <: String, A, Label <: String, Case <: A, Labels <: Tuple, Cases <: Tuple]
-        => (valueOf: ValueOf[Label])
-        => (caseDecoder: DerivedEnumCaseAtPath[Path + "." + Label, Case])
-        => (rest: SumCasesAtPath[Path, A, Labels, Cases])
-        => SumCasesAtPath[Path, A, Label *: Labels, Case *: Cases] =
-        RawSchema.SumCase(valueOf.value, caseDecoder.upcast[A]) :: rest.cases
-
-    opaque type NonNestedOption[Path <: String, T] = Unit
-
-    object NonNestedOption:
-      inline given Default: [Path <: String, T] => NonNestedOption[Path, T] =
-        compiletime.summonFrom {
-          case _: (T <:< Option[?]) =>
-            compiletime.error(
-              "at path " + formatPath[Path] +
-                ": Reader[Option[Option[?]]] is not supported."
-            )
-          case _ =>
-            ()
-        }
-
-    opaque type AtPath[Path <: String, T] = Reader[T] | List[RawSchema.Field[?]]
-
-    object AtPath:
-      import compiletime.ops.string.+
-
-      extension [Path <: String, T](schema: AtPath[Path, T])
-        def decoder: Reader[T] = schema match
-          case d: Reader[T]                 => d
-          case ls: List[RawSchema.Field[?]] =>
-            identity(RawSchema.NamedTuple(IArray.from(ls), PublicInternal.buildNamedTuple))
-
-        def schema: RawSchema = decoder.schema
-
-      inline given DefaultAtPath: [Path <: String, T] => AtPath[Path, T] =
-        compiletime.summonFrom {
-          case d: Reader[T] => d
-          case _            =>
-            compiletime.error(
-              "at path " + formatPath[Path] + ": Could not find Reader[" + showType[T] + "]."
-            )
-        }
-
-      given VectorAtPath: [Path <: String, T]
-        => (wrapped: AtPath[Path + "[]", T])
-        => AtPath[Path, Vector[T]] =
-        identity(RawSchema.Vector(wrapped.decoder, PublicInternal.BuildVector[T]))
-
-      given SeqAtPath: [Path <: String, T, Col[X] <: scala.collection.Seq[X]]
-        => (wrapped: AtPath[Path + "[]", T])
-        => (factory: scala.collection.Factory[T, Col[T]])
-        => AtPath[Path, Col[T]] =
-        identity(RawSchema.Vector(wrapped.decoder, PublicInternal.SeqFactoryVector[T, Col]))
-
-      given IArrayAtPath: [Path <: String, T: ClassTag as tag]
-        => (wrapped: AtPath[Path + "[]", T])
-        => AtPath[Path, IArray[T]] =
-        identity(RawSchema.Vector(wrapped.decoder, PublicInternal.BuildIArray[T]))
-
-      given ArrayAtPath: [Path <: String, T: ClassTag as tag]
-        => (wrapped: AtPath[Path + "[]", T])
-        => AtPath[Path, Array[T]] =
-        identity(RawSchema.Vector(wrapped.decoder, PublicInternal.BuildArray[T]))
-
-      given MapAtPath: [Path <: String, T, Col[X, Y] <: scala.collection.Map[X, Y]]
-        => (wrapped: AtPath[Path + ".*", T])
-        => (factory: scala.collection.Factory[(String, T), Col[String, T]])
-        => AtPath[Path, Col[String, T]] =
-        identity(RawSchema.Dict(wrapped.decoder, PublicInternal.MapFactoryDict[T, Col]))
-
-      given OptionAtPath: [Path <: String, T]
-        => NonNestedOption[Path, T]
-        => (wrapped: AtPath[Path, T])
-        => AtPath[Path, Option[T]] =
-        identity(RawSchema.Option(wrapped.decoder))
-
-      given NamedTupleCons: [Path <: String, N <: String, V, Ns <: Tuple, Vs <: Tuple]
-        => (vn: ValueOf[N], ap: AtPath[Path + "." + N, V], rest: AtPath[Path, NamedTuple[Ns, Vs]])
-        => AtPath[Path, NamedTuple[N *: Ns, V *: Vs]] =
-        rest match
-          case fs: List[RawSchema.Field[?]] =>
-            val decoder: Reader[V] = ap.decoder
-            RawSchema.Field(vn.value, decoder) :: fs
-          case _ =>
-            throw IllegalArgumentException(
-              "Expected the rest of the named tuple to be a NamedTuple schema"
-            )
-
-      given NamedTupleEmpty: [Path <: String] => AtPath[Path, NamedTuple.Empty] =
-        Nil
+    given OptionAtPath: [Path <: String, T]
+      => NonNestedOption[Path, T]
+      => (wrapped: AtPath[Path, T])
+      => AtPath[Path, Option[T]] =
+      liftAtPath[Path, Option[T]](
+        Reader.OptionReader(wrapped.typeclass)
+      )
   }
 }
