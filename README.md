@@ -103,8 +103,8 @@ Supported typed decoding targets currently include:
 - arbitrary `Dict <: scala.collection.Map[String, T]`,
 - `Option[T]` for nullable values
 - `Expr` (generic syntax tree)
-- custom types via transformation of an existing `TaggedSchema[T]`
-- case class, case object, and enum derived encoders via `derives TaggedSchema`
+- custom types via transformation of an existing `Reader[T]`
+- case class, case object, and enum derived encoders via `derives Reader`
 
 **Mapping an existing Schema**
 
@@ -119,8 +119,8 @@ import java.time.LocalDate
 enum Mode:
   case Fast, Safe
 
-given TaggedSchema[Mode] =
-  summon[TaggedSchema[String]].emap {
+given Reader[Mode] =
+  summon[Reader[String]].emap {
     case "fast" => Result.Ok(Mode.Fast)
     case "safe" => Result.Ok(Mode.Safe)
     case other  => Result.Err(DecodeError.Custom(s"Unknown mode '$other'"))
@@ -137,11 +137,11 @@ import steps.result.Result, Result.eval.raise
 
 import java.time.LocalDate
 
-case class Metadata(created: LocalDate, tags: Vector[String]) derives TaggedSchema
-case class User(name: String, age: Int, metadata: Metadata) derives TaggedSchema
+case class Metadata(created: LocalDate, tags: Vector[String]) derives Reader
+case class User(name: String, age: Int, metadata: Metadata) derives Reader
 
-given TaggedSchema[LocalDate] =
-  summon[TaggedSchema[String]].emap { raw =>
+given Reader[LocalDate] =
+  summon[Reader[String]].emap { raw =>
     Result:
       try LocalDate.parse(raw)
       catch case _: java.time.format.DateTimeParseException =>
@@ -160,12 +160,12 @@ import steps.result.Result, Result.eval.raise
 
 import java.time.LocalDate
 
-enum Mode derives TaggedSchema:
+enum Mode derives Reader:
   case Fast
   case Scheduled(at: LocalDate, retries: Int)
 
-given TaggedSchema[LocalDate] =
-  summon[TaggedSchema[String]].emap { raw =>
+given Reader[LocalDate] =
+  summon[Reader[String]].emap { raw =>
     Result:
       try LocalDate.parse(raw)
       catch case _: java.time.format.DateTimeParseException =>

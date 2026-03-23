@@ -1,6 +1,7 @@
 package scalanotation
 
 import scala.annotation.tailrec
+import DecodeError.Span
 
 enum DecodeError:
   case TokenFormat(message: String)
@@ -97,3 +98,6 @@ enum DecodeError:
     val msg = baseMessage(rootCause)
     (finalSpan ++: pathStr :+ msg).mkString
   }
+
+object DecodeError:
+  final case class Span(offset: Int, line: Int, column: Int)

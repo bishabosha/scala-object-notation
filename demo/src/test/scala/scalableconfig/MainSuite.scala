@@ -1,10 +1,9 @@
 package scalableconfig
 
-import scalanotation.*
-
 import munit.FunSuite
 import org.virtuslab.yaml.Node
 import org.virtuslab.yaml.Tag
+import scalanotation.*
 
 class MainSuite extends FunSuite:
   test("render json export"):
@@ -85,7 +84,7 @@ class MainSuite extends FunSuite:
         |""".stripMargin
     )
 
-    val node                          = Main.exprToYamlNode(ast.declaration.value)
+    val node                          = Main.exprToYamlNode(ast.declarations.head(1))
     val Node.MappingNode(mappings, _) = node: @unchecked
 
     val byName = mappings.collect {

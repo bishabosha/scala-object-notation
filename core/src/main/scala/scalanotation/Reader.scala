@@ -1,32 +1,31 @@
 package scalanotation
 
-import scalanotation.Internal.showType
-import scalanotation.TaggedSchema.Builders.AtPath
+import scalanotation.Reader.Builders.AtPath
+import scalanotation.internal.PublicInternal
+import scalanotation.internal.PublicInternal.showType
+import scalanotation.internal.RawSchema
 import steps.result.Result
 
 import scala.NamedTuple.NamedTuple
+import scala.annotation.tailrec
 import scala.deriving.Mirror
+import scala.reflect.ClassTag
 import scala.util.NotGiven
 
 import Result.eval.{ok, break}
-import scala.annotation.tailrec
-import scala.reflect.ClassTag
 
-sealed trait TaggedSchema[T]:
-  private[scalanotation] def schema: Schema
+sealed trait Reader[T]:
+  private[scalanotation] def schema: RawSchema
 
-  final def decode(expr: Expr): Result[T, DecodeError] =
-    ExprDecoder.decodeTagged(this, expr)
+  final def map[U](f: T => U): Reader[U] =
+    Reader.mapped(this)(f)
 
-  final def map[U](f: T => U): TaggedSchema[U] =
-    TaggedSchema.mapped(this)(f)
+  final def emap[U](f: T => Result[U, DecodeError]): Reader[U] =
+    Reader.mappedResult(this)(f)
 
-  final def emap[U](f: T => Result[U, DecodeError]): TaggedSchema[U] =
-    TaggedSchema.mappedResult(this)(f)
-
-object TaggedSchema {
+object Reader {
   private[scalanotation] final def finalize[Z, T](
-      decoder: TaggedSchema[T],
+      decoder: Reader[T],
       checked: Result[Z, DecodeError]
   ): Result[T, DecodeError] =
     decoder match
@@ -34,16 +33,16 @@ object TaggedSchema {
       case _                          => checked.asInstanceOf[Result[T, DecodeError]]
 
   private class MappedSchema[A, B](
-      private val base: TaggedSchema[A],
+      private val base: Reader[A],
       private val transform: A => Result[B, DecodeError]
-  ) extends TaggedSchema[B] {
-    val schema: Schema = base.schema
+  ) extends Reader[B] {
+    val schema: RawSchema = base.schema
 
     final def parse[Z](result: Result[Z, DecodeError]): Result[B, DecodeError] =
       @tailrec
       def loop[X, Y](
           res: Result[X, DecodeError],
-          base: TaggedSchema[Y],
+          base: Reader[Y],
           stack: List[Any => Result[Any, DecodeError]]
       ): Result[Y, DecodeError] =
         base match
@@ -62,18 +61,18 @@ object TaggedSchema {
       loop(result, this, Nil)
   }
 
-  private[scalanotation] def identity[T](schema0: Schema): TaggedSchema[T] =
-    new TaggedSchema[T]:
-      val schema: Schema = schema0
+  private[scalanotation] def identity[T](schema0: RawSchema): Reader[T] =
+    new Reader[T]:
+      val schema: RawSchema = schema0
 
-  def mapped[A, B](base: TaggedSchema[A])(transform: A => B): TaggedSchema[B] =
+  def mapped[A, B](base: Reader[A])(transform: A => B): Reader[B] =
     mappedResult(base)(value => Result.Ok(transform(value)))
 
-  def mappedResult[A, B](base: TaggedSchema[A])(
+  def mappedResult[A, B](base: Reader[A])(
       transform: A => Result[B, DecodeError]
-  ): TaggedSchema[B] = MappedSchema(base, transform)
+  ): Reader[B] = MappedSchema(base, transform)
 
-  inline def derived[T](using mirror: Mirror.Of[T]): TaggedSchema[T] =
+  inline def derived[T](using mirror: Mirror.Of[T]): Reader[T] =
     inline mirror match
       case m: Mirror.ProductOf[T] =>
         compiletime.summonFrom({
@@ -98,27 +97,27 @@ object TaggedSchema {
       using
       atPath: Builders.ProductFieldsAtPath["", mirror.MirroredElemLabels, mirror.MirroredElemTypes],
       hasFields: NotGiven[mirror.MirroredElemTypes =:= EmptyTuple]
-  ): TaggedSchema[T] =
+  ): Reader[T] =
     identity(
-      Schema.NamedTuple(
+      RawSchema.NamedTuple(
         IArray.from(atPath.fields),
-        Internal.caseClassBuilder[T]
+        PublicInternal.caseClassBuilder[T]
       )
     )
 
   def singleton[T](using mirror: Mirror.ProductOf[T])(
       using label: ValueOf[mirror.MirroredLabel],
       noFields: mirror.MirroredElemTypes =:= EmptyTuple
-  ): TaggedSchema[T] =
+  ): Reader[T] =
     val value = mirror.fromProduct(EmptyTuple)
     identity(
-      Schema.NamedTuple(
-        IArray(Schema.Field(label.value, forNull(value))),
+      RawSchema.NamedTuple(
+        IArray(RawSchema.Field(label.value, forNull(value))),
         _ => value
       )
     )
 
-  def forNull[T](value: T): TaggedSchema[T] =
+  def forNull[T](value: T): Reader[T] =
     Builders.nullaryCase(value)
 
   def ofCases[T](using mirror: Mirror.SumOf[T])(
@@ -128,50 +127,50 @@ object TaggedSchema {
         mirror.MirroredElemLabels,
         mirror.MirroredElemTypes
       ]
-  ): TaggedSchema[T] =
-    var buf = Map.empty[String, Schema.SumCase[T]]
+  ): Reader[T] =
+    var buf = Map.empty[String, RawSchema.SumCase[T]]
     for sumCase <- casesAtPath.cases do buf = buf.updated(sumCase.name, sumCase)
-    identity(Schema.Sum(buf))
+    identity(RawSchema.Sum(buf))
 
-  given ExprSchema: TaggedSchema[Expr] = identity(Schema.AnyExpr)
+  given ExprSchema: Reader[Expr] = identity(RawSchema.AnyExpr)
 
-  given StringSchema: TaggedSchema[String] = identity(Schema.String)
+  given StringSchema: Reader[String] = identity(RawSchema.String)
 
-  given CharSchema: TaggedSchema[Char] = identity(Schema.Char)
+  given CharSchema: Reader[Char] = identity(RawSchema.Char)
 
-  given IntSchema: TaggedSchema[Int] = identity(Schema.Int)
+  given IntSchema: Reader[Int] = identity(RawSchema.Int)
 
-  given LongSchema: TaggedSchema[Long] = identity(Schema.Long)
+  given LongSchema: Reader[Long] = identity(RawSchema.Long)
 
-  given FloatSchema: TaggedSchema[Float] = identity(Schema.Float)
+  given FloatSchema: Reader[Float] = identity(RawSchema.Float)
 
-  given DoubleSchema: TaggedSchema[Double] = identity(Schema.Double)
+  given DoubleSchema: Reader[Double] = identity(RawSchema.Double)
 
-  given BooleanSchema: TaggedSchema[Boolean] = identity(Schema.Boolean)
+  given BooleanSchema: Reader[Boolean] = identity(RawSchema.Boolean)
 
-  given OptionSchema: [T] => (atPath: AtPath["", Option[T]]) => TaggedSchema[Option[T]] =
+  given OptionSchema: [T] => (atPath: AtPath["", Option[T]]) => Reader[Option[T]] =
     atPath.decoder
 
-  given VectorSchema: [T] => (atPath: AtPath["", Vector[T]]) => TaggedSchema[Vector[T]] =
+  given VectorSchema: [T] => (atPath: AtPath["", Vector[T]]) => Reader[Vector[T]] =
     atPath.decoder
 
-  given IArraySchema: [T] => (atPath: AtPath["", IArray[T]]) => TaggedSchema[IArray[T]] =
+  given IArraySchema: [T] => (atPath: AtPath["", IArray[T]]) => Reader[IArray[T]] =
     atPath.decoder
 
-  given ArraySchema: [T] => (atPath: AtPath["", Array[T]]) => TaggedSchema[Array[T]] =
+  given ArraySchema: [T] => (atPath: AtPath["", Array[T]]) => Reader[Array[T]] =
     atPath.decoder
 
   given SeqSchema: [Col[X] <: scala.collection.Seq[X], T] => (atPath: AtPath["", Col[T]])
-    => TaggedSchema[Col[T]] =
+    => Reader[Col[T]] =
     atPath.decoder
 
   given MapSchema
       : [Col[X, Y] <: scala.collection.Map[X, Y], T] => (atPath: AtPath["", Col[String, T]])
-        => TaggedSchema[Col[String, T]] =
+        => Reader[Col[String, T]] =
     atPath.decoder
 
   given NamedTupleSchema: [NT <: NamedTuple.AnyNamedTuple]
-    => (atPath: AtPath["", NT]) => TaggedSchema[NT] =
+    => (atPath: AtPath["", NT]) => Reader[NT] =
     atPath.decoder
 
   object Builders {
@@ -182,18 +181,18 @@ object TaggedSchema {
 
     inline def formatPath[Path <: String]: String = ("'" + compiletime.constValue[Path] + "'")
 
-    private[scalanotation] def nullaryCase[T](value: T): TaggedSchema[T] =
-      identity(Schema.Nullary(value))
+    private[scalanotation] def nullaryCase[T](value: T): Reader[T] =
+      identity(RawSchema.Nullary(value))
 
     opaque type ProductFieldsAtPath[Path <: String, Labels <: Tuple, Values <: Tuple] =
-      List[Schema.Field[?]]
+      List[RawSchema.Field[?]]
 
     object ProductFieldsAtPath:
       import compiletime.ops.string.+
 
       extension [Path <: String, Labels <: Tuple, Values <: Tuple](
           atPath: ProductFieldsAtPath[Path, Labels, Values]
-      ) def fields: List[Schema.Field[?]] = atPath
+      ) def fields: List[RawSchema.Field[?]] = atPath
 
       given Empty: [Path <: String] => ProductFieldsAtPath[Path, EmptyTuple, EmptyTuple] = Nil
 
@@ -203,12 +202,12 @@ object TaggedSchema {
         => (rest: ProductFieldsAtPath[Path, Labels, Values])
         => ProductFieldsAtPath[Path, Label *: Labels, Value *: Values] =
         val decoder = atPath.decoder
-        Schema.Field(valueOf.value, decoder) :: rest.fields
+        RawSchema.Field(valueOf.value, decoder) :: rest.fields
 
     opaque type SumCasesAtPath[Path <: String, A, Labels <: Tuple, Cases <: Tuple] =
-      List[Schema.SumCase[A]]
+      List[RawSchema.SumCase[A]]
 
-    opaque type DerivedEnumCaseAtPath[Path <: String, T] = TaggedSchema[T]
+    opaque type DerivedEnumCaseAtPath[Path <: String, T] = Reader[T]
 
     object DerivedEnumCaseAtPath:
       extension [Path <: String, T](self: DerivedEnumCaseAtPath[Path, T])
@@ -231,9 +230,9 @@ object TaggedSchema {
           nonEmpty: NotGiven[mirror.MirroredElemTypes =:= EmptyTuple]
       ): DerivedEnumCaseAtPath[Path, T] =
         identity(
-          Schema.NamedTuple(
+          RawSchema.NamedTuple(
             IArray.from(fieldsAtPath.fields),
-            Internal.caseClassBuilder[T]
+            PublicInternal.caseClassBuilder[T]
           )
         )
 
@@ -243,7 +242,7 @@ object TaggedSchema {
 
       extension [Path <: String, A, Labels <: Tuple, Cases <: Tuple](
           atPath: SumCasesAtPath[Path, A, Labels, Cases]
-      ) def cases: List[Schema.SumCase[A]] = atPath
+      ) def cases: List[RawSchema.SumCase[A]] = atPath
 
       given Empty: [Path <: String, A] => SumCasesAtPath[Path, A, EmptyTuple, EmptyTuple] = Nil
 
@@ -252,7 +251,7 @@ object TaggedSchema {
         => (caseDecoder: DerivedEnumCaseAtPath[Path + "." + Label, Case])
         => (rest: SumCasesAtPath[Path, A, Labels, Cases])
         => SumCasesAtPath[Path, A, Label *: Labels, Case *: Cases] =
-        Schema.SumCase(valueOf.value, caseDecoder.upcast[A]) :: rest.cases
+        RawSchema.SumCase(valueOf.value, caseDecoder.upcast[A]) :: rest.cases
 
     opaque type NonNestedOption[Path <: String, T] = Unit
 
@@ -262,74 +261,74 @@ object TaggedSchema {
           case _: (T <:< Option[?]) =>
             compiletime.error(
               "at path " + formatPath[Path] +
-                ": TaggedSchema[Option[Option[?]]] is not supported."
+                ": Reader[Option[Option[?]]] is not supported."
             )
           case _ =>
             ()
         }
 
-    opaque type AtPath[Path <: String, T] = TaggedSchema[T] | List[Schema.Field[?]]
+    opaque type AtPath[Path <: String, T] = Reader[T] | List[RawSchema.Field[?]]
 
     object AtPath:
       import compiletime.ops.string.+
 
       extension [Path <: String, T](schema: AtPath[Path, T])
-        def decoder: TaggedSchema[T] = schema match
-          case d: TaggedSchema[T]        => d
-          case ls: List[Schema.Field[?]] =>
-            identity(Schema.NamedTuple(IArray.from(ls), Internal.buildNamedTuple))
+        def decoder: Reader[T] = schema match
+          case d: Reader[T]                 => d
+          case ls: List[RawSchema.Field[?]] =>
+            identity(RawSchema.NamedTuple(IArray.from(ls), PublicInternal.buildNamedTuple))
 
-        def schema: Schema = decoder.schema
+        def schema: RawSchema = decoder.schema
 
       inline given DefaultAtPath: [Path <: String, T] => AtPath[Path, T] =
         compiletime.summonFrom {
-          case d: TaggedSchema[T] => d
-          case _                  =>
+          case d: Reader[T] => d
+          case _            =>
             compiletime.error(
-              "at path " + formatPath[Path] + ": Could not find TaggedSchema[" + showType[T] + "]."
+              "at path " + formatPath[Path] + ": Could not find Reader[" + showType[T] + "]."
             )
         }
 
       given VectorAtPath: [Path <: String, T]
         => (wrapped: AtPath[Path + "[]", T])
         => AtPath[Path, Vector[T]] =
-        identity(Schema.Vector(wrapped.decoder, Internal.BuildVector[T]))
+        identity(RawSchema.Vector(wrapped.decoder, PublicInternal.BuildVector[T]))
 
       given SeqAtPath: [Path <: String, T, Col[X] <: scala.collection.Seq[X]]
         => (wrapped: AtPath[Path + "[]", T])
         => (factory: scala.collection.Factory[T, Col[T]])
         => AtPath[Path, Col[T]] =
-        identity(Schema.Vector(wrapped.decoder, Internal.SeqFactoryVector[T, Col]))
+        identity(RawSchema.Vector(wrapped.decoder, PublicInternal.SeqFactoryVector[T, Col]))
 
       given IArrayAtPath: [Path <: String, T: ClassTag as tag]
         => (wrapped: AtPath[Path + "[]", T])
         => AtPath[Path, IArray[T]] =
-        identity(Schema.Vector(wrapped.decoder, Internal.BuildIArray[T]))
+        identity(RawSchema.Vector(wrapped.decoder, PublicInternal.BuildIArray[T]))
 
       given ArrayAtPath: [Path <: String, T: ClassTag as tag]
         => (wrapped: AtPath[Path + "[]", T])
         => AtPath[Path, Array[T]] =
-        identity(Schema.Vector(wrapped.decoder, Internal.BuildArray[T]))
+        identity(RawSchema.Vector(wrapped.decoder, PublicInternal.BuildArray[T]))
 
       given MapAtPath: [Path <: String, T, Col[X, Y] <: scala.collection.Map[X, Y]]
         => (wrapped: AtPath[Path + ".*", T])
         => (factory: scala.collection.Factory[(String, T), Col[String, T]])
         => AtPath[Path, Col[String, T]] =
-        identity(Schema.Dict(wrapped.decoder, Internal.MapFactoryDict[T, Col]))
+        identity(RawSchema.Dict(wrapped.decoder, PublicInternal.MapFactoryDict[T, Col]))
 
       given OptionAtPath: [Path <: String, T]
         => NonNestedOption[Path, T]
         => (wrapped: AtPath[Path, T])
         => AtPath[Path, Option[T]] =
-        identity(Schema.Option(wrapped.decoder))
+        identity(RawSchema.Option(wrapped.decoder))
 
       given NamedTupleCons: [Path <: String, N <: String, V, Ns <: Tuple, Vs <: Tuple]
         => (vn: ValueOf[N], ap: AtPath[Path + "." + N, V], rest: AtPath[Path, NamedTuple[Ns, Vs]])
         => AtPath[Path, NamedTuple[N *: Ns, V *: Vs]] =
         rest match
-          case fs: List[Schema.Field[?]] =>
-            val decoder: TaggedSchema[V] = ap.decoder
-            Schema.Field(vn.value, decoder) :: fs
+          case fs: List[RawSchema.Field[?]] =>
+            val decoder: Reader[V] = ap.decoder
+            RawSchema.Field(vn.value, decoder) :: fs
           case _ =>
             throw IllegalArgumentException(
               "Expected the rest of the named tuple to be a NamedTuple schema"

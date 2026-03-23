@@ -1,9 +1,12 @@
 package scalanotation
 
-import steps.result.Result
 import munit.FunSuite
-import scala.compiletime.testing.typeCheckErrors
+import scalanotation.internal.PublicInternal
+import scalanotation.internal.RawSchema
+import steps.result.Result
+
 import scala.collection.mutable
+import scala.compiletime.testing.typeCheckErrors
 
 class ParserSuite extends FunSuite:
   test("read the sample named tuple file"):
@@ -19,47 +22,42 @@ class ParserSuite extends FunSuite:
 
     val parsed = Readers.quick.readDecls(input)
 
-    val expected: PartialFunction[SourceFile[Expr], Unit] = {
-      case SourceFile(
-            ValDecl(
-              "data",
-              Expr.NamedTupleExpr(
-                IndexedSeq(
-                  "x" -> Expr.NamedTupleExpr(
-                    IndexedSeq(
-                      "ls" -> Expr.VectorExpr(
-                        IndexedSeq(
-                          Expr.StringConstant("abcdef"),
-                          Expr.CharConstant('b'),
-                          Expr.IntConstant(123),
-                          Expr.DoubleConstant(3.1d),
-                          Expr.FloatConstant(4.1f),
-                          Expr.LongConstant(23L)
-                        )
-                      ),
-                      "ys" -> Expr.VectorExpr(
-                        IndexedSeq(
-                          Expr.IntConstant(-1),
-                          Expr.IntConstant(-0b0000_0011),
-                          Expr.IntConstant(-0x00_1a)
-                        )
-                      )
-                    )
-                  ),
-                  "y" -> Expr.NullConstant
+    val expected = Expr.SourceFile(
+      Map(
+        "data" -> Expr.NamedTupleExpr(
+          IndexedSeq(
+            "x" -> Expr.NamedTupleExpr(
+              IndexedSeq(
+                "ls" -> Expr.VectorExpr(
+                  IndexedSeq(
+                    Expr.StringConstant("abcdef"),
+                    Expr.CharConstant('b'),
+                    Expr.IntConstant(123),
+                    Expr.DoubleConstant(3.1d),
+                    Expr.FloatConstant(4.1f),
+                    Expr.LongConstant(23L)
+                  )
+                ),
+                "ys" -> Expr.VectorExpr(
+                  IndexedSeq(
+                    Expr.IntConstant(-1),
+                    Expr.IntConstant(-0b0000_0011),
+                    Expr.IntConstant(-0x00_1a)
+                  )
                 )
               )
-            )
-          ) =>
-        ()
-    }
-
-    assert(expected.isDefinedAt(parsed))
+            ),
+            "y" -> Expr.NullConstant
+          )
+        )
+      )
+    )
+    assertEquals(parsed, expected)
 
   test("read just expression"):
     val input                           = "(a = true, b = false, c = -12, d = -1.5f)"
     val parsed                          = Readers.quick.read(input)
-    val Expr.NamedTupleExpr(fieldExprs) = parsed: @unchecked
+    val Expr.NamedTupleExpr(fieldExprs) = parsed.runtimeChecked
     assertEquals(fieldExprs.length, 4)
 
   test("decode just expression"):
@@ -73,14 +71,14 @@ class ParserSuite extends FunSuite:
     val input  = "val data = (a = true, b = false, c = -12, d = -1.5f)"
     val parsed = Readers.quick.readDecls(input)
 
-    val Expr.NamedTupleExpr(fieldExprs) = parsed.declaration.value: @unchecked
+    val Expr.NamedTupleExpr(fieldExprs) = parsed.declarations.head(1).runtimeChecked
     assertEquals(fieldExprs.length, 4)
 
   test("top level Vector"):
     val input  = "val data = Vector(true)"
     val parsed = Readers.quick.readDecls(input)
 
-    val Expr.VectorExpr(elements) = parsed.declaration.value: @unchecked
+    val Expr.VectorExpr(elements) = parsed.declarations.head(1).runtimeChecked
     assertEquals(elements.length, 1)
 
   test("skip single-line comments"):
@@ -96,22 +94,19 @@ class ParserSuite extends FunSuite:
 
     val parsed = Readers.quick.readDecls(input)
 
-    val expected: PartialFunction[SourceFile[Expr], Unit] = {
-      case SourceFile(
-            ValDecl(
-              "data",
-              Expr.NamedTupleExpr(
-                IndexedSeq(
-                  "x" -> Expr.IntConstant(1),
-                  "y" -> Expr.BooleanConstant(true)
-                )
-              )
+    val expected = {
+      Expr.SourceFile(
+        Map(
+          "data" -> Expr.NamedTupleExpr(
+            IndexedSeq(
+              "x" -> Expr.IntConstant(1),
+              "y" -> Expr.BooleanConstant(true)
             )
-          ) =>
-        ()
+          )
+        )
+      )
     }
-
-    assert(expected.isDefinedAt(parsed))
+    assertEquals(parsed, expected)
 
   test("skip nested block comments"):
     val input =
@@ -233,9 +228,9 @@ class ParserSuite extends FunSuite:
   test("parse dense immutable arrays"):
     type Data = IArray[Int]
 
-    val sc = summon[TaggedSchema[Data]]
+    val sc = summon[Reader[Data]]
     sc.schema match
-      case Schema.Vector(_, builder: Internal.BuildIArray[Int]) =>
+      case RawSchema.Vector(_, builder: PublicInternal.BuildIArray[Int]) =>
         ()
       case _ => fail(s"Expected a BuildIArray schema, got ${sc.schema.describeSelf}")
 
@@ -255,9 +250,9 @@ class ParserSuite extends FunSuite:
   test("parse dense arrays"):
     type Data = Array[Int]
 
-    val sc = summon[TaggedSchema[Data]]
+    val sc = summon[Reader[Data]]
     sc.schema match
-      case Schema.Vector(_, builder: Internal.BuildArray[Int]) =>
+      case RawSchema.Vector(_, builder: PublicInternal.BuildArray[Int]) =>
         ()
       case _ => fail(s"Expected a BuildArray schema, got ${sc.schema.describeSelf}")
 
@@ -277,9 +272,9 @@ class ParserSuite extends FunSuite:
   test("parse arbitrary sequence") {
     type Data = List[Int]
 
-    val sc = summon[TaggedSchema[Data]]
+    val sc = summon[Reader[Data]]
     sc.schema match
-      case Schema.Vector(_, builder: Internal.SeqFactoryVector[Int, List]) =>
+      case RawSchema.Vector(_, builder: PublicInternal.SeqFactoryVector[Int, List]) =>
         ()
       case _ => fail(s"Expected a SeqFactoryVector schema, got ${sc.schema.describeSelf}")
 
@@ -300,9 +295,9 @@ class ParserSuite extends FunSuite:
   test("parse specialized vector") {
     type Data = Vector[Int]
 
-    val sc = summon[TaggedSchema[Data]]
+    val sc = summon[Reader[Data]]
     sc.schema match
-      case Schema.Vector(_, builder: Internal.BuildVector[Int]) =>
+      case RawSchema.Vector(_, builder: PublicInternal.BuildVector[Int]) =>
         ()
       case _ => fail(s"Expected a BuildVector schema, got ${sc.schema.describeSelf}")
 
@@ -323,9 +318,9 @@ class ParserSuite extends FunSuite:
   test("parse arbitrary map") {
     type Data = mutable.LinkedHashMap[String, Int]
 
-    val sc = summon[TaggedSchema[Data]]
+    val sc = summon[Reader[Data]]
     sc.schema match
-      case Schema.Dict(_, builder: Internal.MapFactoryDict[Int, mutable.LinkedHashMap]) =>
+      case RawSchema.Dict(_, builder: PublicInternal.MapFactoryDict[Int, mutable.LinkedHashMap]) =>
         ()
       case _ => fail(s"Expected a MapFactoryDict schema, got ${sc.schema.describeSelf}")
 
@@ -459,7 +454,7 @@ class ParserSuite extends FunSuite:
         )
       case Result.Ok(value) => fail(s"Expected a decode failure, got $value")
 
-  test("decode custom types from single-level TaggedSchema transformations"):
+  test("decode custom types from single-level Reader transformations"):
     import java.time.LocalDate
 
     enum Mode:
@@ -468,15 +463,15 @@ class ParserSuite extends FunSuite:
     final case class User(name: String, age: Int)
     final case class Schedule(dates: Vector[LocalDate])
 
-    given TaggedSchema[Mode] =
-      summon[TaggedSchema[String]].emap {
+    given Reader[Mode] =
+      summon[Reader[String]].emap {
         case "fast" => Result.Ok(Mode.Fast)
         case "safe" => Result.Ok(Mode.Safe)
         case other  => Result.Err(DecodeError.Custom(s"Unknown mode '$other'"))
       }
 
-    given TaggedSchema[LocalDate] =
-      summon[TaggedSchema[String]].emap { raw =>
+    given Reader[LocalDate] =
+      summon[Reader[String]].emap { raw =>
         Result.catchException({ case _: java.time.format.DateTimeParseException =>
           DecodeError.Custom(s"Invalid ISO date '$raw'")
         }) {
@@ -484,13 +479,13 @@ class ParserSuite extends FunSuite:
         }
       }
 
-    given TaggedSchema[User] =
-      summon[TaggedSchema[(name: String, age: Int)]].map { data =>
+    given Reader[User] =
+      summon[Reader[(name: String, age: Int)]].map { data =>
         User(name = data.name, age = data.age)
       }
 
-    given TaggedSchema[Schedule] =
-      summon[TaggedSchema[Vector[LocalDate]]].map(Schedule(_))
+    given Reader[Schedule] =
+      summon[Reader[Vector[LocalDate]]].map(Schedule(_))
 
     type Data = (owner: User, mode: Mode, schedule: Schedule)
 
@@ -515,8 +510,8 @@ class ParserSuite extends FunSuite:
   test("report composed paths for custom string decoders inside vectors"):
     import java.time.LocalDate
 
-    given TaggedSchema[LocalDate] =
-      summon[TaggedSchema[String]].emap { raw =>
+    given Reader[LocalDate] =
+      summon[Reader[String]].emap { raw =>
         try Result.Ok(LocalDate.parse(raw))
         catch
           case _: java.time.format.DateTimeParseException =>
@@ -541,8 +536,8 @@ class ParserSuite extends FunSuite:
   test("report custom sequence validation errors at the wrapped field"):
     final case class NonEmptyInts(values: Vector[Int])
 
-    given TaggedSchema[NonEmptyInts] =
-      summon[TaggedSchema[Vector[Int]]].emap { values =>
+    given Reader[NonEmptyInts] =
+      summon[Reader[Vector[Int]]].emap { values =>
         if values.nonEmpty then Result.Ok(NonEmptyInts(values))
         else Result.Err(DecodeError.Custom("Expected at least one integer"))
       }
@@ -559,11 +554,11 @@ class ParserSuite extends FunSuite:
   test("decode directly into nested case classes"):
     import java.time.LocalDate
 
-    final case class Metadata(created: LocalDate, tags: Vector[String]) derives TaggedSchema
-    final case class User(name: String, age: Int, metadata: Metadata) derives TaggedSchema
+    final case class Metadata(created: LocalDate, tags: Vector[String]) derives Reader
+    final case class User(name: String, age: Int, metadata: Metadata) derives Reader
 
-    given TaggedSchema[LocalDate] =
-      summon[TaggedSchema[String]].emap { raw =>
+    given Reader[LocalDate] =
+      summon[Reader[String]].emap { raw =>
         Result.catchException({ case _: java.time.format.DateTimeParseException =>
           DecodeError.Custom(s"Invalid ISO date '$raw'")
         }) {
@@ -600,8 +595,8 @@ class ParserSuite extends FunSuite:
     final case class Metadata(created: LocalDate)
     final case class User(metadata: Metadata)
 
-    given TaggedSchema[LocalDate] =
-      summon[TaggedSchema[String]].emap { raw =>
+    given Reader[LocalDate] =
+      summon[Reader[String]].emap { raw =>
         Result.catchException({ case _: java.time.format.DateTimeParseException =>
           DecodeError.Custom(s"Invalid ISO date '$raw'")
         }) {
@@ -609,8 +604,8 @@ class ParserSuite extends FunSuite:
         }
       }
 
-    given TaggedSchema[Metadata] = TaggedSchema.ofFields[Metadata]
-    given TaggedSchema[User]     = TaggedSchema.ofFields[User]
+    given Reader[Metadata] = Reader.ofFields[Metadata]
+    given Reader[User]     = Reader.ofFields[User]
 
     val input =
       """val data = (
@@ -629,12 +624,12 @@ class ParserSuite extends FunSuite:
   test("derive enum schemas with nullary and structured cases"):
     import java.time.LocalDate
 
-    enum Mode derives TaggedSchema:
+    enum Mode derives Reader:
       case Fast
       case Scheduled(at: LocalDate, retries: Int)
 
-    given TaggedSchema[LocalDate] =
-      summon[TaggedSchema[String]].emap { raw =>
+    given Reader[LocalDate] =
+      summon[Reader[String]].emap { raw =>
         Result.catchException({ case _: java.time.format.DateTimeParseException =>
           DecodeError.Custom(s"Invalid ISO date '$raw'")
         }) {
@@ -663,7 +658,7 @@ class ParserSuite extends FunSuite:
   test("derive case object schemas"):
     import java.time.LocalDate
 
-    case object Foo derives TaggedSchema
+    case object Foo derives Reader
 
     val foo = Readers.readDeclAs[Foo.type]("val data = (Foo = null)", rootName = "data")
     assertEquals(foo, Result.Ok(Foo))
@@ -671,12 +666,12 @@ class ParserSuite extends FunSuite:
   test("report nested enum case paths"):
     import java.time.LocalDate
 
-    enum Mode derives TaggedSchema:
+    enum Mode derives Reader:
       case Fast
       case Scheduled(at: LocalDate)
 
-    given TaggedSchema[LocalDate] =
-      summon[TaggedSchema[String]].emap { raw =>
+    given Reader[LocalDate] =
+      summon[Reader[String]].emap { raw =>
         Result.catchException({ case _: java.time.format.DateTimeParseException =>
           DecodeError.Custom(s"Invalid ISO date '$raw'")
         }) {
@@ -703,30 +698,30 @@ class ParserSuite extends FunSuite:
       case Result.Ok(value) => fail(s"Expected a decode failure, got $value")
 
   test("no decoder is derived for Any"):
-    val errors = typeCheckErrors("summon[scalanotation.TaggedSchema[Any]]")
+    val errors = typeCheckErrors("summon[scalanotation.Reader[Any]]")
     assert(errors.nonEmpty)
 
   test("no decoder is derived for Vector[Any]"):
     val errors =
-      typeCheckErrors("summon[scalanotation.TaggedSchema[Vector[Any]]]")
+      typeCheckErrors("summon[scalanotation.Reader[Vector[Any]]]")
     assert(errors.nonEmpty)
 
   test("no decoder is derived for nested Option"):
     val errors = typeCheckErrors(
-      "type Data = (x: Option[Option[Int]])\nsummon[scalanotation.TaggedSchema[Data]]"
+      "type Data = (x: Option[Option[Int]])\nsummon[scalanotation.Reader[Data]]"
     )
 
     assert(errors.nonEmpty)
     assert(clue(errors.head.message).contains(".x"))
     assert(
       clue(errors.head.message)
-        .contains("TaggedSchema[Option[Option[?]]] is not supported")
+        .contains("Reader[Option[Option[?]]] is not supported")
     )
 
   test("compile-time derivation error includes nested field path"):
     class Box[T]
     val errors = typeCheckErrors(
-      "type Data = (outer: (bad: Box[Int]))\nsummon[scalanotation.TaggedSchema[Data]]"
+      "type Data = (outer: (bad: Box[Int]))\nsummon[scalanotation.Reader[Data]]"
     )
 
     assert(errors.nonEmpty)
@@ -739,7 +734,7 @@ class ParserSuite extends FunSuite:
   test("compile-time derivation error includes nested field path Vector"):
     class Box[T]
     val errors = typeCheckErrors(
-      "type Data = (outer: (inner: Vector[(sub1: (bad: Box[Int]))]))\nsummon[scalanotation.TaggedSchema[Data]]"
+      "type Data = (outer: (inner: Vector[(sub1: (bad: Box[Int]))]))\nsummon[scalanotation.Reader[Data]]"
     )
 
     assert(errors.nonEmpty)
@@ -752,7 +747,7 @@ class ParserSuite extends FunSuite:
   test("compile-time derivation error includes nested field path Vector root"):
     class Box[T]
     val errors = typeCheckErrors(
-      "type Data = Vector[(sub1: (bad: Box[Int]))]\nsummon[scalanotation.TaggedSchema[Data]]"
+      "type Data = Vector[(sub1: (bad: Box[Int]))]\nsummon[scalanotation.Reader[Data]]"
     )
 
     assert(errors.nonEmpty)
@@ -765,7 +760,7 @@ class ParserSuite extends FunSuite:
   test("compile-time derivation error includes vector path segment"):
     class Box[T]
     val errors = typeCheckErrors(
-      "type Data = (items: Vector[(bad: Box[Int])])\nsummon[scalanotation.TaggedSchema[Data]]"
+      "type Data = (items: Vector[(bad: Box[Int])])\nsummon[scalanotation.Reader[Data]]"
     )
 
     assert(errors.nonEmpty)
@@ -775,45 +770,45 @@ class ParserSuite extends FunSuite:
         .contains("Box[scala.Int]")
     )
 
-  test("Schema.describeSelf"):
+  test("RawSchema.describeSelf"):
     // primitive schemas
-    assertEquals(Schema.Int.describeSelf, "Int")
-    assertEquals(Schema.Long.describeSelf, "Long")
-    assertEquals(Schema.Float.describeSelf, "Float")
-    assertEquals(Schema.Double.describeSelf, "Double")
-    assertEquals(Schema.Boolean.describeSelf, "Boolean")
-    assertEquals(Schema.Char.describeSelf, "Char")
-    assertEquals(Schema.String.describeSelf, "String")
-    assertEquals(Schema.AnyExpr.describeSelf, "Any")
-    assertEquals(Schema.Nullary(null).describeSelf, "Null")
+    assertEquals(RawSchema.Int.describeSelf, "Int")
+    assertEquals(RawSchema.Long.describeSelf, "Long")
+    assertEquals(RawSchema.Float.describeSelf, "Float")
+    assertEquals(RawSchema.Double.describeSelf, "Double")
+    assertEquals(RawSchema.Boolean.describeSelf, "Boolean")
+    assertEquals(RawSchema.Char.describeSelf, "Char")
+    assertEquals(RawSchema.String.describeSelf, "String")
+    assertEquals(RawSchema.AnyExpr.describeSelf, "Any")
+    assertEquals(RawSchema.Nullary(null).describeSelf, "Null")
     // empty named tuple
     assertEquals(
-      Schema.NamedTuple(IArray.empty, _ => ()).describeSelf,
+      RawSchema.NamedTuple(IArray.empty, _ => ()).describeSelf,
       "AnyNamedTuple"
     )
     // named tuple with fields
-    val withFields = Schema.NamedTuple(
+    val withFields = RawSchema.NamedTuple(
       IArray(
-        Schema.Field("x", summon[TaggedSchema[Int]]),
-        Schema.Field("y", summon[TaggedSchema[String]])
+        RawSchema.Field("x", summon[Reader[Int]]),
+        RawSchema.Field("y", summon[Reader[String]])
       ),
       _ => ()
     )
     assertEquals(withFields.describeSelf, "(x: ..., y: ...)")
     // single-case sum schema
-    val sumSchema = Schema.Sum(
-      Map("Fast" -> Schema.SumCase("Fast", summon[TaggedSchema[Int]]))
+    val sumSchema = RawSchema.Sum(
+      Map("Fast" -> RawSchema.SumCase("Fast", summon[Reader[Int]]))
     )
     assertEquals(sumSchema.describeSelf, "(Fast: ...)")
     enum AorB:
       case A, B
 
     // multi-case sum schema
-    val multiSumDesc = Schema
+    val multiSumDesc = RawSchema
       .Sum(
         Map(
-          "A" -> Schema.SumCase("A", TaggedSchema.forNull(AorB.A)),
-          "B" -> Schema.SumCase("B", TaggedSchema.forNull(AorB.B))
+          "A" -> RawSchema.SumCase("A", Reader.forNull(AorB.A)),
+          "B" -> RawSchema.SumCase("B", Reader.forNull(AorB.B))
         )
       )
       .describeSelf
@@ -822,19 +817,19 @@ class ParserSuite extends FunSuite:
     assert(clue(multiSumDesc).contains(" | "))
     // Vector schema
     assertEquals(
-      summon[TaggedSchema[Vector[Int]]].schema.describeSelf,
+      summon[Reader[Vector[Int]]].schema.describeSelf,
       "Vector[...]"
     )
     assertEquals(
-      summon[TaggedSchema[Vector[(x: String, y: Int)]]].schema.describeSelf,
+      summon[Reader[Vector[(x: String, y: Int)]]].schema.describeSelf,
       "Vector[...]"
     )
     // Option schema
     assertEquals(
-      Schema.Option(summon[TaggedSchema[Int]]).describeSelf,
+      RawSchema.Option(summon[Reader[Int]]).describeSelf,
       "Int | Null"
     )
     assertEquals(
-      Schema.Option(summon[TaggedSchema[String]]).describeSelf,
+      RawSchema.Option(summon[Reader[String]]).describeSelf,
       "String | Null"
     )

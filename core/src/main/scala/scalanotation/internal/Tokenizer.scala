@@ -1,9 +1,40 @@
-package scalanotation
+package scalanotation.internal
 
-import scala.collection.mutable
+import scalanotation.DecodeError
 import steps.result.Result
 
-private final class Tokenizer(input: String):
+import scala.collection.mutable
+
+private[scalanotation] enum Token:
+  case ValKw(span: DecodeError.Span)
+  case VectorId(span: DecodeError.Span)
+  case TrueKw(span: DecodeError.Span)
+  case FalseKw(span: DecodeError.Span)
+  case NullKw(span: DecodeError.Span)
+  case Identifier(name: String, span: DecodeError.Span)
+  case IntLit(raw: String, value: Int, span: DecodeError.Span)
+  case LongLit(raw: String, value: Long, span: DecodeError.Span)
+  case FloatLit(raw: String, value: Float, span: DecodeError.Span)
+  case DoubleLit(raw: String, value: Double, span: DecodeError.Span)
+  case StringLit(raw: String, value: String, span: DecodeError.Span)
+  case CharLit(raw: String, value: Char, span: DecodeError.Span)
+  case Equals(span: DecodeError.Span)
+  case Plus(span: DecodeError.Span)
+  case Minus(span: DecodeError.Span)
+  case Comma(span: DecodeError.Span)
+  case LParen(span: DecodeError.Span)
+  case RParen(span: DecodeError.Span)
+  case Eof(span: DecodeError.Span)
+
+  def span: DecodeError.Span
+
+private[scalanotation] object Token:
+  lazy val Empty: Token = Token.Eof(DecodeError.Span(0, 0, 0))
+
+  given DefaultToken: PublicInternal.HasDefault[Token]:
+    val Default: Token = Token.Empty
+
+private[scalanotation] final class Tokenizer(input: String):
   private var index  = 0
   private var line   = 1
   private var column = 1
@@ -16,7 +47,7 @@ private final class Tokenizer(input: String):
       .map(nameCached(_))
       .runtimeChecked
 
-  private class ParseException(val message: String, val span: Span)
+  private class ParseException(val message: String, val span: DecodeError.Span)
       extends Exception
       with scala.util.control.NoStackTrace
 
@@ -52,7 +83,7 @@ private final class Tokenizer(input: String):
       case ch if ch.isDigit            => scanNumber(start)
       case ch                          => fail(s"Unexpected character '$ch'", start)
 
-  private def scanIdentifier(start: Span): Token =
+  private def scanIdentifier(start: DecodeError.Span): Token =
     val builder = new StringBuilder
     while !isAtEnd && isIdentifierPart(currentChar()) do builder += advance()
     nameCached(builder.result()) match
@@ -63,14 +94,14 @@ private final class Tokenizer(input: String):
       case KW_Vector => Token.VectorId(start)
       case name      => Token.Identifier(name, start)
 
-  private def scanNumber(start: Span): Token =
+  private def scanNumber(start: DecodeError.Span): Token =
     if currentChar() == '0' && peekChar().exists(ch =>
         ch == 'x' || ch == 'X' || ch == 'b' || ch == 'B'
       )
     then scanPrefixedInteger(start)
     else scanDecimalNumber(start)
 
-  private def scanPrefixedInteger(start: Span): Token =
+  private def scanPrefixedInteger(start: DecodeError.Span): Token =
     val prefix = new StringBuilder
     prefix += advance()
     val marker = advance()
@@ -125,7 +156,7 @@ private final class Tokenizer(input: String):
           start
         )
 
-  private def scanDecimalNumber(start: Span): Token =
+  private def scanDecimalNumber(start: DecodeError.Span): Token =
     val builder     = new StringBuilder
     var hasDot      = false
     var hasExponent = false
@@ -188,7 +219,7 @@ private final class Tokenizer(input: String):
       case None =>
         Token.IntLit(raw, parseIntLiteral(normalizedDigits, raw, start), start)
 
-  private def scanString(start: Span): Token =
+  private def scanString(start: DecodeError.Span): Token =
     val raw   = new StringBuilder
     val value = new StringBuilder
     raw += advance()
@@ -207,7 +238,7 @@ private final class Tokenizer(input: String):
     raw += advance()
     Token.StringLit(raw.result(), value.result(), start)
 
-  private def scanChar(start: Span): Token =
+  private def scanChar(start: DecodeError.Span): Token =
     val raw = new StringBuilder
     raw += advance()
     if isAtEnd then fail("Unterminated character literal", start)
@@ -227,7 +258,7 @@ private final class Tokenizer(input: String):
     raw += advance()
     Token.CharLit(raw.result(), value, start)
 
-  private def decodeEscape(ch: Char, start: Span): Char =
+  private def decodeEscape(ch: Char, start: DecodeError.Span): Char =
     ch match
       case 'n'   => '\n'
       case 'r'   => '\r'
@@ -290,7 +321,7 @@ private final class Tokenizer(input: String):
     else column += 1
     ch
 
-  private def currentSpan(): Span = Span(index, line, column)
+  private def currentSpan(): DecodeError.Span = DecodeError.Span(index, line, column)
 
   private def isIdentifierStart(ch: Char): Boolean = ch.isLetter || ch == '_'
 
@@ -300,7 +331,7 @@ private final class Tokenizer(input: String):
   private def parseIntLiteral(
       digits: String,
       raw: String,
-      span: Span,
+      span: DecodeError.Span,
       base: Int = 10
   ): Int =
     try Integer.parseInt(digits, base)
@@ -311,7 +342,7 @@ private final class Tokenizer(input: String):
   private def parseLongLiteral(
       digits: String,
       raw: String,
-      span: Span,
+      span: DecodeError.Span,
       base: Int = 10
   ): Long =
     try java.lang.Long.parseLong(digits, base)
@@ -322,7 +353,7 @@ private final class Tokenizer(input: String):
   private def parseFloatLiteral(
       digits: String,
       raw: String,
-      span: Span
+      span: DecodeError.Span
   ): Float =
     try
       val value = java.lang.Float.parseFloat(digits)
@@ -335,7 +366,7 @@ private final class Tokenizer(input: String):
   private def parseDoubleLiteral(
       digits: String,
       raw: String,
-      span: Span
+      span: DecodeError.Span
   ): Double =
     try
       val value = java.lang.Double.parseDouble(digits)
@@ -351,7 +382,7 @@ private final class Tokenizer(input: String):
       || (base == 16 && (ch >= 'a' && ch <= 'f'))
       || (base == 16 && (ch >= 'A' && ch <= 'F'))
 
-  private def fail(message: String, span: Span): Nothing =
+  private def fail(message: String, span: DecodeError.Span): Nothing =
     throw ParseException(message, span)
 
 private[scalanotation] object Tokenizer:
