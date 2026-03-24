@@ -162,6 +162,32 @@ Typed writing targets currently include:
 
 Read and write derivation both reuse the same internal `RawSchema`, so structural shape stays aligned across both pipelines.
 
+If you want one type class that guarantees both directions were derived from the same structure, use `ReadWriter[T]`. A derived `ReadWriter[T]` also supplies `Reader[T]` and `Writer[T]` automatically.
+
+```scala
+import scalanotation.*
+import steps.result.Result
+
+import java.time.LocalDate
+
+case class Metadata(created: LocalDate, tags: Vector[String]) derives ReadWriter
+case class User(name: String, metadata: Metadata) derives ReadWriter
+
+given ReadWriter[LocalDate] =
+  summon[ReadWriter[String]].emap { raw =>
+    Result.catchException({ case _: java.time.format.DateTimeParseException =>
+      DecodeError.Custom(s"Invalid ISO date '$raw'")
+    }) {
+      LocalDate.parse(raw)
+    }
+  }(_.toString)
+
+val value = User("Ada", Metadata(LocalDate.parse("2026-03-14"), Vector("scala")))
+
+val text = Writers.write(value)
+val decoded = Readers.readAs[User](text)
+```
+
 **Mapping an existing Schema**
 
 Preferred for direct decoding from Strings into domain objects such as Date, or simple enums.
@@ -187,6 +213,16 @@ given Writer[Mode] =
     case Mode.Fast => "fast"
     case Mode.Safe => "safe"
   }
+
+given ReadWriter[Mode] =
+  summon[ReadWriter[String]].emap {
+    case "fast" => Result.Ok(Mode.Fast)
+    case "safe" => Result.Ok(Mode.Safe)
+    case other  => Result.Err(DecodeError.Custom(s"Unknown mode '$other'"))
+  } {
+    case Mode.Fast => "fast"
+    case Mode.Safe => "safe"
+  }
 ```
 
 **Derived Schemas**
@@ -199,19 +235,16 @@ import steps.result.Result, Result.eval.raise
 
 import java.time.LocalDate
 
-case class Metadata(created: LocalDate, tags: Vector[String]) derives Reader, Writer
-case class User(name: String, age: Int, metadata: Metadata) derives Reader, Writer
+case class Metadata(created: LocalDate, tags: Vector[String]) derives ReadWriter
+case class User(name: String, age: Int, metadata: Metadata) derives ReadWriter
 
-given Reader[LocalDate] =
-  summon[Reader[String]].emap { raw =>
+given ReadWriter[LocalDate] =
+  summon[ReadWriter[String]].emap { raw =>
     Result:
       try LocalDate.parse(raw)
       catch case _: java.time.format.DateTimeParseException =>
         raise(DecodeError.Custom(s"Invalid ISO date '$raw'"))
-  }
-
-given Writer[LocalDate] =
-  summon[Writer[String]].contramap(_.toString)
+  }(_.toString)
 ```
 
 > Note: for case class with no fields or a case object, the payload should be a named tuple with a single field - the class label, and null value.
@@ -225,20 +258,17 @@ import steps.result.Result, Result.eval.raise
 
 import java.time.LocalDate
 
-enum Mode derives Reader, Writer:
+enum Mode derives ReadWriter:
   case Fast
   case Scheduled(at: LocalDate, retries: Int)
 
-given Reader[LocalDate] =
-  summon[Reader[String]].emap { raw =>
+given ReadWriter[LocalDate] =
+  summon[ReadWriter[String]].emap { raw =>
     Result:
       try LocalDate.parse(raw)
       catch case _: java.time.format.DateTimeParseException =>
         raise(DecodeError.Custom(s"Invalid ISO date '$raw'"))
-  }
-
-given Writer[LocalDate] =
-  summon[Writer[String]].contramap(_.toString)
+  }(_.toString)
 
 // Fast        => (Fast = null)
 // Scheduled   => (Scheduled = (at = "2026-03-15", retries = 2))

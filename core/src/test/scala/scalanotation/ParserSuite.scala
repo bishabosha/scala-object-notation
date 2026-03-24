@@ -1,6 +1,7 @@
 package scalanotation
 
 import munit.FunSuite
+import scalanotation.internal.CompiledSchema
 import scalanotation.internal.PublicInternal
 import scalanotation.internal.RawSchema
 import steps.result.Result
@@ -229,9 +230,13 @@ class ParserSuite extends FunSuite:
     type Data = IArray[Int]
 
     val sc = summon[Reader[Data]]
-    sc match
-      case vector: Reader.VectorReader[?, ?, ?] =>
-        assert(vector.builder.isInstanceOf[PublicInternal.BuildIArray[?]])
+    sc.compiled match
+      case vector: CompiledSchema.VectorShape =>
+        vector.read match
+          case read: CompiledSchema.VectorRead.FromReaderBuilder[?, ?, ?] =>
+            assert(read.builder.isInstanceOf[PublicInternal.BuildIArray[?]])
+          case _ =>
+            fail(s"Expected a vector reader builder, got ${vector.read}")
       case _ =>
         fail(s"Expected a vector reader, got ${sc.schema.describeSelf}")
 
@@ -252,9 +257,13 @@ class ParserSuite extends FunSuite:
     type Data = Array[Int]
 
     val sc = summon[Reader[Data]]
-    sc match
-      case vector: Reader.VectorReader[?, ?, ?] =>
-        assert(vector.builder.isInstanceOf[PublicInternal.BuildArray[?]])
+    sc.compiled match
+      case vector: CompiledSchema.VectorShape =>
+        vector.read match
+          case read: CompiledSchema.VectorRead.FromReaderBuilder[?, ?, ?] =>
+            assert(read.builder.isInstanceOf[PublicInternal.BuildArray[?]])
+          case _ =>
+            fail(s"Expected a vector reader builder, got ${vector.read}")
       case _ =>
         fail(s"Expected a vector reader, got ${sc.schema.describeSelf}")
 
@@ -275,9 +284,13 @@ class ParserSuite extends FunSuite:
     type Data = List[Int]
 
     val sc = summon[Reader[Data]]
-    sc match
-      case vector: Reader.VectorReader[?, ?, ?] =>
-        assertEquals(vector.builder.getClass.getSimpleName, "SeqFactoryVector")
+    sc.compiled match
+      case vector: CompiledSchema.VectorShape =>
+        vector.read match
+          case read: CompiledSchema.VectorRead.FromReaderBuilder[?, ?, ?] =>
+            assertEquals(read.builder.getClass.getSimpleName, "SeqFactoryVector")
+          case _ =>
+            fail(s"Expected a vector reader builder, got ${vector.read}")
       case _ =>
         fail(s"Expected a vector reader, got ${sc.schema.describeSelf}")
 
@@ -299,9 +312,13 @@ class ParserSuite extends FunSuite:
     type Data = Vector[Int]
 
     val sc = summon[Reader[Data]]
-    sc match
-      case vector: Reader.VectorReader[?, ?, ?] =>
-        assert(vector.builder.isInstanceOf[PublicInternal.BuildVector[?]])
+    sc.compiled match
+      case vector: CompiledSchema.VectorShape =>
+        vector.read match
+          case read: CompiledSchema.VectorRead.FromReaderBuilder[?, ?, ?] =>
+            assert(read.builder.isInstanceOf[PublicInternal.BuildVector[?]])
+          case _ =>
+            fail(s"Expected a vector reader builder, got ${vector.read}")
       case _ =>
         fail(s"Expected a vector reader, got ${sc.schema.describeSelf}")
 
@@ -323,9 +340,13 @@ class ParserSuite extends FunSuite:
     type Data = mutable.LinkedHashMap[String, Int]
 
     val sc = summon[Reader[Data]]
-    sc match
-      case dict: Reader.DictReader[?, ?, ?] =>
-        assertEquals(dict.builder.getClass.getSimpleName, "MapFactoryDict")
+    sc.compiled match
+      case dict: CompiledSchema.DictShape =>
+        dict.read match
+          case read: CompiledSchema.DictRead.FromReaderBuilder[?, ?, ?] =>
+            assertEquals(read.builder.getClass.getSimpleName, "MapFactoryDict")
+          case _ =>
+            fail(s"Expected a dict reader builder, got ${dict.read}")
       case _ =>
         fail(s"Expected a dict reader, got ${sc.schema.describeSelf}")
 
@@ -850,6 +871,47 @@ class ParserSuite extends FunSuite:
 
     assertEquals(readerSchema, writerSchema)
 
+  test("derived ReadWriter provides aligned reader and writer views"):
+    import java.time.LocalDate
+
+    final case class Metadata(created: LocalDate, tags: Vector[String]) derives ReadWriter
+    enum Mode derives ReadWriter:
+      case Fast
+      case Scheduled(at: LocalDate, retries: Int)
+    final case class User(name: String, mode: Mode, metadata: Metadata) derives ReadWriter
+
+    given ReadWriter[LocalDate] =
+      summon[ReadWriter[String]].emap { raw =>
+        Result.catchException({ case _: java.time.format.DateTimeParseException =>
+          DecodeError.Custom(s"Invalid ISO date '$raw'")
+        }) {
+          LocalDate.parse(raw)
+        }
+      }(_.toString)
+
+    val value = User(
+      name = "Ada",
+      mode = Mode.Scheduled(LocalDate.parse("2026-03-15"), 2),
+      metadata = Metadata(LocalDate.parse("2026-03-14"), Vector("compiler", "scala"))
+    )
+
+    val rendered = Writers.writeDecl("data", value)
+    val decoded  = Readers.readDeclAs[User](rendered, rootName = "data")
+
+    assertEquals(
+      rendered,
+      """val data = (name = "Ada", mode = (Scheduled = (at = "2026-03-15", retries = 2)), metadata = (created = "2026-03-14", tags = Vector("compiler", "scala")))"""
+    )
+    assertEquals(decoded, Result.Ok(value))
+    assertEquals(
+      summon[ReadWriter[User]].schema.describeSelf,
+      summon[Reader[User]].schema.describeSelf
+    )
+    assertEquals(
+      summon[ReadWriter[User]].schema.describeSelf,
+      summon[Writer[User]].schema.describeSelf
+    )
+
   test("no writer is derived for nested Option"):
     val errors = typeCheckErrors(
       "type Data = (x: Option[Option[Int]])\nsummon[scalanotation.Writer[Data]]"
@@ -881,6 +943,18 @@ class ParserSuite extends FunSuite:
     assert(
       clue(errors.head.message)
         .contains("Reader[Option[Option[?]]] is not supported")
+    )
+
+  test("no read-writer is derived for nested Option"):
+    val errors = typeCheckErrors(
+      "type Data = (x: Option[Option[Int]])\nsummon[scalanotation.ReadWriter[Data]]"
+    )
+
+    assert(errors.nonEmpty)
+    assert(clue(errors.head.message).contains(".x"))
+    assert(
+      clue(errors.head.message)
+        .contains("ReadWriter[Option[Option[?]]] is not supported")
     )
 
   test("compile-time derivation error includes nested field path"):

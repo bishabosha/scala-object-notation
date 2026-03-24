@@ -14,15 +14,15 @@ private[scalanotation] enum RawSchema:
   case Sum(cases: Map[String, RawSchema.SumCase])
   case Vector(element: RawSchema)
   case Dict(element: RawSchema)
-  case AnyExpr
-  case String
-  case Char
-  case Int
-  case Long
-  case Float
-  case Double
-  case Boolean
-  case Nullary
+  case AnyExpr extends RawSchema with RawSchema.Scalar
+  case String  extends RawSchema with RawSchema.Scalar
+  case Char    extends RawSchema with RawSchema.Scalar
+  case Int     extends RawSchema with RawSchema.Scalar
+  case Long    extends RawSchema with RawSchema.Scalar
+  case Float   extends RawSchema with RawSchema.Scalar
+  case Double  extends RawSchema with RawSchema.Scalar
+  case Boolean extends RawSchema with RawSchema.Scalar
+  case Nullary extends RawSchema with RawSchema.Scalar
   case Option(inner: RawSchema)
 
   private lazy val properties: java.util.concurrent.ConcurrentHashMap[RawSchema.Key[?], AnyRef] =
@@ -84,6 +84,7 @@ private[scalanotation] enum RawSchema:
           case other               => s"${other.describeSelf} | Null"
 
 private[scalanotation] object RawSchema:
+  sealed trait Scalar { self: RawSchema => }
   final class Key[T]()
   val IsValidNamedTupleSchema: Key[Result[Unit, DecodeError]] = Key()
 
