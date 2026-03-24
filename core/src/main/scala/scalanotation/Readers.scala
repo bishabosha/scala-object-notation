@@ -5,10 +5,12 @@ import steps.result.Result
 import steps.result.Result.eval.{ok, raise, break}
 
 import scala.collection.mutable
+import scalanotation.internal.Tokenizer
+import scalanotation.internal.TokenDecoder
 
 object Readers:
   object quick:
-    def readDecls(input: String, debugTokens: Boolean = false): SourceFile[Expr] =
+    def readDecls(input: String, debugTokens: Boolean = false): Expr.SourceFile[Expr] =
       // TODO: add an okOrElse method that can recover the error somehow or return the value.
       readDeclsAs[Expr](input, debugTokens) match
         case Result.Ok(value) => value
@@ -20,27 +22,27 @@ object Readers:
         case Result.Ok(value) => value
         case Result.Err(err)  => throw IllegalArgumentException(err.format)
 
-  def readAs[T: TaggedSchema as decoder](
+  def readAs[T: Reader as reader](
       input: String,
       debugTokens: Boolean = false
   ): Result[T, DecodeError] =
     Result:
       val tokens = Tokenizer.tokenize(input, debugTokens).ok
-      break(TokenDecoder.decodeExpression(tokens, decoder))
+      break(TokenDecoder.decodeExpression(tokens, reader))
 
-  def readDeclsAs[T: TaggedSchema as decoder](
+  def readDeclsAs[T: Reader as reader](
       input: String,
       debugTokens: Boolean = false
-  ): Result[SourceFile[T], DecodeError] =
+  ): Result[Expr.SourceFile[T], DecodeError] =
     Result:
       val tokens = Tokenizer.tokenize(input, debugTokens).ok
-      break(TokenDecoder.decodeAnyRoot(tokens, decoder))
+      break(TokenDecoder.decodeAnyRoot(tokens, reader))
 
-  def readDeclAs[T: TaggedSchema as decoder](
+  def readDeclAs[T: Reader as reader](
       input: String,
       rootName: String,
       debugTokens: Boolean = false
   ): Result[T, DecodeError] =
     Result:
       val tokens = Tokenizer.tokenize(input, debugTokens).ok
-      break(TokenDecoder.decode(tokens, rootName, decoder))
+      break(TokenDecoder.decode(tokens, rootName, reader))

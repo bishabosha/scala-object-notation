@@ -1,13 +1,9 @@
 package scalableconfig
 
-import java.nio.file.Files
-import java.nio.file.Path
-import scala.collection.immutable.ListMap
-
-import scalanotation.*
-
 import org.virtuslab.yaml.*
 import org.virtuslab.yaml.Node
+import scalanotation.*
+import steps.result.Result
 import ujson.Arr
 import ujson.Bool
 import ujson.Null
@@ -15,7 +11,10 @@ import ujson.Num
 import ujson.Obj
 import ujson.Str
 import ujson.Value
-import steps.result.Result
+
+import java.nio.file.Files
+import java.nio.file.Path
+import scala.collection.immutable.ListMap
 
 object Main:
   def main(args: Array[String]): Unit =
@@ -59,20 +58,21 @@ object Main:
         println(s"Parsed declaration '${name}' successfully")
 
   private[scalableconfig] def render(
-      sourceFile: SourceFile[Expr],
+      sourceFile: Expr.SourceFile[Expr],
       name: String,
       exportJson: Boolean,
       exportYaml: Boolean,
       preserveNums: Boolean
   ): Option[String] =
-    if sourceFile.declaration.name != name then
-      throw new IllegalArgumentException(
-        s"Expected declaration name '$name' but found '${sourceFile.declaration.name}'"
-      )
-    val value = sourceFile.declaration.value
-    if exportJson then Some(ujson.write(exprToJson(value, preserveNums), indent = 2))
-    else if exportYaml then Some(exprToYamlNode(value).asYaml)
-    else None
+    sourceFile.declarations.get(name) match
+      case None =>
+        throw new IllegalArgumentException(
+          s"Declaration with name '$name' not found in source file"
+        )
+      case Some(value) =>
+        if exportJson then Some(ujson.write(exprToJson(value, preserveNums), indent = 2))
+        else if exportYaml then Some(exprToYamlNode(value).asYaml)
+        else None
 
   private def exprToJson(expr: Expr, preserveNums: Boolean): Value =
     expr match
