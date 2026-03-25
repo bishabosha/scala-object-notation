@@ -1,14 +1,12 @@
 package scalanotation
 
-import scalanotation.ReadWriter.Builders.AtPath
-import scalanotation.internal.CommonDerivationBuilders
+import scalanotation.internal.CommonTypeClassCompanion
 import scalanotation.internal.CompiledSchema
 import scalanotation.internal.OpaqueSupport
 import scalanotation.internal.PublicInternal
 import scalanotation.internal.RawSchema
 import steps.result.Result
 
-import scala.NamedTuple.NamedTuple
 import scala.deriving.Mirror
 import scala.reflect.ClassTag
 import scala.util.NotGiven
@@ -51,19 +49,22 @@ sealed trait ReadWriter[T]:
   final def writeDeclPretty(name: String, value: T, indent: Int = 2): String =
     writer.writeDeclPretty(name, value, indent)
 
-object ReadWriter:
-  type Field[A]   = CompiledSchema.Field
-  type SumCase[A] = CompiledSchema.SumCase
-
+object ReadWriter extends CommonTypeClassCompanion[ReadWriter]:
   private final class Instance[T](val compiled: CompiledSchema) extends ReadWriter[T]
 
   private[scalanotation] def fromCompiled[T](compiled0: CompiledSchema): ReadWriter[T] =
     new Instance(compiled0)
 
+  private[scalanotation] def compiledOf[T](typeclass: ReadWriter[T]): CompiledSchema =
+    typeclass.compiled
+
   private def opaque[T](
       support: OpaqueSupport.ReadWrite[T]
   ): ReadWriter[T] =
     fromCompiled[T](OpaqueSupport.compiled(support))
+
+  protected def primitiveTypeClass[T](codec: OpaqueSupport.ReadWrite[T]): ReadWriter[T] =
+    opaque(codec)
 
   def mapped[A, B](base: ReadWriter[A])(read: A => B)(write: B => A): ReadWriter[B] =
     mappedResult(base)(value => Result.Ok(read(value)))(write)
@@ -75,114 +76,30 @@ object ReadWriter:
   ): ReadWriter[B] =
     opaque(OpaqueSupport.ReadWrite.mapped(base)(read)(write))
 
-  inline def derived[T](using mirror: Mirror.Of[T]): ReadWriter[T] =
-    inline mirror match
-      case m: Mirror.ProductOf[T] =>
-        compiletime.summonFrom {
-          case _: (m.MirroredElemTypes =:= EmptyTuple) =>
-            val label = compiletime.constValue[m.MirroredLabel]
-            singleton[T](using m)(using ValueOf(label))
-          case _ =>
-            ofFields[T](using m)(
-              using compiletime.summonInline[
-                Builders.ProductFieldsAtPath["", m.MirroredElemLabels, m.MirroredElemTypes]
-              ]
-            )
-        }
-      case m: Mirror.SumOf[T] =>
-        ofCases[T](using m)(
-          using compiletime.summonInline[
-            Builders.SumCasesAtPath["", T, m.MirroredElemLabels, m.MirroredElemTypes]
-          ]
-        )
-
-  def ofFields[T](using mirror: Mirror.ProductOf[T])(
-      using
-      atPath: Builders.ProductFieldsAtPath["", mirror.MirroredElemLabels, mirror.MirroredElemTypes],
-      hasFields: NotGiven[mirror.MirroredElemTypes =:= EmptyTuple]
-  ): ReadWriter[T] =
-    Builders.productTypeClass[T](atPath.fields)
-
-  def singleton[T](using mirror: Mirror.ProductOf[T])(
-      using label: ValueOf[mirror.MirroredLabel],
-      noFields: mirror.MirroredElemTypes =:= EmptyTuple
-  ): ReadWriter[T] =
-    Builders.singletonTypeClass[T](label.value)
+  export Builders.{derived, ofFields, singleton, ofCases}
 
   def forNull[T](value: T): ReadWriter[T] =
     opaque(OpaqueSupport.ReadWrite.nullary(value))
 
-  def ofCases[T](using mirror: Mirror.SumOf[T])(
-      using casesAtPath: Builders.SumCasesAtPath[
-        "",
-        T,
-        mirror.MirroredElemLabels,
-        mirror.MirroredElemTypes
-      ]
-  ): ReadWriter[T] =
-    fromCompiled[T](
-      CompiledSchema.Sum(
-        IArray.from(casesAtPath.cases),
-        CompiledSchema.SumWrite.from[T](mirror.ordinal)
-      )
-    )
-
-  given ExprSchema: ReadWriter[Expr] =
-    opaque(OpaqueSupport.Primitives.ExprCodec)
-
-  given StringSchema: ReadWriter[String] =
-    opaque(OpaqueSupport.Primitives.StringCodec)
-
-  given CharSchema: ReadWriter[Char] =
-    opaque(OpaqueSupport.Primitives.CharCodec)
-
-  given IntSchema: ReadWriter[Int] =
-    opaque(OpaqueSupport.Primitives.IntCodec)
-
-  given LongSchema: ReadWriter[Long] =
-    opaque(OpaqueSupport.Primitives.LongCodec)
-
-  given FloatSchema: ReadWriter[Float] =
-    opaque(OpaqueSupport.Primitives.FloatCodec)
-
-  given DoubleSchema: ReadWriter[Double] =
-    opaque(OpaqueSupport.Primitives.DoubleCodec)
-
-  given BooleanSchema: ReadWriter[Boolean] =
-    opaque(OpaqueSupport.Primitives.BooleanCodec)
-
-  given OptionSchema: [T] => (atPath: AtPath["", Option[T]]) => ReadWriter[Option[T]] =
-    atPath.typeclass
-
-  given VectorSchema: [T] => (atPath: AtPath["", Vector[T]]) => ReadWriter[Vector[T]] =
-    atPath.typeclass
-
-  given IArraySchema: [T] => (atPath: AtPath["", IArray[T]]) => ReadWriter[IArray[T]] =
-    atPath.typeclass
-
-  given ArraySchema: [T] => (atPath: AtPath["", Array[T]]) => ReadWriter[Array[T]] =
-    atPath.typeclass
-
-  given SeqSchema: [Col[X] <: scala.collection.Seq[X], T] => (atPath: AtPath["", Col[T]])
-    => ReadWriter[Col[T]] =
-    atPath.typeclass
-
-  given MapSchema
-      : [Col[X, Y] <: scala.collection.Map[X, Y], T] => (atPath: AtPath["", Col[String, T]])
-        => ReadWriter[Col[String, T]] =
-    atPath.typeclass
-
-  given NamedTupleSchema: [NT <: NamedTuple.AnyNamedTuple]
-    => (atPath: AtPath["", NT]) => ReadWriter[NT] =
-    atPath.typeclass
-
-  object Builders extends CommonDerivationBuilders[ReadWriter]:
-    type FieldRepr      = Field[?]
-    type SumCaseRepr[A] = SumCase[A]
+  override object Builders extends CommonBuilders:
+    val thisBuilder: this.type = this
+    override type ThisBuilder = thisBuilder.type
+    type FieldRepr      = CompiledSchema.Field
+    type SumCaseRepr[A] = CompiledSchema.SumCase
 
     import compiletime.ops.string.+
 
     private[scalanotation] inline def typeClassName: String = "ReadWriter"
+
+    private[scalanotation] def sumTypeClass[T](cases: List[SumCaseRepr[T]])(
+        using mirror: Mirror.SumOf[T]
+    ): ReadWriter[T] =
+      fromCompiled[T](
+        CompiledSchema.Sum(
+          IArray.from(cases),
+          CompiledSchema.SumWrite.from[T](mirror.ordinal)
+        )
+      )
 
     private[scalanotation] def makeField[T](name: String, typeclass: ReadWriter[T]): FieldRepr =
       CompiledSchema.Field(name, typeclass.compiled)
@@ -298,15 +215,5 @@ object ReadWriter:
             CompiledSchema.DictRead.FromReaderBuilder(PublicInternal.MapFactoryDict[T, Col]),
             CompiledSchema.DictWrite.from[Col[String, T], T](_.size, _.iterator)
           )
-        )
-      )
-
-    given OptionAtPath: [Path <: String, T]
-      => NonNestedOption[Path, T]
-      => (wrapped: AtPath[Path, T])
-      => AtPath[Path, Option[T]] =
-      liftAtPath[Path, Option[T]](
-        fromCompiled[Option[T]](
-          CompiledSchema.OptionShape(wrapped.typeclass.compiled)
         )
       )

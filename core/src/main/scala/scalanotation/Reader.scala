@@ -1,14 +1,12 @@
 package scalanotation
 
-import scalanotation.Reader.Builders.AtPath
-import scalanotation.internal.CommonDerivationBuilders
+import scalanotation.internal.CommonTypeClassCompanion
 import scalanotation.internal.CompiledSchema
 import scalanotation.internal.OpaqueSupport
 import scalanotation.internal.PublicInternal
 import scalanotation.internal.RawSchema
 import steps.result.Result
 
-import scala.NamedTuple.NamedTuple
 import scala.deriving.Mirror
 import scala.reflect.ClassTag
 import scala.util.NotGiven
@@ -28,10 +26,7 @@ private[scalanotation] trait ReaderLowPriority:
   given [T](using readWriter: ReadWriter[T]): Reader[T] =
     readWriter.reader
 
-object Reader extends ReaderLowPriority:
-  type Field[A]   = CompiledSchema.Field
-  type SumCase[A] = CompiledSchema.SumCase
-
+object Reader extends ReaderLowPriority, CommonTypeClassCompanion[Reader]:
   trait VectorBuilder[Elem, Repr, A]:
     def init(): Repr
     def add(repr: Repr, elem: Elem): Repr
@@ -47,10 +42,16 @@ object Reader extends ReaderLowPriority:
   private[scalanotation] def fromCompiled[T](compiled0: CompiledSchema): Reader[T] =
     new Instance(compiled0)
 
+  private[scalanotation] def compiledOf[T](typeclass: Reader[T]): CompiledSchema =
+    typeclass.compiled
+
   private def opaque[T](
       support: OpaqueSupport.Read[T]
   ): Reader[T] =
     fromCompiled[T](OpaqueSupport.compiled(support))
+
+  protected def primitiveTypeClass[T](codec: OpaqueSupport.ReadWrite[T]): Reader[T] =
+    opaque(codec.read)
 
   def mapped[A, B](base: Reader[A])(transform: A => B): Reader[B] =
     mappedResult(base)(value => Result.Ok(transform(value)))
@@ -60,111 +61,27 @@ object Reader extends ReaderLowPriority:
   ): Reader[B] =
     opaque(OpaqueSupport.Read.mapped(base)(transform))
 
-  inline def derived[T](using mirror: Mirror.Of[T]): Reader[T] =
-    inline mirror match
-      case m: Mirror.ProductOf[T] =>
-        compiletime.summonFrom({
-          case _: (m.MirroredElemTypes =:= EmptyTuple) =>
-            val label = compiletime.constValue[m.MirroredLabel]
-            singleton[T](using m)(using ValueOf(label))
-          case _ =>
-            ofFields[T](using m)(
-              using compiletime.summonInline[
-                Builders.ProductFieldsAtPath["", m.MirroredElemLabels, m.MirroredElemTypes]
-              ]
-            )
-        })
-      case m: Mirror.SumOf[T] =>
-        ofCases[T](using m)(
-          using compiletime.summonInline[
-            Builders.SumCasesAtPath["", T, m.MirroredElemLabels, m.MirroredElemTypes]
-          ]
-        )
-
-  def ofFields[T](using mirror: Mirror.ProductOf[T])(
-      using
-      atPath: Builders.ProductFieldsAtPath["", mirror.MirroredElemLabels, mirror.MirroredElemTypes],
-      hasFields: NotGiven[mirror.MirroredElemTypes =:= EmptyTuple]
-  ): Reader[T] =
-    Builders.productTypeClass[T](atPath.fields)
-
-  def singleton[T](using mirror: Mirror.ProductOf[T])(
-      using label: ValueOf[mirror.MirroredLabel],
-      noFields: mirror.MirroredElemTypes =:= EmptyTuple
-  ): Reader[T] =
-    Builders.singletonTypeClass[T](label.value)
+  export Builders.{derived, ofFields, singleton, ofCases}
 
   def forNull[T](value: T): Reader[T] =
     opaque(OpaqueSupport.Read.nullary(value))
 
-  def ofCases[T](using mirror: Mirror.SumOf[T])(
-      using casesAtPath: Builders.SumCasesAtPath[
-        "",
-        T,
-        mirror.MirroredElemLabels,
-        mirror.MirroredElemTypes
-      ]
-  ): Reader[T] =
-    fromCompiled[T](
-      CompiledSchema.Sum(IArray.from(casesAtPath.cases), write = null)
-    )
-
-  given ExprSchema: Reader[Expr] =
-    opaque(OpaqueSupport.Primitives.ExprCodec.read)
-
-  given StringSchema: Reader[String] =
-    opaque(OpaqueSupport.Primitives.StringCodec.read)
-
-  given CharSchema: Reader[Char] =
-    opaque(OpaqueSupport.Primitives.CharCodec.read)
-
-  given IntSchema: Reader[Int] =
-    opaque(OpaqueSupport.Primitives.IntCodec.read)
-
-  given LongSchema: Reader[Long] =
-    opaque(OpaqueSupport.Primitives.LongCodec.read)
-
-  given FloatSchema: Reader[Float] =
-    opaque(OpaqueSupport.Primitives.FloatCodec.read)
-
-  given DoubleSchema: Reader[Double] =
-    opaque(OpaqueSupport.Primitives.DoubleCodec.read)
-
-  given BooleanSchema: Reader[Boolean] =
-    opaque(OpaqueSupport.Primitives.BooleanCodec.read)
-
-  given OptionSchema: [T] => (atPath: AtPath["", Option[T]]) => Reader[Option[T]] =
-    atPath.typeclass
-
-  given VectorSchema: [T] => (atPath: AtPath["", Vector[T]]) => Reader[Vector[T]] =
-    atPath.typeclass
-
-  given IArraySchema: [T] => (atPath: AtPath["", IArray[T]]) => Reader[IArray[T]] =
-    atPath.typeclass
-
-  given ArraySchema: [T] => (atPath: AtPath["", Array[T]]) => Reader[Array[T]] =
-    atPath.typeclass
-
-  given SeqSchema: [Col[X] <: scala.collection.Seq[X], T] => (atPath: AtPath["", Col[T]])
-    => Reader[Col[T]] =
-    atPath.typeclass
-
-  given MapSchema
-      : [Col[X, Y] <: scala.collection.Map[X, Y], T] => (atPath: AtPath["", Col[String, T]])
-        => Reader[Col[String, T]] =
-    atPath.typeclass
-
-  given NamedTupleSchema: [NT <: NamedTuple.AnyNamedTuple]
-    => (atPath: AtPath["", NT]) => Reader[NT] =
-    atPath.typeclass
-
-  object Builders extends CommonDerivationBuilders[Reader]:
-    type FieldRepr      = Field[?]
-    type SumCaseRepr[A] = SumCase[A]
+  override object Builders extends CommonBuilders:
+    val thisBuilder: this.type = this
+    override type ThisBuilder = thisBuilder.type
+    type FieldRepr      = CompiledSchema.Field
+    type SumCaseRepr[A] = CompiledSchema.SumCase
 
     import compiletime.ops.string.+
 
     private[scalanotation] inline def typeClassName: String = "Reader"
+
+    private[scalanotation] def sumTypeClass[T](cases: List[SumCaseRepr[T]])(
+        using mirror: Mirror.SumOf[T]
+    ): Reader[T] =
+      fromCompiled[T](
+        CompiledSchema.Sum(IArray.from(cases), write = null)
+      )
 
     private[scalanotation] def makeField[T](name: String, typeclass: Reader[T]): FieldRepr =
       CompiledSchema.Field(name, typeclass.compiled)
@@ -280,15 +197,5 @@ object Reader extends ReaderLowPriority:
             CompiledSchema.DictRead.FromReaderBuilder(PublicInternal.MapFactoryDict[T, Col]),
             write = null
           )
-        )
-      )
-
-    given OptionAtPath: [Path <: String, T]
-      => NonNestedOption[Path, T]
-      => (wrapped: AtPath[Path, T])
-      => AtPath[Path, Option[T]] =
-      liftAtPath[Path, Option[T]](
-        fromCompiled[Option[T]](
-          CompiledSchema.OptionShape(wrapped.typeclass.compiled)
         )
       )

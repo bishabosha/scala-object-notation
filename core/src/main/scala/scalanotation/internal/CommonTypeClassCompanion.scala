@@ -1,0 +1,278 @@
+package scalanotation.internal
+
+import scalanotation.Expr
+import scalanotation.internal.PublicInternal.showType
+
+import scala.NamedTuple.NamedTuple
+import scala.deriving.Mirror
+import scala.util.NotGiven
+
+private[scalanotation] trait CommonTypeClassCompanion[TC[_]]:
+  private[scalanotation] def fromCompiled[T](compiled0: CompiledSchema): TC[T]
+
+  private[scalanotation] def compiledOf[T](typeclass: TC[T]): CompiledSchema
+
+  protected def primitiveTypeClass[T](codec: OpaqueSupport.ReadWrite[T]): TC[T]
+
+  trait CommonDerivationBuilders:
+    type ThisBuilder <: this.type & CommonDerivationBuilders
+    val thisBuilder: ThisBuilder
+    type FieldRepr
+    type SumCaseRepr[A]
+
+    private[scalanotation] inline def typeClassName: String
+
+    inline def derived[T](using mirror: Mirror.Of[T]): TC[T] =
+      inline mirror match
+        case m: Mirror.ProductOf[T] =>
+          compiletime.summonFrom {
+            case _: (m.MirroredElemTypes =:= EmptyTuple) =>
+              val label = compiletime.constValue[m.MirroredLabel]
+              singleton[T](using m)(using ValueOf(label))
+            case _ =>
+              ofFields[T](using m)(
+                using compiletime.summonInline[
+                  thisBuilder.ProductFieldsAtPath["", m.MirroredElemLabels, m.MirroredElemTypes]
+                ]
+              )
+          }
+        case m: Mirror.SumOf[T] =>
+          ofCases[T](using m)(
+            using compiletime.summonInline[
+              thisBuilder.SumCasesAtPath["", T, m.MirroredElemLabels, m.MirroredElemTypes]
+            ]
+          )
+
+    final def singleton[T](using mirror: Mirror.ProductOf[T])(
+        using label: ValueOf[mirror.MirroredLabel],
+        noFields: mirror.MirroredElemTypes =:= EmptyTuple
+    ): TC[T] = singletonTypeClass[T](label.value)
+
+    final def ofFields[T](using mirror: Mirror.ProductOf[T])(
+        using
+        atPath: ProductFieldsAtPath["", mirror.MirroredElemLabels, mirror.MirroredElemTypes],
+        hasFields: NotGiven[mirror.MirroredElemTypes =:= EmptyTuple]
+    ): TC[T] = productTypeClass[T](ProductFieldsAtPath.fields(atPath))
+
+    final def ofCases[T](using mirror: Mirror.SumOf[T])(
+        using casesAtPath: SumCasesAtPath[
+          "",
+          T,
+          mirror.MirroredElemLabels,
+          mirror.MirroredElemTypes
+        ]
+    ): TC[T] = sumTypeClass[T](casesAtPath)
+
+    private[scalanotation] def makeField[T](name: String, typeclass: TC[T]): FieldRepr
+
+    private[scalanotation] def namedTupleTypeClass[T](fields: List[FieldRepr]): TC[T]
+
+    private[scalanotation] def productTypeClass[T](fields: List[FieldRepr])(
+        using mirror: Mirror.ProductOf[T]
+    ): TC[T]
+
+    private[scalanotation] def singletonTypeClass[T](label: String)(
+        using mirror: Mirror.ProductOf[T],
+        noFields: mirror.MirroredElemTypes =:= EmptyTuple
+    ): TC[T]
+
+    private[scalanotation] def nullaryEnumCaseTypeClass[T](
+        using mirror: Mirror.ProductOf[T],
+        empty: mirror.MirroredElemTypes =:= EmptyTuple
+    ): TC[T]
+
+    private[scalanotation] def sumCaseTypeClass[A, T <: A](
+        name: String,
+        typeclass: TC[T]
+    ): SumCaseRepr[A]
+
+    private[scalanotation] def sumTypeClass[T](cases: List[SumCaseRepr[T]])(
+        using mirror: Mirror.SumOf[T]
+    ): TC[T]
+
+    inline def formatPath[Path <: String]: String = ("'" + compiletime.constValue[Path] + "'")
+
+    opaque type ProductFieldsAtPath[Path <: String, Labels <: Tuple, Values <: Tuple] =
+      List[FieldRepr]
+
+    object ProductFieldsAtPath:
+      import compiletime.ops.string.+
+      import AtPath.typeclass
+
+      extension [Path <: String, Labels <: Tuple, Values <: Tuple](
+          atPath: ProductFieldsAtPath[Path, Labels, Values]
+      ) def fields: List[FieldRepr] = atPath
+
+      given Empty: [Path <: String] => ProductFieldsAtPath[Path, EmptyTuple, EmptyTuple] = Nil
+
+      given Cons: [Path <: String, Label <: String, Value, Labels <: Tuple, Values <: Tuple]
+        => (valueOf: ValueOf[Label])
+        => (atPath: AtPath[Path + "." + Label, Value])
+        => (rest: ProductFieldsAtPath[Path, Labels, Values])
+        => ProductFieldsAtPath[Path, Label *: Labels, Value *: Values] =
+        makeField(valueOf.value, atPath.typeclass) :: rest.fields
+
+    opaque type SumCasesAtPath[Path <: String, A, Labels <: Tuple, Cases <: Tuple] =
+      List[SumCaseRepr[A]]
+
+    opaque type DerivedEnumCaseAtPath[Path <: String, T] = TC[T]
+
+    object DerivedEnumCaseAtPath:
+      import ProductFieldsAtPath.fields
+
+      extension [Path <: String, T](self: DerivedEnumCaseAtPath[Path, T])
+        private[scalanotation] def typeclass: TC[T] = self
+
+      given Nullary[Path <: String, T](
+          using mirror: Mirror.ProductOf[T],
+          empty: mirror.MirroredElemTypes =:= EmptyTuple
+      ): DerivedEnumCaseAtPath[Path, T] =
+        nullaryEnumCaseTypeClass[T]
+
+      given Product[Path <: String, T](
+          using mirror: Mirror.ProductOf[T],
+          fieldsAtPath: ProductFieldsAtPath[
+            Path,
+            mirror.MirroredElemLabels,
+            mirror.MirroredElemTypes
+          ],
+          nonEmpty: NotGiven[mirror.MirroredElemTypes =:= EmptyTuple]
+      ): DerivedEnumCaseAtPath[Path, T] =
+        productTypeClass[T](fieldsAtPath.fields)
+
+    object SumCasesAtPath:
+      import compiletime.ops.string.+
+      import DerivedEnumCaseAtPath.typeclass
+
+      extension [Path <: String, A, Labels <: Tuple, Cases <: Tuple](
+          atPath: SumCasesAtPath[Path, A, Labels, Cases]
+      ) def cases: List[SumCaseRepr[A]] = atPath
+
+      given Empty: [Path <: String, A] => SumCasesAtPath[Path, A, EmptyTuple, EmptyTuple] = Nil
+
+      given Cons: [Path <: String, A, Label <: String, T <: A, Labels <: Tuple, Cases <: Tuple]
+        => (valueOf: ValueOf[Label])
+        => (caseTypeClass: DerivedEnumCaseAtPath[Path + "." + Label, T])
+        => (rest: SumCasesAtPath[Path, A, Labels, Cases])
+        => SumCasesAtPath[Path, A, Label *: Labels, T *: Cases] =
+        sumCaseTypeClass[A, T](valueOf.value, caseTypeClass.typeclass) :: rest.cases
+
+    opaque type NonNestedOption[Path <: String, T] <: Unit = Unit
+
+    object NonNestedOption:
+      inline given [Path <: String, T]: NonNestedOption[Path, T] =
+        compiletime.summonFrom {
+          case _: (T <:< Option[?]) =>
+            compiletime.error(
+              "at path " + formatPath[Path] +
+                ": " + typeClassName + "[Option[Option[?]]] is not supported."
+            )
+          case _ =>
+            ()
+        }
+
+    opaque type AtPath[Path <: String, T] = TC[T] | List[FieldRepr]
+
+    private[scalanotation] final def liftAtPath[Path <: String, T](
+        typeclass: TC[T]
+    ): AtPath[Path, T] =
+      typeclass
+
+    object AtPath:
+      import compiletime.ops.string.+
+
+      extension [Path <: String, T](value: AtPath[Path, T])
+        def typeclass: TC[T] = value match
+          case fields: List[?] =>
+            namedTupleTypeClass(fields.asInstanceOf[List[FieldRepr]])
+          case _ =>
+            value.asInstanceOf[TC[T]]
+
+      inline given DefaultAtPath: [Path <: String, T] => AtPath[Path, T] =
+        compiletime.summonFrom {
+          case tc: TC[T] => liftAtPath[Path, T](tc)
+          case _         =>
+            compiletime.error(
+              "at path " + formatPath[Path] + ": Could not find " + typeClassName + "[" + showType[
+                T
+              ] + "]."
+            )
+        }
+
+      given NamedTupleCons: [Path <: String, N <: String, V, Ns <: Tuple, Vs <: Tuple]
+        => (vn: ValueOf[N], ap: AtPath[Path + "." + N, V], rest: AtPath[Path, NamedTuple[Ns, Vs]])
+        => AtPath[Path, NamedTuple[N *: Ns, V *: Vs]] =
+        rest match
+          case fs: List[?] =>
+            makeField(vn.value, ap.typeclass) :: fs.asInstanceOf[List[FieldRepr]]
+          case _ =>
+            throw IllegalArgumentException(
+              "Expected the rest of the named tuple to be a NamedTuple schema"
+            )
+
+      given NamedTupleEmpty: [Path <: String] => AtPath[Path, NamedTuple.Empty] =
+        Nil
+
+  trait CommonBuilders extends CommonDerivationBuilders:
+    given OptionAtPath: [Path <: String, T]
+      => NonNestedOption[Path, T]
+      => (wrapped: AtPath[Path, T])
+      => AtPath[Path, Option[T]] =
+      liftAtPath[Path, Option[T]](
+        fromCompiled[Option[T]](
+          CompiledSchema.OptionShape(compiledOf(wrapped.typeclass))
+        )
+      )
+
+  val Builders: CommonBuilders
+
+  given ExprSchema: TC[Expr] =
+    primitiveTypeClass(OpaqueSupport.Primitives.ExprCodec)
+
+  given StringSchema: TC[String] =
+    primitiveTypeClass(OpaqueSupport.Primitives.StringCodec)
+
+  given CharSchema: TC[Char] =
+    primitiveTypeClass(OpaqueSupport.Primitives.CharCodec)
+
+  given IntSchema: TC[Int] =
+    primitiveTypeClass(OpaqueSupport.Primitives.IntCodec)
+
+  given LongSchema: TC[Long] =
+    primitiveTypeClass(OpaqueSupport.Primitives.LongCodec)
+
+  given FloatSchema: TC[Float] =
+    primitiveTypeClass(OpaqueSupport.Primitives.FloatCodec)
+
+  given DoubleSchema: TC[Double] =
+    primitiveTypeClass(OpaqueSupport.Primitives.DoubleCodec)
+
+  given BooleanSchema: TC[Boolean] =
+    primitiveTypeClass(OpaqueSupport.Primitives.BooleanCodec)
+
+  given OptionSchema: [T] => (atPath: Builders.AtPath["", Option[T]]) => TC[Option[T]] =
+    atPath.typeclass
+
+  given VectorSchema: [T] => (atPath: Builders.AtPath["", Vector[T]]) => TC[Vector[T]] =
+    atPath.typeclass
+
+  given IArraySchema: [T] => (atPath: Builders.AtPath["", IArray[T]]) => TC[IArray[T]] =
+    atPath.typeclass
+
+  given ArraySchema: [T] => (atPath: Builders.AtPath["", Array[T]]) => TC[Array[T]] =
+    atPath.typeclass
+
+  given SeqSchema: [Col[X] <: scala.collection.Seq[X], T]
+    => (atPath: Builders.AtPath["", Col[T]])
+    => TC[Col[T]] =
+    atPath.typeclass
+
+  given MapSchema
+      : [Col[X, Y] <: scala.collection.Map[X, Y], T]
+        => (atPath: Builders.AtPath["", Col[String, T]])
+        => TC[Col[String, T]] =
+    atPath.typeclass
+
+  given NamedTupleSchema: [NT <: NamedTuple.AnyNamedTuple]
+    => (atPath: Builders.AtPath["", NT]) => TC[NT] =
+    atPath.typeclass
