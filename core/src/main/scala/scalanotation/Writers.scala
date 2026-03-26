@@ -1,23 +1,26 @@
 package scalanotation
 
+import scalanotation.internal.Encode
+
 object Writers:
   def writeExpr[T: Writer](value: T): Expr =
-    summon[Writer[T]].write(value)
+    val writer = summon[Writer[T]]
+    Encode.writeExpr(writer.schema, value)
 
   def write[T: Writer](value: T): String =
-    summon[Writer[T]].writeText(value)
+    Writer.renderText(summon[Writer[T]], value, TextFormat.compact)
 
   def write[T: Writer](value: T, format: TextFormat): String =
-    summon[Writer[T]].writeText(value, format)
+    Writer.renderText(summon[Writer[T]], value, format)
 
   def writePretty[T: Writer](value: T, indent: Int = 2): String =
-    summon[Writer[T]].writePrettyText(value, indent)
+    Writer.renderText(summon[Writer[T]], value, TextFormat.pretty(indent))
 
   def writeDecl[T: Writer](rootName: String, value: T): String =
-    summon[Writer[T]].writeDecl(rootName, value)
+    Writer.renderDecl(summon[Writer[T]], rootName, value, TextFormat.compact)
 
   def writeDecl[T: Writer](rootName: String, value: T, format: TextFormat): String =
-    summon[Writer[T]].writeDecl(rootName, value, format)
+    Writer.renderDecl(summon[Writer[T]], rootName, value, format)
 
   def writeDeclPretty[T: Writer](rootName: String, value: T, indent: Int = 2): String =
-    summon[Writer[T]].writeDeclPretty(rootName, value, indent)
+    Writer.renderDecl(summon[Writer[T]], rootName, value, TextFormat.pretty(indent))

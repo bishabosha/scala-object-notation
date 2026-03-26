@@ -24,27 +24,6 @@ sealed trait ReadWriter[T]:
   final def emap[U](read: T => Result[U, DecodeError])(write: U => T): ReadWriter[U] =
     ReadWriter.mappedResult(this)(read)(write)
 
-  final def write(value: T): Expr =
-    writer.write(value)
-
-  final def writeText(value: T): String =
-    writer.writeText(value)
-
-  final def writeText(value: T, format: TextFormat): String =
-    writer.writeText(value, format)
-
-  final def writePrettyText(value: T, indent: Int = 2): String =
-    writer.writePrettyText(value, indent)
-
-  final def writeDecl(name: String, value: T): String =
-    writer.writeDecl(name, value)
-
-  final def writeDecl(name: String, value: T, format: TextFormat): String =
-    writer.writeDecl(name, value, format)
-
-  final def writeDeclPretty(name: String, value: T, indent: Int = 2): String =
-    writer.writeDeclPretty(name, value, indent)
-
 object ReadWriter extends CommonTypeClassCompanion[ReadWriter]:
   private final class Instance[T](val schema: RawSchema) extends ReadWriter[T]
 

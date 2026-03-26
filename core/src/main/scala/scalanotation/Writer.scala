@@ -11,9 +11,6 @@ import scala.util.NotGiven
 sealed trait Writer[T]:
   private[scalanotation] def schema: RawSchema
 
-  final def write(value: T): Expr =
-    Encode.writeExpr(schema, value)
-
   private[scalanotation] final def renderText(
       value: T,
       out: ExprRenderer.Output,
@@ -23,24 +20,6 @@ sealed trait Writer[T]:
 
   final def contramap[U](f: U => T): Writer[U] =
     Writer.contramapped(this)(f)
-
-  final def writeText(value: T): String =
-    Writer.renderText(this, value, TextFormat.compact)
-
-  final def writeText(value: T, format: TextFormat): String =
-    Writer.renderText(this, value, format)
-
-  final def writePrettyText(value: T, indent: Int = 2): String =
-    writeText(value, TextFormat.pretty(indent))
-
-  final def writeDecl(name: String, value: T): String =
-    Writer.renderDecl(this, name, value, TextFormat.compact)
-
-  final def writeDecl(name: String, value: T, format: TextFormat): String =
-    Writer.renderDecl(this, name, value, format)
-
-  final def writeDeclPretty(name: String, value: T, indent: Int = 2): String =
-    writeDecl(name, value, TextFormat.pretty(indent))
 
 private[scalanotation] trait WriterLowPriority:
   given [T](using readWriter: ReadWriter[T]): Writer[T] =
