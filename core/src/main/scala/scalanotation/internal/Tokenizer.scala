@@ -86,11 +86,11 @@ private[scalanotation] final class Tokenizer(input: String):
     val builder = new StringBuilder
     while !isAtEnd && isIdentifierPart(currentChar()) do builder += advance()
     builder.result() match
-      case KW_val    => Token.ValKw(start)
-      case KW_true   => Token.TrueKw(start)
-      case KW_false  => Token.FalseKw(start)
-      case KW_null   => Token.NullKw(start)
-      case KW_Vector => Token.VectorId(start)
+      case KW_val                                            => Token.ValKw(start)
+      case KW_true                                           => Token.TrueKw(start)
+      case KW_false                                          => Token.FalseKw(start)
+      case KW_null                                           => Token.NullKw(start)
+      case KW_Vector                                         => Token.VectorId(start)
       case name if reservedIdentifierKeywords.contains(name) =>
         keyword(name, start)
       case name =>
@@ -113,8 +113,8 @@ private[scalanotation] final class Tokenizer(input: String):
       case "=" => Token.Equals(start)
       case "+" => Token.Plus(start)
       case "-" => Token.Minus(start)
-      case KW_colon | KW_leftArrow | KW_arrow | KW_subtype | KW_supertype | KW_hash | KW_at
-          | KW_tlArrow | KW_ctxArrow =>
+      case KW_colon | KW_leftArrow | KW_arrow | KW_subtype | KW_supertype | KW_hash | KW_at |
+          KW_tlArrow | KW_ctxArrow =>
         keyword(builder.result(), start)
       case name =>
         Token.Identifier(nameCached(name), start)
@@ -352,8 +352,8 @@ private[scalanotation] final class Tokenizer(input: String):
 
   private def isOperatorPart(ch: Char): Boolean =
     ch match
-      case '~' | '!' | '@' | '#' | '%' | '^' | '*' | '+' | '-' | '<' | '>' | '?' | ':' | '='
-          | '&' | '|' | '\\' | '/' =>
+      case '~' | '!' | '@' | '#' | '%' | '^' | '*' | '+' | '-' | '<' | '>' | '?' | ':' | '=' | '&' |
+          '|' | '\\' | '/' =>
         true
       case _ => false
 
@@ -415,20 +415,20 @@ private[scalanotation] final class Tokenizer(input: String):
     throw ParseException(message, span)
 
 private[scalanotation] object Tokenizer:
-  private val KW_val        = "val"
-  private val KW_true       = "true"
-  private val KW_false      = "false"
-  private val KW_null       = "null"
-  private val KW_Vector     = "Vector"
-  private val KW_colon      = ":"
-  private val KW_leftArrow  = "<-"
-  private val KW_arrow      = "=>"
-  private val KW_subtype    = "<:"
-  private val KW_supertype  = ">:"
-  private val KW_hash       = "#"
-  private val KW_at         = "@"
-  private val KW_tlArrow    = "=>>"
-  private val KW_ctxArrow   = "?=>"
+  private val KW_val       = "val"
+  private val KW_true      = "true"
+  private val KW_false     = "false"
+  private val KW_null      = "null"
+  private val KW_Vector    = "Vector"
+  private val KW_colon     = ":"
+  private val KW_leftArrow = "<-"
+  private val KW_arrow     = "=>"
+  private val KW_subtype   = "<:"
+  private val KW_supertype = ">:"
+  private val KW_hash      = "#"
+  private val KW_at        = "@"
+  private val KW_tlArrow   = "=>>"
+  private val KW_ctxArrow  = "?=>"
 
   private val reservedIdentifierKeywords: Set[String] =
     Set(

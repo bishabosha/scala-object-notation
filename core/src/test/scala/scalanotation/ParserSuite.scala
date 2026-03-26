@@ -12,25 +12,29 @@ import scala.compiletime.testing.typeCheckErrors
 
 class ParserSuite extends FunSuite:
   private def tokenLabels(input: String): List[String] =
-    val tokens = Tokenizer.tokenize(input, debug = false)
+    val tokens = Tokenizer
+      .tokenize(input, debug = false)
       .getOrElse(fail(s"Expected tokenization to succeed for input: $input"))
     tokens.map {
       case Token.ValKw(_)            => "val"
-        case Token.VectorId(_)         => "Vector"
-        case Token.TrueKw(_)           => "true"
-        case Token.FalseKw(_)          => "false"
-        case Token.NullKw(_)           => "null"
-        case Token.Keyword(raw, _)     => raw
-        case Token.Identifier(name, _) => s"<Identifier:$name>"
-        case Token.Equals(_)           => "="
-        case Token.Plus(_)             => "+"
-        case Token.Minus(_)            => "-"
-        case Token.Comma(_)            => ","
-        case Token.LParen(_)           => "("
-        case Token.RParen(_)           => ")"
-        case Token.Eof(_)              => "eof"
-        case token                     => fail(s"Unexpected token in test helper: $token\n${tokens.map(t => s"  $t").mkString("\n")}\nfor input: $input")
-      }
+      case Token.VectorId(_)         => "Vector"
+      case Token.TrueKw(_)           => "true"
+      case Token.FalseKw(_)          => "false"
+      case Token.NullKw(_)           => "null"
+      case Token.Keyword(raw, _)     => raw
+      case Token.Identifier(name, _) => s"<Identifier:$name>"
+      case Token.Equals(_)           => "="
+      case Token.Plus(_)             => "+"
+      case Token.Minus(_)            => "-"
+      case Token.Comma(_)            => ","
+      case Token.LParen(_)           => "("
+      case Token.RParen(_)           => ")"
+      case Token.Eof(_)              => "eof"
+      case token                     =>
+        fail(
+          s"Unexpected token in test helper: $token\n${tokens.map(t => s"  $t").mkString("\n")}\nfor input: $input"
+        )
+    }
 
   test("read the sample named tuple file"):
     val input =
@@ -200,10 +204,10 @@ class ParserSuite extends FunSuite:
       Map(
         "data" -> Expr.NamedTupleExpr(
           IndexedSeq(
-            "using" -> Expr.IntConstant(1),
+            "using"     -> Expr.IntConstant(1),
             "extension" -> Expr.IntConstant(2),
-            "derives" -> Expr.IntConstant(3),
-            "end" -> Expr.IntConstant(4)
+            "derives"   -> Expr.IntConstant(3),
+            "end"       -> Expr.IntConstant(4)
           )
         )
       )
