@@ -224,6 +224,7 @@ private[scalanotation] object TokenDecoder:
       case Token.TrueKw(_)            => "'true'"
       case Token.FalseKw(_)           => "'false'"
       case Token.NullKw(_)            => "'null'"
+      case Token.Keyword(raw, _)      => s"'$raw'"
       case Token.Identifier(name, _)  => s"identifier '$name'"
       case Token.IntLit(raw, _, _)    => s"integer literal '$raw'"
       case Token.LongLit(raw, _, _)   => s"long literal '$raw'"

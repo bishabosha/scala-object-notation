@@ -3,12 +3,39 @@ package scalanotation
 import munit.FunSuite
 import scalanotation.internal.PublicInternal
 import scalanotation.internal.RawSchema
+import scalanotation.internal.Token
+import scalanotation.internal.Tokenizer
 import steps.result.Result
 
 import scala.collection.mutable
 import scala.compiletime.testing.typeCheckErrors
 
 class ParserSuite extends FunSuite:
+  private def tokenLabels(input: String): List[String] =
+    val tokens = Tokenizer
+      .tokenize(input, debug = false)
+      .getOrElse(fail(s"Expected tokenization to succeed for input: $input"))
+    tokens.map {
+      case Token.ValKw(_)            => "val"
+      case Token.VectorId(_)         => "Vector"
+      case Token.TrueKw(_)           => "true"
+      case Token.FalseKw(_)          => "false"
+      case Token.NullKw(_)           => "null"
+      case Token.Keyword(raw, _)     => raw
+      case Token.Identifier(name, _) => s"<Identifier:$name>"
+      case Token.Equals(_)           => "="
+      case Token.Plus(_)             => "+"
+      case Token.Minus(_)            => "-"
+      case Token.Comma(_)            => ","
+      case Token.LParen(_)           => "("
+      case Token.RParen(_)           => ")"
+      case Token.Eof(_)              => "eof"
+      case token                     =>
+        fail(
+          s"Unexpected token in test helper: $token\n${tokens.map(t => s"  $t").mkString("\n")}\nfor input: $input"
+        )
+    }
+
   test("read the sample named tuple file"):
     val input =
       """val data = (
@@ -73,6 +100,129 @@ class ParserSuite extends FunSuite:
 
     val Expr.NamedTupleExpr(fieldExprs) = parsed.declarations.head(1).runtimeChecked
     assertEquals(fieldExprs.length, 4)
+
+  test("tokenize Scala regular keywords as reserved syntax"):
+    val regularKeywords = List(
+      "abstract",
+      "case",
+      "catch",
+      "class",
+      "def",
+      "do",
+      "else",
+      "enum",
+      "export",
+      "extends",
+      "false",
+      "final",
+      "finally",
+      "for",
+      "given",
+      "if",
+      "implicit",
+      "import",
+      "lazy",
+      "match",
+      "new",
+      "null",
+      "object",
+      "override",
+      "package",
+      "private",
+      "protected",
+      "return",
+      "sealed",
+      "super",
+      "then",
+      "throw",
+      "trait",
+      "true",
+      "try",
+      "type",
+      "val",
+      "var",
+      "while",
+      "with",
+      "yield",
+      ":",
+      "=",
+      "<-",
+      "=>",
+      "<:",
+      ">:",
+      "#",
+      "@",
+      "=>>",
+      "?=>"
+    )
+
+    assertEquals(tokenLabels(regularKeywords.mkString(" ")), regularKeywords :+ "eof")
+
+  test("do not greedily tokenize symbolic keywords inside longer operator identifiers"):
+    val symbolicIdentifiers = List(
+      "::",
+      "=>=",
+      "<->",
+      "##",
+      "@@",
+      "?==>",
+      "=>>>",
+      "++",
+      "--",
+      "=="
+    )
+
+    assertEquals(
+      tokenLabels(symbolicIdentifiers.mkString(" ")),
+      symbolicIdentifiers.map(name => s"<Identifier:$name>") :+ "eof"
+    )
+
+  test("treat Scala soft keywords as identifiers"):
+    val softKeywords = List(
+      "as",
+      "derives",
+      "end",
+      "extension",
+      "infix",
+      "inline",
+      "opaque",
+      "open",
+      "transparent",
+      "using"
+    )
+
+    assertEquals(
+      tokenLabels(softKeywords.mkString(" ")),
+      softKeywords.map(name => s"<Identifier:$name>") :+ "eof"
+    )
+
+  test("soft keywords remain valid field names"):
+    val input  = "val data = (using = 1, extension = 2, derives = 3, end = 4)"
+    val parsed = Readers.quick.readDecls(input)
+
+    val expected = Expr.SourceFile(
+      Map(
+        "data" -> Expr.NamedTupleExpr(
+          IndexedSeq(
+            "using"     -> Expr.IntConstant(1),
+            "extension" -> Expr.IntConstant(2),
+            "derives"   -> Expr.IntConstant(3),
+            "end"       -> Expr.IntConstant(4)
+          )
+        )
+      )
+    )
+    assertEquals(parsed, expected)
+
+  test("reject regular keywords as field names"):
+    val input    = "val data = (class = 1)"
+    val obtained = Readers.readDeclAs[Expr](input, rootName = "data")
+
+    obtained match
+      case Result.Err(error) =>
+        assertEquals(error.rootCause, DecodeError.ExpectedFieldName("'class'"))
+        assertEquals(error.span.map(span => (span.line, span.column)), Some((1, 13)))
+      case Result.Ok(value) => fail(s"Expected a parse failure, got $value")
 
   test("top level Vector"):
     val input  = "val data = Vector(true)"

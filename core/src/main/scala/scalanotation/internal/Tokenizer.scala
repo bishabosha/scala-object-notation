@@ -11,6 +11,7 @@ private[scalanotation] enum Token:
   case TrueKw(span: DecodeError.Span)
   case FalseKw(span: DecodeError.Span)
   case NullKw(span: DecodeError.Span)
+  case Keyword(raw: String, span: DecodeError.Span)
   case Identifier(name: String, span: DecodeError.Span)
   case IntLit(raw: String, value: Int, span: DecodeError.Span)
   case LongLit(raw: String, value: Long, span: DecodeError.Span)
@@ -35,21 +36,21 @@ private[scalanotation] object Token:
     val Default: Token = Token.Empty
 
 private[scalanotation] final class Tokenizer(input: String):
+  import Tokenizer.*
+
   private var index  = 0
   private var line   = 1
   private var column = 1
 
   private val namesCache              = mutable.HashMap.empty[String, String]
-  def nameCached(str: String): String = namesCache.getOrElseUpdate(str, str)
-
-  val Seq(KW_val @ _, KW_true @ _, KW_false @ _, KW_null @ _, KW_Vector @ _) =
-    Seq("val", "true", "false", "null", "Vector")
-      .map(nameCached(_))
-      .runtimeChecked
+  private def nameCached(str: String) = namesCache.getOrElseUpdate(str, str)
 
   private class ParseException(val message: String, val span: DecodeError.Span)
       extends Exception
       with scala.util.control.NoStackTrace
+
+  private inline def keyword(raw: String, start: DecodeError.Span): Token =
+    Token.Keyword(raw, start)
 
   def tokenize(debug: Boolean): Result[List[Token], DecodeError] =
     Result.catchException({ case e: ParseException =>
@@ -73,33 +74,50 @@ private[scalanotation] final class Tokenizer(input: String):
     currentChar() match
       case '('                         => advance(); Token.LParen(start)
       case ')'                         => advance(); Token.RParen(start)
-      case '='                         => advance(); Token.Equals(start)
-      case '+'                         => advance(); Token.Plus(start)
-      case '-'                         => advance(); Token.Minus(start)
       case ','                         => advance(); Token.Comma(start)
       case '"'                         => scanString(start)
       case '\''                        => scanChar(start)
       case ch if isIdentifierStart(ch) => scanIdentifier(start)
       case ch if ch.isDigit            => scanNumber(start)
+      case ch if isOperatorPart(ch)    => scanOperator(start)
       case ch                          => fail(s"Unexpected character '$ch'", start)
 
   private def scanIdentifier(start: DecodeError.Span): Token =
     val builder = new StringBuilder
     while !isAtEnd && isIdentifierPart(currentChar()) do builder += advance()
-    nameCached(builder.result()) match
-      case KW_val    => Token.ValKw(start)
-      case KW_true   => Token.TrueKw(start)
-      case KW_false  => Token.FalseKw(start)
-      case KW_null   => Token.NullKw(start)
-      case KW_Vector => Token.VectorId(start)
-      case name      => Token.Identifier(name, start)
+    builder.result() match
+      case KW_val                                            => Token.ValKw(start)
+      case KW_true                                           => Token.TrueKw(start)
+      case KW_false                                          => Token.FalseKw(start)
+      case KW_null                                           => Token.NullKw(start)
+      case KW_Vector                                         => Token.VectorId(start)
+      case name if reservedIdentifierKeywords.contains(name) =>
+        keyword(name, start)
+      case name =>
+        Token.Identifier(nameCached(name), start)
 
   private def scanNumber(start: DecodeError.Span): Token =
-    if currentChar() == '0' && peekChar().exists(ch =>
-        ch == 'x' || ch == 'X' || ch == 'b' || ch == 'B'
+    if currentChar() == '0' && (
+        peekCompare('x')
+          || peekCompare('X')
+          || peekCompare('b')
+          || peekCompare('B')
       )
     then scanPrefixedInteger(start)
     else scanDecimalNumber(start)
+
+  private def scanOperator(start: DecodeError.Span): Token =
+    val builder = new StringBuilder
+    while !isAtEnd && isOperatorPart(currentChar()) do builder += advance()
+    builder.result() match
+      case "=" => Token.Equals(start)
+      case "+" => Token.Plus(start)
+      case "-" => Token.Minus(start)
+      case KW_colon | KW_leftArrow | KW_arrow | KW_subtype | KW_supertype | KW_hash | KW_at |
+          KW_tlArrow | KW_ctxArrow =>
+        keyword(builder.result(), start)
+      case name =>
+        Token.Identifier(nameCached(name), start)
 
   private def scanPrefixedInteger(start: DecodeError.Span): Token =
     val prefix = new StringBuilder
@@ -165,7 +183,7 @@ private[scalanotation] final class Tokenizer(input: String):
       while !isAtEnd && (currentChar().isDigit || currentChar() == '_') do builder += advance()
 
     takeDigits()
-    if !isAtEnd && currentChar() == '.' && peekChar().exists(_.isDigit) then
+    if !isAtEnd && currentChar() == '.' && peekIsDigit() then
       hasDot = true
       builder += advance()
       takeDigits()
@@ -275,8 +293,8 @@ private[scalanotation] final class Tokenizer(input: String):
     while keepGoing && !isAtEnd do
       skipWhitespace()
       if isAtEnd then keepGoing = false
-      else if currentChar() == '/' && peekChar().contains('/') then skipLineComment()
-      else if currentChar() == '/' && peekChar().contains('*') then skipBlockComment()
+      else if currentChar() == '/' && peekCompare('/') then skipLineComment()
+      else if currentChar() == '/' && peekCompare('*') then skipBlockComment()
       else keepGoing = false
 
   private def skipWhitespace(): Unit =
@@ -294,11 +312,11 @@ private[scalanotation] final class Tokenizer(input: String):
     var depth = 1
     while depth > 0 do
       if isAtEnd then fail("Unterminated block comment", start)
-      else if currentChar() == '/' && peekChar().contains('*') then
+      else if currentChar() == '/' && peekCompare('*') then
         advance()
         advance()
         depth += 1
-      else if currentChar() == '*' && peekChar().contains('/') then
+      else if currentChar() == '*' && peekCompare('/') then
         advance()
         advance()
         depth -= 1
@@ -308,9 +326,13 @@ private[scalanotation] final class Tokenizer(input: String):
 
   private def currentChar(): Char = input.charAt(index)
 
-  private def peekChar(): Option[Char] =
-    val nextIndex = index + 1
-    if nextIndex < input.length then Some(input.charAt(nextIndex)) else None
+  private def peekCompare(expected: Char, offset: Int = 1): Boolean =
+    val nextIndex = index + offset
+    nextIndex < input.length && input.charAt(nextIndex) == expected
+
+  private def peekIsDigit(offset: Int = 1): Boolean =
+    val nextIndex = index + offset
+    nextIndex < input.length && input.charAt(nextIndex).isDigit
 
   private def advance(): Char =
     val ch = input.charAt(index)
@@ -327,6 +349,13 @@ private[scalanotation] final class Tokenizer(input: String):
 
   private def isIdentifierPart(ch: Char): Boolean =
     ch.isLetterOrDigit || ch == '_'
+
+  private def isOperatorPart(ch: Char): Boolean =
+    ch match
+      case '~' | '!' | '@' | '#' | '%' | '^' | '*' | '+' | '-' | '<' | '>' | '?' | ':' | '=' | '&' |
+          '|' | '\\' | '/' =>
+        true
+      case _ => false
 
   private def parseIntLiteral(
       digits: String,
@@ -386,6 +415,62 @@ private[scalanotation] final class Tokenizer(input: String):
     throw ParseException(message, span)
 
 private[scalanotation] object Tokenizer:
+  private val KW_val       = "val"
+  private val KW_true      = "true"
+  private val KW_false     = "false"
+  private val KW_null      = "null"
+  private val KW_Vector    = "Vector"
+  private val KW_colon     = ":"
+  private val KW_leftArrow = "<-"
+  private val KW_arrow     = "=>"
+  private val KW_subtype   = "<:"
+  private val KW_supertype = ">:"
+  private val KW_hash      = "#"
+  private val KW_at        = "@"
+  private val KW_tlArrow   = "=>>"
+  private val KW_ctxArrow  = "?=>"
+
+  private val reservedIdentifierKeywords: Set[String] =
+    Set(
+      "abstract",
+      "case",
+      "catch",
+      "class",
+      "def",
+      "do",
+      "else",
+      "enum",
+      "export",
+      "extends",
+      "final",
+      "finally",
+      "for",
+      "given",
+      "if",
+      "implicit",
+      "import",
+      "lazy",
+      "match",
+      "new",
+      "object",
+      "override",
+      "package",
+      "private",
+      "protected",
+      "return",
+      "sealed",
+      "super",
+      "then",
+      "throw",
+      "trait",
+      "try",
+      "type",
+      "var",
+      "while",
+      "with",
+      "yield"
+    )
+
   // TODO: made private so we could evolve the token stream format without breaking the public API.
   def tokenize(input: String, debug: Boolean): Result[List[Token], DecodeError] =
     Tokenizer(input).tokenize(debug)
