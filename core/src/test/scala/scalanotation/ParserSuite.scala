@@ -154,6 +154,25 @@ class ParserSuite extends FunSuite:
 
     assertEquals(tokenLabels(regularKeywords.mkString(" ")), regularKeywords :+ "eof")
 
+  test("do not greedily tokenize symbolic keywords inside longer operator identifiers"):
+    val symbolicIdentifiers = List(
+      "::",
+      "=>=",
+      "<->",
+      "##",
+      "@@",
+      "?==>",
+      "=>>>",
+      "++",
+      "--",
+      "=="
+    )
+
+    assertEquals(
+      tokenLabels(symbolicIdentifiers.mkString(" ")),
+      symbolicIdentifiers.map(name => s"<Identifier:$name>") :+ "eof"
+    )
+
   test("treat Scala soft keywords as identifiers"):
     val softKeywords = List(
       "as",

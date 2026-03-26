@@ -74,41 +74,12 @@ private[scalanotation] final class Tokenizer(input: String):
     currentChar() match
       case '('                         => advance(); Token.LParen(start)
       case ')'                         => advance(); Token.RParen(start)
-      case '=' if peekCompare('>') =>
-        advance()
-        advance()
-        if !isAtEnd && currentChar() == '>' then
-          advance()
-          keyword(KW_tlArrow, start)
-        else keyword(KW_arrow, start)
-      case '='                         => advance(); Token.Equals(start)
-      case ':'                         => advance(); keyword(KW_colon, start)
-      case '<' if peekCompare('-') =>
-        advance()
-        advance()
-        keyword(KW_leftArrow, start)
-      case '<' if peekCompare(':') =>
-        advance()
-        advance()
-        keyword(KW_subtype, start)
-      case '>' if peekCompare(':') =>
-        advance()
-        advance()
-        keyword(KW_supertype, start)
-      case '#'                         => advance(); keyword(KW_hash, start)
-      case '@'                         => advance(); keyword(KW_at, start)
-      case '?' if peekCompare('=') && peekCompare('>', 2) =>
-        advance()
-        advance()
-        advance()
-        keyword(KW_ctxArrow, start)
-      case '+'                         => advance(); Token.Plus(start)
-      case '-'                         => advance(); Token.Minus(start)
       case ','                         => advance(); Token.Comma(start)
       case '"'                         => scanString(start)
       case '\''                        => scanChar(start)
       case ch if isIdentifierStart(ch) => scanIdentifier(start)
       case ch if ch.isDigit            => scanNumber(start)
+      case ch if isOperatorPart(ch)    => scanOperator(start)
       case ch                          => fail(s"Unexpected character '$ch'", start)
 
   private def scanIdentifier(start: DecodeError.Span): Token =
@@ -134,6 +105,19 @@ private[scalanotation] final class Tokenizer(input: String):
       )
     then scanPrefixedInteger(start)
     else scanDecimalNumber(start)
+
+  private def scanOperator(start: DecodeError.Span): Token =
+    val builder = new StringBuilder
+    while !isAtEnd && isOperatorPart(currentChar()) do builder += advance()
+    builder.result() match
+      case "=" => Token.Equals(start)
+      case "+" => Token.Plus(start)
+      case "-" => Token.Minus(start)
+      case KW_colon | KW_leftArrow | KW_arrow | KW_subtype | KW_supertype | KW_hash | KW_at
+          | KW_tlArrow | KW_ctxArrow =>
+        keyword(builder.result(), start)
+      case name =>
+        Token.Identifier(nameCached(name), start)
 
   private def scanPrefixedInteger(start: DecodeError.Span): Token =
     val prefix = new StringBuilder
@@ -365,6 +349,13 @@ private[scalanotation] final class Tokenizer(input: String):
 
   private def isIdentifierPart(ch: Char): Boolean =
     ch.isLetterOrDigit || ch == '_'
+
+  private def isOperatorPart(ch: Char): Boolean =
+    ch match
+      case '~' | '!' | '@' | '#' | '%' | '^' | '*' | '+' | '-' | '<' | '>' | '?' | ':' | '='
+          | '&' | '|' | '\\' | '/' =>
+        true
+      case _ => false
 
   private def parseIntLiteral(
       digits: String,
