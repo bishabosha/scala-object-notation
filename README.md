@@ -143,7 +143,7 @@ enum Mode:
 
 // map the existing `ReadWriter[String]`:
 given ReadWriter[Mode] =
-  summon[ReadWriter[String]].emap {
+  summon[ReadWriter[String]].bimapResult {
     case "dev"  => Result.Ok(Mode.Dev)
     case "prod" => Result.Ok(Mode.Prod)
     case other  => Result.Err(DecodeError.Custom(s"Unknown mode '$other'"))
@@ -154,7 +154,7 @@ given ReadWriter[Mode] =
 
 // map the existing `ReadWriter[String]`:
 given ReadWriter[LocalDate] =
-  summon[ReadWriter[String]].emap { raw =>
+  summon[ReadWriter[String]].bimapResult { raw =>
     Result.catchException({ case _: java.time.format.DateTimeParseException =>
       DecodeError.Custom(s"Invalid ISO date '$raw'")
     }) {
@@ -296,7 +296,7 @@ import steps.result.Result
 final case class UserId(value: Int)
 
 given ReadWriter[UserId] =
-  summon[ReadWriter[Int]].map(UserId(_))(_.value)
+  summon[ReadWriter[Int]].bimap(UserId(_))(_.value)
 ```
 
 ## Working With `Expr`
