@@ -380,9 +380,14 @@ class ParserSuite extends FunSuite:
 
     val sc = summon[Reader[Data]]
     sc.schema match
-      case RawSchema.Vector(_, builder: PublicInternal.BuildIArray[Int]) =>
-        ()
-      case _ => fail(s"Expected a BuildIArray schema, got ${sc.schema.describeSelf}")
+      case vector: RawSchema.Vector =>
+        vector.read match
+          case read: RawSchema.VectorRead.FromReaderBuilder[?, ?, ?] =>
+            assert(read.builder.isInstanceOf[PublicInternal.BuildIArray[?]])
+          case _ =>
+            fail(s"Expected a vector reader builder, got ${vector.read}")
+      case _ =>
+        fail(s"Expected a vector reader, got ${sc.schema.describeSelf}")
 
     val input =
       """val data = Vector(1, 2, 3)
@@ -402,9 +407,14 @@ class ParserSuite extends FunSuite:
 
     val sc = summon[Reader[Data]]
     sc.schema match
-      case RawSchema.Vector(_, builder: PublicInternal.BuildArray[Int]) =>
-        ()
-      case _ => fail(s"Expected a BuildArray schema, got ${sc.schema.describeSelf}")
+      case vector: RawSchema.Vector =>
+        vector.read match
+          case read: RawSchema.VectorRead.FromReaderBuilder[?, ?, ?] =>
+            assert(read.builder.isInstanceOf[PublicInternal.BuildArray[?]])
+          case _ =>
+            fail(s"Expected a vector reader builder, got ${vector.read}")
+      case _ =>
+        fail(s"Expected a vector reader, got ${sc.schema.describeSelf}")
 
     val input =
       """val data = Vector(1, 2, 3)
@@ -424,9 +434,14 @@ class ParserSuite extends FunSuite:
 
     val sc = summon[Reader[Data]]
     sc.schema match
-      case RawSchema.Vector(_, builder: PublicInternal.SeqFactoryVector[Int, List]) =>
-        ()
-      case _ => fail(s"Expected a SeqFactoryVector schema, got ${sc.schema.describeSelf}")
+      case vector: RawSchema.Vector =>
+        vector.read match
+          case read: RawSchema.VectorRead.FromReaderBuilder[?, ?, ?] =>
+            assertEquals(read.builder.getClass.getSimpleName, "SeqFactoryVector")
+          case _ =>
+            fail(s"Expected a vector reader builder, got ${vector.read}")
+      case _ =>
+        fail(s"Expected a vector reader, got ${sc.schema.describeSelf}")
 
     val input =
       """val data = Vector(1, 2, 3)
@@ -447,9 +462,14 @@ class ParserSuite extends FunSuite:
 
     val sc = summon[Reader[Data]]
     sc.schema match
-      case RawSchema.Vector(_, builder: PublicInternal.BuildVector[Int]) =>
-        ()
-      case _ => fail(s"Expected a BuildVector schema, got ${sc.schema.describeSelf}")
+      case vector: RawSchema.Vector =>
+        vector.read match
+          case read: RawSchema.VectorRead.FromReaderBuilder[?, ?, ?] =>
+            assert(read.builder.isInstanceOf[PublicInternal.BuildVector[?]])
+          case _ =>
+            fail(s"Expected a vector reader builder, got ${vector.read}")
+      case _ =>
+        fail(s"Expected a vector reader, got ${sc.schema.describeSelf}")
 
     val input =
       """val data = Vector(1, 2, 3)
@@ -470,9 +490,14 @@ class ParserSuite extends FunSuite:
 
     val sc = summon[Reader[Data]]
     sc.schema match
-      case RawSchema.Dict(_, builder: PublicInternal.MapFactoryDict[Int, mutable.LinkedHashMap]) =>
-        ()
-      case _ => fail(s"Expected a MapFactoryDict schema, got ${sc.schema.describeSelf}")
+      case dict: RawSchema.Dict =>
+        dict.read match
+          case read: RawSchema.DictRead.FromReaderBuilder[?, ?, ?] =>
+            assertEquals(read.builder.getClass.getSimpleName, "MapFactoryDict")
+          case _ =>
+            fail(s"Expected a dict reader builder, got ${dict.read}")
+      case _ =>
+        fail(s"Expected a dict reader, got ${sc.schema.describeSelf}")
 
     val input =
       """val data = (x = 1, y = 2, z = 3)
@@ -614,14 +639,14 @@ class ParserSuite extends FunSuite:
     final case class Schedule(dates: Vector[LocalDate])
 
     given Reader[Mode] =
-      summon[Reader[String]].emap {
+      summon[Reader[String]].mapResult {
         case "fast" => Result.Ok(Mode.Fast)
         case "safe" => Result.Ok(Mode.Safe)
         case other  => Result.Err(DecodeError.Custom(s"Unknown mode '$other'"))
       }
 
     given Reader[LocalDate] =
-      summon[Reader[String]].emap { raw =>
+      summon[Reader[String]].mapResult { raw =>
         Result.catchException({ case _: java.time.format.DateTimeParseException =>
           DecodeError.Custom(s"Invalid ISO date '$raw'")
         }) {
@@ -661,7 +686,7 @@ class ParserSuite extends FunSuite:
     import java.time.LocalDate
 
     given Reader[LocalDate] =
-      summon[Reader[String]].emap { raw =>
+      summon[Reader[String]].mapResult { raw =>
         try Result.Ok(LocalDate.parse(raw))
         catch
           case _: java.time.format.DateTimeParseException =>
@@ -687,7 +712,7 @@ class ParserSuite extends FunSuite:
     final case class NonEmptyInts(values: Vector[Int])
 
     given Reader[NonEmptyInts] =
-      summon[Reader[Vector[Int]]].emap { values =>
+      summon[Reader[Vector[Int]]].mapResult { values =>
         if values.nonEmpty then Result.Ok(NonEmptyInts(values))
         else Result.Err(DecodeError.Custom("Expected at least one integer"))
       }
@@ -708,7 +733,7 @@ class ParserSuite extends FunSuite:
     final case class User(name: String, age: Int, metadata: Metadata) derives Reader
 
     given Reader[LocalDate] =
-      summon[Reader[String]].emap { raw =>
+      summon[Reader[String]].mapResult { raw =>
         Result.catchException({ case _: java.time.format.DateTimeParseException =>
           DecodeError.Custom(s"Invalid ISO date '$raw'")
         }) {
@@ -746,7 +771,7 @@ class ParserSuite extends FunSuite:
     final case class User(metadata: Metadata)
 
     given Reader[LocalDate] =
-      summon[Reader[String]].emap { raw =>
+      summon[Reader[String]].mapResult { raw =>
         Result.catchException({ case _: java.time.format.DateTimeParseException =>
           DecodeError.Custom(s"Invalid ISO date '$raw'")
         }) {
@@ -779,7 +804,7 @@ class ParserSuite extends FunSuite:
       case Scheduled(at: LocalDate, retries: Int)
 
     given Reader[LocalDate] =
-      summon[Reader[String]].emap { raw =>
+      summon[Reader[String]].mapResult { raw =>
         Result.catchException({ case _: java.time.format.DateTimeParseException =>
           DecodeError.Custom(s"Invalid ISO date '$raw'")
         }) {
@@ -821,7 +846,7 @@ class ParserSuite extends FunSuite:
       case Scheduled(at: LocalDate)
 
     given Reader[LocalDate] =
-      summon[Reader[String]].emap { raw =>
+      summon[Reader[String]].mapResult { raw =>
         Result.catchException({ case _: java.time.format.DateTimeParseException =>
           DecodeError.Custom(s"Invalid ISO date '$raw'")
         }) {
@@ -847,6 +872,232 @@ class ParserSuite extends FunSuite:
         assertEquals(error.rootCause, DecodeError.Custom("Invalid ISO date 'bad-date'"))
       case Result.Ok(value) => fail(s"Expected a decode failure, got $value")
 
+  test("write typed values to Expr and read them back"):
+    type Data =
+      (x: (label: String, ys: Vector[Int]), y: Option[Int], ok: Boolean)
+
+    val value: Data =
+      (
+        x = (label = "abc", ys = Vector(-1, 2, 3)),
+        y = Some(23),
+        ok = true
+      )
+
+    val expr     = Writers.writeExpr(value)
+    val rendered = Writers.write(value)
+    val decoded  = expr.decodeAs[Data]
+    val reparsed = Readers.readAs[Data](rendered)
+
+    assertEquals(decoded, Result.Ok(value))
+    assertEquals(reparsed, Result.Ok(value))
+    assertEquals(rendered, """(x = (label = "abc", ys = Vector(-1, 2, 3)), y = 23, ok = true)""")
+
+  test("write derived case classes and enums"):
+    import java.time.LocalDate
+
+    final case class Metadata(created: LocalDate, tags: Vector[String]) derives Reader, Writer
+    enum Mode derives Reader, Writer:
+      case Fast
+      case Scheduled(at: LocalDate, retries: Int)
+    final case class User(name: String, mode: Mode, metadata: Metadata) derives Reader, Writer
+
+    given Reader[LocalDate] =
+      summon[Reader[String]].mapResult { raw =>
+        Result.catchException({ case _: java.time.format.DateTimeParseException =>
+          DecodeError.Custom(s"Invalid ISO date '$raw'")
+        }) {
+          LocalDate.parse(raw)
+        }
+      }
+
+    given Writer[LocalDate] =
+      summon[Writer[String]].contramap(_.toString)
+
+    val value = User(
+      name = "Ada",
+      mode = Mode.Scheduled(LocalDate.parse("2026-03-15"), 2),
+      metadata = Metadata(LocalDate.parse("2026-03-14"), Vector("compiler", "scala"))
+    )
+
+    val rendered = Writers.writeDecl("data", value)
+    val decoded  = Readers.readDeclAs[User](rendered, rootName = "data")
+
+    assertEquals(
+      rendered,
+      """val data = (name = "Ada", mode = (Scheduled = (at = "2026-03-15", retries = 2)), metadata = (created = "2026-03-14", tags = Vector("compiler", "scala")))"""
+    )
+    assertEquals(decoded, Result.Ok(value))
+
+  test("write strings and chars with escaping"):
+    val rendered = Writers.write(
+      (
+        message = "line1\nline2\t\"quoted\"",
+        mark = '\'',
+        slash = '\\'
+      )
+    )
+
+    type Data = (message: String, mark: Char, slash: Char)
+    val decoded = Readers.readAs[Data](rendered)
+
+    assertEquals(
+      rendered,
+      """(message = "line1\nline2\t\"quoted\"", mark = '\'', slash = '\\')"""
+    )
+    assertEquals(
+      decoded,
+      Result.Ok((message = "line1\nline2\t\"quoted\"", mark = '\'', slash = '\\'))
+    )
+
+  test("pretty print typed values with configurable indentation"):
+    type Data =
+      (x: (label: String, ys: Vector[Int]), y: Option[Int], ok: Boolean)
+
+    val value: Data =
+      (
+        x = (label = "abc", ys = Vector(-1, 2, 3)),
+        y = Some(23),
+        ok = true
+      )
+
+    val rendered = Writers.writePretty(value, indent = 2)
+
+    assertEquals(
+      rendered,
+      """(
+        |  x = (
+        |    label = "abc",
+        |    ys = Vector(
+        |      -1,
+        |      2,
+        |      3
+        |    )
+        |  ),
+        |  y = 23,
+        |  ok = true
+        |)""".stripMargin
+    )
+    assertEquals(Readers.readAs[Data](rendered), Result.Ok(value))
+
+  test("pretty print declarations and exprs with TextFormat"):
+    val expr = Writers.writeExpr(
+      (
+        items = Vector(1, 2),
+        nested = (ok = true)
+      )
+    )
+
+    val expected =
+      """val data = (
+        |    items = Vector(
+        |        1,
+        |        2
+        |    ),
+        |    nested = (
+        |        ok = true
+        |    )
+        |)""".stripMargin
+
+    assertEquals(
+      Writers.writeDecl("data", (items = Vector(1, 2), nested = (ok = true)), TextFormat.pretty(4)),
+      expected
+    )
+    assertEquals(
+      expr.render(TextFormat.pretty(4)),
+      expected.stripPrefix("val data = ")
+    )
+
+  test("TextFormat rejects negative indentation"):
+    interceptMessage[IllegalArgumentException]("requirement failed: indent must be >= 0, got -1") {
+      TextFormat.pretty(-1)
+    }
+
+  test("reader and writer share the same raw schema description"):
+    final case class Entry(name: String, value: Int) derives Reader, Writer
+
+    val readerSchema = summon[Reader[Entry]].schema.describeSelf
+    val writerSchema = summon[Writer[Entry]].schema.describeSelf
+
+    assertEquals(readerSchema, writerSchema)
+
+  test("derived ReadWriter provides aligned reader and writer views"):
+    import java.time.LocalDate
+
+    final case class Metadata(created: LocalDate, tags: Vector[String]) derives ReadWriter
+    enum Mode derives ReadWriter:
+      case Fast
+      case Scheduled(at: LocalDate, retries: Int)
+    final case class User(name: String, mode: Mode, metadata: Metadata) derives ReadWriter
+
+    given ReadWriter[LocalDate] =
+      summon[ReadWriter[String]].bimapResult { raw =>
+        Result.catchException({ case _: java.time.format.DateTimeParseException =>
+          DecodeError.Custom(s"Invalid ISO date '$raw'")
+        }) {
+          LocalDate.parse(raw)
+        }
+      }(_.toString)
+
+    val value = User(
+      name = "Ada",
+      mode = Mode.Scheduled(LocalDate.parse("2026-03-15"), 2),
+      metadata = Metadata(LocalDate.parse("2026-03-14"), Vector("compiler", "scala"))
+    )
+
+    val rendered = Writers.writeDecl("data", value)
+    val decoded  = Readers.readDeclAs[User](rendered, rootName = "data")
+
+    assertEquals(
+      rendered,
+      """val data = (name = "Ada", mode = (Scheduled = (at = "2026-03-15", retries = 2)), metadata = (created = "2026-03-14", tags = Vector("compiler", "scala")))"""
+    )
+    assertEquals(decoded, Result.Ok(value))
+    assertEquals(
+      summon[ReadWriter[User]].schema.describeSelf,
+      summon[Reader[User]].schema.describeSelf
+    )
+    assertEquals(
+      summon[ReadWriter[User]].schema.describeSelf,
+      summon[Writer[User]].schema.describeSelf
+    )
+
+  test("derived ReadWriter can round-trip through Writers.write and Readers.readAs"):
+    import java.time.LocalDate
+
+    final case class Metadata(created: LocalDate) derives ReadWriter
+    final case class User(name: String, metadata: Metadata) derives ReadWriter
+
+    given ReadWriter[LocalDate] =
+      summon[ReadWriter[String]].bimapResult { raw =>
+        Result.catchException({ case _: java.time.format.DateTimeParseException =>
+          DecodeError.Custom(s"Invalid ISO date '$raw'")
+        }) {
+          LocalDate.parse(raw)
+        }
+      }(_.toString)
+
+    val value    = User("Ada", Metadata(LocalDate.parse("2026-03-14")))
+    val rendered = Writers.write(value)
+    val decoded  = Readers.readAs[User](rendered)
+
+    assertEquals(
+      rendered,
+      """(name = "Ada", metadata = (created = "2026-03-14"))"""
+    )
+    assertEquals(decoded, Result.Ok(value))
+
+  test("no writer is derived for nested Option"):
+    val errors = typeCheckErrors(
+      "type Data = (x: Option[Option[Int]])\nsummon[scalanotation.Writer[Data]]"
+    )
+
+    assert(errors.nonEmpty)
+    assert(clue(errors.head.message).contains(".x"))
+    assert(
+      clue(errors.head.message)
+        .contains("Writer[Option[Option[?]]] is not supported")
+    )
+
   test("no decoder is derived for Any"):
     val errors = typeCheckErrors("summon[scalanotation.Reader[Any]]")
     assert(errors.nonEmpty)
@@ -866,6 +1117,18 @@ class ParserSuite extends FunSuite:
     assert(
       clue(errors.head.message)
         .contains("Reader[Option[Option[?]]] is not supported")
+    )
+
+  test("no read-writer is derived for nested Option"):
+    val errors = typeCheckErrors(
+      "type Data = (x: Option[Option[Int]])\nsummon[scalanotation.ReadWriter[Data]]"
+    )
+
+    assert(errors.nonEmpty)
+    assert(clue(errors.head.message).contains(".x"))
+    assert(
+      clue(errors.head.message)
+        .contains("ReadWriter[Option[Option[?]]] is not supported")
     )
 
   test("compile-time derivation error includes nested field path"):
@@ -920,6 +1183,57 @@ class ParserSuite extends FunSuite:
         .contains("Box[scala.Int]")
     )
 
+  test("schema mappings only appear on mapped schemas"):
+    final case class UserId(value: Int)
+
+    assertEquals(summon[Reader[Int]].schema, RawSchema.Int)
+    assertEquals(summon[Writer[Int]].schema, RawSchema.Int)
+
+    val mappedReader = summon[Reader[Int]].map(UserId(_))
+    mappedReader.schema match
+      case RawSchema.Mapped(base, mapping) =>
+        assertEquals(base, RawSchema.Int)
+        assert(mapping.resultMap != null)
+        assertEquals(mapping.inputMap, null)
+        assertEquals(mappedReader.schema.describeSelf, "Int")
+      case other =>
+        fail(s"Expected a mapped reader schema, got $other")
+
+    val mappedWriter = summon[Writer[Int]].contramap[UserId](_.value)
+    mappedWriter.schema match
+      case RawSchema.Mapped(base, mapping) =>
+        assertEquals(base, RawSchema.Int)
+        assertEquals(mapping.resultMap, null)
+        assert(mapping.inputMap != null)
+        assertEquals(mappedWriter.schema.describeSelf, "Int")
+      case other =>
+        fail(s"Expected a mapped writer schema, got $other")
+
+    val mappedReadWriter = summon[ReadWriter[Int]].bimap(UserId(_))(_.value)
+    mappedReadWriter.schema match
+      case RawSchema.Mapped(base, mapping) =>
+        assertEquals(base, RawSchema.Int)
+        assert(mapping.resultMap != null)
+        assert(mapping.inputMap != null)
+      case other =>
+        fail(s"Expected a mapped read-writer schema, got $other")
+
+    Reader.forNull(UserId(1)).schema match
+      case RawSchema.Mapped(base, mapping) =>
+        assertEquals(base, RawSchema.Null)
+        assert(mapping.resultMap != null)
+        assertEquals(mapping.inputMap, null)
+      case other =>
+        fail(s"Expected a mapped nullary schema, got $other")
+
+  test("Null is a primitive schema and decodes to null"):
+    assertEquals(summon[Reader[Null]].schema, RawSchema.Null)
+    assertEquals(summon[Writer[Null]].schema, RawSchema.Null)
+    assertEquals(summon[ReadWriter[Null]].schema, RawSchema.Null)
+
+    assertEquals(Readers.readAs[Null]("null"), Result.Ok(null: Null))
+    assertEquals(Writers.write(null: Null), "null")
+
   test("RawSchema.describeSelf"):
     // primitive schemas
     assertEquals(RawSchema.Int.describeSelf, "Int")
@@ -930,24 +1244,23 @@ class ParserSuite extends FunSuite:
     assertEquals(RawSchema.Char.describeSelf, "Char")
     assertEquals(RawSchema.String.describeSelf, "String")
     assertEquals(RawSchema.AnyExpr.describeSelf, "Any")
-    assertEquals(RawSchema.Nullary(null).describeSelf, "Null")
+    assertEquals(RawSchema.Null.describeSelf, "Null")
     // empty named tuple
     assertEquals(
-      RawSchema.NamedTuple(IArray.empty, _ => ()).describeSelf,
+      RawSchema.NamedTuple(IArray.empty[RawSchema.Field]).describeSelf,
       "AnyNamedTuple"
     )
     // named tuple with fields
     val withFields = RawSchema.NamedTuple(
       IArray(
-        RawSchema.Field("x", summon[Reader[Int]]),
-        RawSchema.Field("y", summon[Reader[String]])
-      ),
-      _ => ()
+        RawSchema.Field("x", summon[Reader[Int]].schema),
+        RawSchema.Field("y", summon[Reader[String]].schema)
+      )
     )
     assertEquals(withFields.describeSelf, "(x: ..., y: ...)")
     // single-case sum schema
     val sumSchema = RawSchema.Sum(
-      Map("Fast" -> RawSchema.SumCase("Fast", summon[Reader[Int]]))
+      IArray(RawSchema.SumCase("Fast", summon[Reader[Int]].schema))
     )
     assertEquals(sumSchema.describeSelf, "(Fast: ...)")
     enum AorB:
@@ -956,9 +1269,9 @@ class ParserSuite extends FunSuite:
     // multi-case sum schema
     val multiSumDesc = RawSchema
       .Sum(
-        Map(
-          "A" -> RawSchema.SumCase("A", Reader.forNull(AorB.A)),
-          "B" -> RawSchema.SumCase("B", Reader.forNull(AorB.B))
+        IArray(
+          RawSchema.SumCase("A", Reader.forNull(AorB.A).schema),
+          RawSchema.SumCase("B", Reader.forNull(AorB.B).schema)
         )
       )
       .describeSelf
@@ -976,10 +1289,10 @@ class ParserSuite extends FunSuite:
     )
     // Option schema
     assertEquals(
-      RawSchema.Option(summon[Reader[Int]]).describeSelf,
+      RawSchema.Option(summon[Reader[Int]].schema).describeSelf,
       "Int | Null"
     )
     assertEquals(
-      RawSchema.Option(summon[Reader[String]]).describeSelf,
+      RawSchema.Option(summon[Reader[String]].schema).describeSelf,
       "String | Null"
     )

@@ -100,6 +100,7 @@ private[internal] object Internal {
 
 @publicInBinary
 private[scalanotation] object PublicInternal {
+  import scalanotation.Reader
   import quoted.{Expr as QExpr, *}
 
   val buildNamedTuple: (values: Array[AnyRef]) => AnyNamedTuple = values =>
@@ -107,7 +108,7 @@ private[scalanotation] object PublicInternal {
     NamedTuple.build()(asTuple)
 
   class BuildVector[Elem]
-      extends RawSchema.VectorBuilder[Elem, mutable.Builder[Elem, Vector[Elem]], Vector[Elem]]:
+      extends Reader.VectorBuilder[Elem, mutable.Builder[Elem, Vector[Elem]], Vector[Elem]]:
     def init(): mutable.Builder[Elem, Vector[Elem]] = Vector.newBuilder[Elem]
     def add(
         repr: mutable.Builder[Elem, Vector[Elem]],
@@ -118,7 +119,7 @@ private[scalanotation] object PublicInternal {
 
   class SeqFactoryVector[Elem, Col[X] <: scala.collection.Seq[X]](
       using factory: scala.collection.Factory[Elem, Col[Elem]]
-  ) extends RawSchema.VectorBuilder[Elem, mutable.Builder[Elem, Col[Elem]], Col[Elem]]:
+  ) extends Reader.VectorBuilder[Elem, mutable.Builder[Elem, Col[Elem]], Col[Elem]]:
     def init(): mutable.Builder[Elem, Col[Elem]] = factory.newBuilder
     def add(
         repr: mutable.Builder[Elem, Col[Elem]],
@@ -129,7 +130,7 @@ private[scalanotation] object PublicInternal {
 
   class MapFactoryDict[Elem, Col[X, Y] <: scala.collection.Map[X, Y]](
       using factory: scala.collection.Factory[(String, Elem), Col[String, Elem]]
-  ) extends RawSchema.DictBuilder[Elem, mutable.Builder[(String, Elem), Col[String, Elem]], Col[
+  ) extends Reader.DictBuilder[Elem, mutable.Builder[(String, Elem), Col[String, Elem]], Col[
         String,
         Elem
       ]]:
@@ -144,7 +145,7 @@ private[scalanotation] object PublicInternal {
       repr.result()
 
   class BuildArray[Elem: ClassTag]
-      extends RawSchema.VectorBuilder[Elem, mutable.Builder[Elem, Array[Elem]], Array[Elem]]:
+      extends Reader.VectorBuilder[Elem, mutable.Builder[Elem, Array[Elem]], Array[Elem]]:
     def init(): mutable.Builder[Elem, Array[Elem]] = Array.newBuilder[Elem]
     def add(
         repr: mutable.Builder[Elem, Array[Elem]],
@@ -154,7 +155,7 @@ private[scalanotation] object PublicInternal {
     def finish(repr: mutable.Builder[Elem, Array[Elem]]): Array[Elem] = repr.result()
 
   class BuildIArray[Elem: ClassTag]
-      extends RawSchema.VectorBuilder[Elem, mutable.Builder[Elem, IArray[Elem]], IArray[Elem]]:
+      extends Reader.VectorBuilder[Elem, mutable.Builder[Elem, IArray[Elem]], IArray[Elem]]:
     def init(): mutable.Builder[Elem, IArray[Elem]] = IArray.newBuilder[Elem]
     def add(
         repr: mutable.Builder[Elem, IArray[Elem]],

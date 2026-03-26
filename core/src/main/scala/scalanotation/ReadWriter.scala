@@ -9,57 +9,52 @@ import scala.deriving.Mirror
 import scala.reflect.ClassTag
 import scala.util.NotGiven
 
-sealed trait Reader[T]:
+sealed trait ReadWriter[T]:
   private[scalanotation] def schema: RawSchema
 
-  final def map[U](f: T => U): Reader[U] =
-    Reader.mapped(this)(f)
+  final def reader: Reader[T] =
+    Reader.fromSchema(schema)
 
-  final def mapResult[U](f: T => Result[U, DecodeError]): Reader[U] =
-    Reader.mappedResult(this)(f)
+  final def writer: Writer[T] =
+    Writer.fromSchema(schema)
 
-private[scalanotation] trait ReaderLowPriority:
-  given [T](using readWriter: ReadWriter[T]): Reader[T] =
-    readWriter.reader
+  final def bimap[U](read: T => U)(write: U => T): ReadWriter[U] =
+    ReadWriter.mapped(this)(read)(write)
 
-object Reader extends ReaderLowPriority, CommonTypeClassCompanion[Reader]:
-  trait VectorBuilder[Elem, Repr, A]:
-    def init(): Repr
-    def add(repr: Repr, elem: Elem): Repr
-    def finish(repr: Repr): A
+  final def bimapResult[U](read: T => Result[U, DecodeError])(write: U => T): ReadWriter[U] =
+    ReadWriter.mappedResult(this)(read)(write)
 
-  trait DictBuilder[Elem, Repr, A]:
-    def init(): Repr
-    def add(repr: Repr, key: String, elem: Elem): Repr
-    def finish(repr: Repr): A
+object ReadWriter extends CommonTypeClassCompanion[ReadWriter]:
+  private final class Instance[T](val schema: RawSchema) extends ReadWriter[T]
 
-  private final class Instance[T](val schema: RawSchema) extends Reader[T]
-
-  private[scalanotation] def fromSchema[T](schema0: RawSchema): Reader[T] =
+  private[scalanotation] def fromSchema[T](schema0: RawSchema): ReadWriter[T] =
     new Instance(schema0)
 
-  private[scalanotation] def schemaOf[T](typeclass: Reader[T]): RawSchema =
+  private[scalanotation] def schemaOf[T](typeclass: ReadWriter[T]): RawSchema =
     typeclass.schema
 
-  protected def primitiveTypeClass[T](schema: RawSchema): Reader[T] =
+  protected def primitiveTypeClass[T](schema: RawSchema): ReadWriter[T] =
     fromSchema(schema)
 
-  def mapped[A, B](base: Reader[A])(transform: A => B): Reader[B] =
-    mappedResult(base)(value => Result.Ok(transform(value)))
+  def mapped[A, B](base: ReadWriter[A])(read: A => B)(write: B => A): ReadWriter[B] =
+    mappedResult(base)(value => Result.Ok(read(value)))(write)
 
-  def mappedResult[A, B](base: Reader[A])(
-      transform: A => Result[B, DecodeError]
-  ): Reader[B] =
+  def mappedResult[A, B](base: ReadWriter[A])(
+      read: A => Result[B, DecodeError]
+  )(
+      write: B => A
+  ): ReadWriter[B] =
     fromSchema(
-      RawSchema.mapResult(base.schema)(value =>
-        transform(value.asInstanceOf[A]).asInstanceOf[Result[Any, DecodeError]]
+      RawSchema.mapResultAndInput(base.schema)(
+        resultMap0 = value => read(value.asInstanceOf[A]).asInstanceOf[Result[Any, DecodeError]],
+        inputMap0 = value => write(value.asInstanceOf[B])
       )
     )
 
   export Builders.{derived, ofFields, singleton, ofCases}
 
-  def forNull[T](value: T): Reader[T] =
-    summon[Reader[Null]].map(_ => value)
+  def forNull[T](value: T): ReadWriter[T] =
+    summon[ReadWriter[Null]].bimap(_ => value)(_ => null)
 
   override object Builders extends CommonBuilders:
     val thisBuilder: this.type = this
@@ -69,62 +64,65 @@ object Reader extends ReaderLowPriority, CommonTypeClassCompanion[Reader]:
 
     import compiletime.ops.string.+
 
-    private[scalanotation] inline def typeClassName: String = "Reader"
+    private[scalanotation] inline def typeClassName: String = "ReadWriter"
 
     private[scalanotation] def sumTypeClass[T](cases: List[SumCaseRepr[T]])(
         using mirror: Mirror.SumOf[T]
-    ): Reader[T] =
+    ): ReadWriter[T] =
       fromSchema[T](
-        RawSchema.Sum(IArray.from(cases), write = null)
+        RawSchema.Sum(
+          IArray.from(cases),
+          RawSchema.SumWrite.from[T](mirror.ordinal)
+        )
       )
 
-    private[scalanotation] def makeField[T](name: String, typeclass: Reader[T]): FieldRepr =
+    private[scalanotation] def makeField[T](name: String, typeclass: ReadWriter[T]): FieldRepr =
       RawSchema.Field(name, typeclass.schema)
 
-    private[scalanotation] def namedTupleTypeClass[T](fields: List[FieldRepr]): Reader[T] =
+    private[scalanotation] def namedTupleTypeClass[T](fields: List[FieldRepr]): ReadWriter[T] =
       fromSchema[T](
         RawSchema.NamedTuple(
           IArray.from(fields),
           RawSchema.NamedTupleRead.from(
             PublicInternal.buildNamedTuple.asInstanceOf[Array[AnyRef] => T]
           ),
-          write = null
+          RawSchema.NamedTupleWrite.productLike
         )
       )
 
     private[scalanotation] def productTypeClass[T](fields: List[FieldRepr])(
         using mirror: Mirror.ProductOf[T]
-    ): Reader[T] =
+    ): ReadWriter[T] =
       fromSchema[T](
         RawSchema.NamedTuple(
           IArray.from(fields),
           RawSchema.NamedTupleRead.from(PublicInternal.caseClassBuilder[T]),
-          write = null
+          RawSchema.NamedTupleWrite.productLike
         )
       )
 
     private[scalanotation] def singletonTypeClass[T](label: String)(
         using mirror: Mirror.ProductOf[T],
         noFields: mirror.MirroredElemTypes =:= EmptyTuple
-    ): Reader[T] =
+    ): ReadWriter[T] =
       val value = mirror.fromProduct(EmptyTuple)
       fromSchema[T](
         RawSchema.NamedTuple(
           IArray(RawSchema.Field(label, forNull(value).schema)),
           RawSchema.NamedTupleRead.from(_ => value),
-          write = null
+          RawSchema.NamedTupleWrite.singleton
         )
       )
 
     private[scalanotation] def nullaryEnumCaseTypeClass[T](
         using mirror: Mirror.ProductOf[T],
         empty: mirror.MirroredElemTypes =:= EmptyTuple
-    ): Reader[T] =
+    ): ReadWriter[T] =
       forNull(mirror.fromProduct(EmptyTuple))
 
     private[scalanotation] def sumCaseTypeClass[A, T <: A](
         name: String,
-        typeclass: Reader[T]
+        typeclass: ReadWriter[T]
     ): SumCaseRepr[A] =
       RawSchema.SumCase(name, typeclass.schema)
 
@@ -136,7 +134,7 @@ object Reader extends ReaderLowPriority, CommonTypeClassCompanion[Reader]:
           RawSchema.Vector(
             wrapped.typeclass.schema,
             RawSchema.VectorRead.FromReaderBuilder(PublicInternal.BuildVector[T]),
-            write = null
+            RawSchema.VectorWrite.from[Vector[T], T](_.length, _.iterator)
           )
         )
       )
@@ -150,7 +148,7 @@ object Reader extends ReaderLowPriority, CommonTypeClassCompanion[Reader]:
           RawSchema.Vector(
             wrapped.typeclass.schema,
             RawSchema.VectorRead.FromReaderBuilder(PublicInternal.SeqFactoryVector[T, Col]),
-            write = null
+            RawSchema.VectorWrite.from[Col[T], T](_.size, _.iterator)
           )
         )
       )
@@ -163,7 +161,7 @@ object Reader extends ReaderLowPriority, CommonTypeClassCompanion[Reader]:
           RawSchema.Vector(
             wrapped.typeclass.schema,
             RawSchema.VectorRead.FromReaderBuilder(PublicInternal.BuildIArray[T]),
-            write = null
+            RawSchema.VectorWrite.from[IArray[T], T](_.length, _.iterator)
           )
         )
       )
@@ -176,7 +174,7 @@ object Reader extends ReaderLowPriority, CommonTypeClassCompanion[Reader]:
           RawSchema.Vector(
             wrapped.typeclass.schema,
             RawSchema.VectorRead.FromReaderBuilder(PublicInternal.BuildArray[T]),
-            write = null
+            RawSchema.VectorWrite.from[Array[T], T](_.length, _.iterator)
           )
         )
       )
@@ -190,7 +188,7 @@ object Reader extends ReaderLowPriority, CommonTypeClassCompanion[Reader]:
           RawSchema.Dict(
             wrapped.typeclass.schema,
             RawSchema.DictRead.FromReaderBuilder(PublicInternal.MapFactoryDict[T, Col]),
-            write = null
+            RawSchema.DictWrite.from[Col[String, T], T](_.size, _.iterator)
           )
         )
       )
