@@ -18,10 +18,10 @@ sealed trait ReadWriter[T]:
   final def writer: Writer[T] =
     Writer.fromSchema(schema)
 
-  final def map[U](read: T => U)(write: U => T): ReadWriter[U] =
+  final def bimap[U](read: T => U)(write: U => T): ReadWriter[U] =
     ReadWriter.mapped(this)(read)(write)
 
-  final def emap[U](read: T => Result[U, DecodeError])(write: U => T): ReadWriter[U] =
+  final def bimapResult[U](read: T => Result[U, DecodeError])(write: U => T): ReadWriter[U] =
     ReadWriter.mappedResult(this)(read)(write)
 
 object ReadWriter extends CommonTypeClassCompanion[ReadWriter]:
@@ -54,7 +54,7 @@ object ReadWriter extends CommonTypeClassCompanion[ReadWriter]:
   export Builders.{derived, ofFields, singleton, ofCases}
 
   def forNull[T](value: T): ReadWriter[T] =
-    summon[ReadWriter[Null]].map(_ => value)(_ => null)
+    summon[ReadWriter[Null]].bimap(_ => value)(_ => null)
 
   override object Builders extends CommonBuilders:
     val thisBuilder: this.type = this

@@ -11,13 +11,6 @@ import scala.util.NotGiven
 sealed trait Writer[T]:
   private[scalanotation] def schema: RawSchema
 
-  private[scalanotation] final def renderText(
-      value: T,
-      out: ExprRenderer.Output,
-      depth: Int
-  )(using format: TextFormat): Unit =
-    Encode.renderText(schema, value, out, depth)
-
   final def contramap[U](f: U => T): Writer[U] =
     Writer.contramapped(this)(f)
 
@@ -43,7 +36,7 @@ object Writer extends WriterLowPriority, CommonTypeClassCompanion[Writer]:
       format: TextFormat
   ): String =
     val out = ExprRenderer.Output()
-    writer.renderText(value, out, 0)(using format)
+    Encode.renderText(writer.schema, value, out, 0)(using format)
     out.result()
 
   private[scalanotation] def renderDecl[T](
@@ -56,7 +49,7 @@ object Writer extends WriterLowPriority, CommonTypeClassCompanion[Writer]:
     out.append("val ")
     out.append(name)
     out.append(" = ")
-    writer.renderText(value, out, 0)(using format)
+    Encode.renderText(writer.schema, value, out, 0)(using format)
     out.result()
 
   def contramapped[A, B](base: Writer[A])(transform: B => A): Writer[B] =

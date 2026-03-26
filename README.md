@@ -1,168 +1,136 @@
 # Scala Object Notation
 
-This repository contains a small Scala 3 parser, decoder, and writer for a constrained, data-oriented subset of Scala syntax.
+Scala Object Notation is subset of Scala programming language that can decode directly into data.
 
-The supported use case is reading data from text into either:
-- a Syntax tree (`Expr`),
-- a Scala type that directly matches the structure as written, (preserving nested named tuple types)
-- or advanced decoders into custom types.
+## Example: Configuration
 
-It can also write typed Scala values back into either `Expr` or text in the same Scala Object Notation syntax.
-
-Decoding into custom types is theoretically faster than from JSON as the order of fields is significant,
-and repeated field names are forbidden.
-
-This can be used as an alternative configuration file format for applications.
-
-## What Is Supported
-
-A source file deliberately supports only syntax that is valid with the default imports and classpath
-of Scala 3.8.1. (So no references to external classes)
-
-Only allowed are expressions of the types:
-- String literal (and `+` concatenation)
-- Int, Long, Float, Double literal
-- `null`
-- `true` or `false`
-- NamedTuple literal (for structured objects)
-- `Vector(...)` literal (for random-access sequences)
+Scala Object Notation supports writing a Scala source file with one top-level `val` declaration:
 
 ```scala
-/** comments are valid too! */
+/** Comments are supported! */
 val conf = (
-  x = (
-    label = "abc" + "def",
-    ys = Vector(1, 2L, -0x1A, 3.14f, 1_000_000)
+  app = (
+    host = "127.0.0.1",
+    port = 8080,
+    // mode = "prod",
+    mode = "dev",
+    replicas = Vector(
+      (region = "eu-central", weight = 2),
+      (region = "us-east", weight = 1)
+    )
   ),
-  y = null,
-  // z = temp removal
-  ok = true
+  schedule = (
+    start = "2021-12-15",
+    refreshSeconds = null
+  ),
+  features = Vector("metrics", "tracing"),
 )
 ```
 
-A source file consists of a single top-level `val` declaration (of any name), meaning it should
-be a valid `.scala` file.
+Why Scala syntax?
 
-> If tooling permits we could envision a `.scon` file format that only consists of an expression,
-> and no declaration.
+- they can be compiled and introspected as part of a program or decoded by external programs.
+- structural data can be interpreted via a schema to richer types (via `Reader` and `Writer` type classes) or used as is.
+- config can be edited programatically and written back
+- schema checking errors index to the position in the source file
+- named tuples have strict ordering and non-duplication requirements.
 
-Not supported:
-- multiple declarations in one file
-- arbitrary Scala expressions
-- methods, classes, imports, or type definitions
-- general collection syntax beyond `Vector(...)`
-- string interpolation or advanced string forms
+There are no methods (yet?) only pure data.
 
-## Decoding
+## Supported Syntax
 
-The `core` module exposes paired read and write flows.
+The supported syntax is deliberately small:
 
-Parse and decode directly into type that matches the structure of data using a contextual `TaggedDecoder[T]`:
+- one top-level `val` declaration
+- named tuples for structured objects,
+- `Vector(...)` for sequences,
+- scala literal values
+- string concatenation
 
-```scala
-import scalanotation.*
+## Quick Start: Direct Structural Decoding
 
-type Data =
-  (x: (label: String, xs: Vector[String], ys: IArray[Int]), y: Option[Int], ok: Boolean)
-
-// `given TaggedDecoder[Data]` is derived automatically
-val decoded: Result[Data, DecodeError] =
-  Readers.readDeclAs[Data](input, rootName = "conf")
-```
-
-You can also read as a generic syntax tree (`Expr`) first and use that, or decode into
-structured data afterwords:
+If your config structure already matches Scala data closely, you can decode directly into a named
+tuple type. This is the most direct config workflow: parse the file and get back a nested typed
+structure without defining intermediate case classes.
 
 ```scala
 import scalanotation.*
+import steps.result.Result
 
-val `foo.scala` = "val conf = (ok = true)"
-type Data = (ok: Boolean)
+val input =
+  """val conf = (
+    |  app = (
+    |    host = "127.0.0.1",
+    |    port = 8080,
+    |    mode = "dev",
+    |    replicas = Vector(
+    |      (region = "eu-central", weight = 2),
+    |      (region = "us-east", weight = 1)
+    |    )
+    |  ),
+    |  schedule = (
+    |    start = "2021-12-15",
+    |    refreshSeconds = null
+    |  ),
+    |  features = Vector("metrics", "tracing"),
+    |)
+    |""".stripMargin
 
-val expr = Readers.readDeclAs[Expr](`foo.scala`, rootName = "conf").get
-val decoded = expr.decodeAs[Data]
+type Config =
+  (
+    app: (
+      host: String,
+      port: Int,
+      mode: String,
+      replicas: Vector[(region: String, weight: Int)]
+    ),
+    schedule: (
+      start: String,
+      refreshSeconds: Option[Int]
+    ),
+    features: Vector[String],
+  )
+
+val decoded: Result[Config, DecodeError] =
+  Readers.readDeclAs[Config](input, rootName = "conf")
 ```
 
-or read just a top-level expression, without a declaration (e.g. `foo.sc` file)
+This direct structural decoding is especially useful when your config is already naturally
+tree-shaped and you want Scala’s nested named tuple types to mirror the file exactly.
 
+## Dynamic Data
+
+`scalanotation.Expr` is an algebraic data type representing the syntax of Scala Object Notation:
 ```scala
-import scalanotation.*
-
-val `foo.sc` = "(ok = true)"
-
-type Data = (ok: Boolean)
-
-val expr = Readers.readAs[Data](`foo.sc`).get
+enum Expr:
+  case NamedTupleExpr(elements: IndexedSeq[(name: String, value: Expr)])
+  case VectorExpr(elements: IndexedSeq[Expr])
+  case StringConstant(value: String)
+  case CharConstant(value: Char)
+  case IntConstant(value: Int)
+  case LongConstant(value: Long)
+  case FloatConstant(value: Float)
+  case DoubleConstant(value: Double)
+  case BooleanConstant(value: Boolean)
+  case NullConstant
 ```
 
-Supported typed decoding targets currently include:
-
-- arbitrary `Repr <: AnyNamedTuple`
-- `Vector[T]`,
-- `String`, `Char`, `Int`, `Long`, `Float`, `Double`, and `Boolean`
-- `Array[T]`, `IArray[T]`, arbitrary `Arr <: scala.collection.Seq[T]`
-- arbitrary `Dict <: scala.collection.Map[String, T]`,
-- `Option[T]` for nullable values
-- `Expr` (generic syntax tree)
-- custom types via transformation of an existing `Reader[T]`
-- case class, case object, and enum derived decoders via `derives Reader`
-
-## Writing
-
-You can render a typed value directly to either `Expr` or text:
-
+it can also be directly decoded to from text:
 ```scala
-import scalanotation.*
-
-type Data = (ok: Boolean, items: Vector[Int], note: Option[String])
-
-val value: Data = (ok = true, items = Vector(1, 2, 3), note = Some("done"))
-
-val expr: Expr = Writers.writeExpr(value)
-val text: String = Writers.write(value)
-val declText: String = Writers.writeDecl("conf", value)
+val decoded = Readers.readAs[scalanotation.Expr]("(ok = true, retries = 3)")
+assert(decoded == NamedTupleExpr(Vector("ok" -> BooleanConstant(true), ...)))
 ```
 
-Text output can be compact or pretty-printed. Pretty printing accepts an indentation width in spaces:
+## Moving From Structural Config To Domain Types
 
-```scala
-import scalanotation.*
+Traditional application config parsing in Scala decodes to domain types rather than raw data,
+which is supported by Scala Object Notation.
 
-val compact = Writers.write(value)
-val pretty = Writers.writePretty(value, indent = 4)
-val alsoPretty = Writers.write(value, TextFormat.pretty(indent = 4))
-val declPretty = Writers.writeDecl("conf", value, TextFormat.pretty(indent = 4))
-```
+The library provides the `ReadWriter[T]` type class which declares a schema for the shape of data.
+supporting both reading and writing. `Reader[T]` and `Writer[T]` also exist to restrict capabilities
+to one way.
 
-`Writers.write(...)` writes text directly from the typed value. It does not need to build an intermediate `Expr` first.
-
-`Expr` values can also be rendered directly, with the same formatting options:
-
-```scala
-import scalanotation.*
-
-val expr = Writers.writeExpr((ok = true))
-
-val text = expr.render
-val pretty = expr.renderPretty(indent = 4)
-val alsoPretty = expr.render(TextFormat.pretty(indent = 4))
-```
-
-Typed writing targets currently include:
-
-- arbitrary `Repr <: AnyNamedTuple`
-- `Vector[T]`,
-- `String`, `Char`, `Int`, `Long`, `Float`, `Double`, and `Boolean`
-- `Array[T]`, `IArray[T]`, arbitrary `Arr <: scala.collection.Seq[T]`
-- arbitrary `Dict <: scala.collection.Map[String, T]`,
-- `Option[T]` for nullable values
-- `Expr` (generic syntax tree)
-- custom types via transformation of an existing `Writer[T]`
-- case class, case object, and enum derived writers via `derives Writer`
-
-Read and write derivation both reuse the same internal `RawSchema`, so structural shape stays aligned across both pipelines.
-
-If you want one type class that guarantees both directions were derived from the same structure, use `ReadWriter[T]`. A derived `ReadWriter[T]` also supplies `Reader[T]` and `Writer[T]` automatically.
+Both type classes can be derived automatically, or allow you to transform an existing schema.
 
 ```scala
 import scalanotation.*
@@ -170,9 +138,21 @@ import steps.result.Result
 
 import java.time.LocalDate
 
-case class Metadata(created: LocalDate, tags: Vector[String]) derives ReadWriter
-case class User(name: String, metadata: Metadata) derives ReadWriter
+enum Mode:
+  case Dev, Prod
 
+// map the existing `ReadWriter[String]`:
+given ReadWriter[Mode] =
+  summon[ReadWriter[String]].emap {
+    case "dev"  => Result.Ok(Mode.Dev)
+    case "prod" => Result.Ok(Mode.Prod)
+    case other  => Result.Err(DecodeError.Custom(s"Unknown mode '$other'"))
+  } {
+    case Mode.Dev  => "dev"
+    case Mode.Prod => "prod"
+  }
+
+// map the existing `ReadWriter[String]`:
 given ReadWriter[LocalDate] =
   summon[ReadWriter[String]].emap { raw =>
     Result.catchException({ case _: java.time.format.DateTimeParseException =>
@@ -182,147 +162,205 @@ given ReadWriter[LocalDate] =
     }
   }(_.toString)
 
-val value = User("Ada", Metadata(LocalDate.parse("2026-03-14"), Vector("scala")))
+// semi-automatic derivation
+case class Replica(region: String, weight: Int) derives ReadWriter
+case class App(host: String, port: Int, mode: Mode, replicas: Vector[Replica]) derives ReadWriter
+case class Schedule(start: LocalDate, refreshSeconds: Option[Int]) derives ReadWriter
+case class Config(app: App, schedule: Schedule, features: Vector[String]) derives ReadWriter
 
-val text = Writers.write(value)
-val decoded = Readers.readAs[User](text)
+// decode the same input as before to a richer type
+val decoded = Readers.readDeclAs[Config](input, rootName = "conf")
 ```
 
-**Mapping an existing Schema**
+That lets you keep the text format simple while still decoding into domain-specific Scala types.
 
-Preferred for direct decoding from Strings into domain objects such as Date, or simple enums.
+## Encoding values as data
+
+The same typed values can be written back out as Scala Object Notation text, or to an `Expr`.
+
+```scala
+import scalanotation.*
+
+val value =
+  (
+    app = (host = "127.0.0.1", port = 8080, mode = "dev"),
+    features = Vector("metrics", "tracing"),
+    refreshSeconds = Option.empty[Int]
+  )
+
+val expr: Expr = Writers.writeExpr(value) // write to dynamic data
+val text: String = Writers.write(value) // write to expression
+val declText: String = Writers.writeDecl("conf", value) // write to declaration of name "conf"
+val prettyDecl: String = Writers.writeDeclPretty("conf", value, indent = 2)
+```
+
+`Expr` values can also be rendered directly:
+
+```scala
+import scalanotation.*
+
+val expr = Writers.writeExpr((ok = true, retries = 3))
+
+val compact = expr.render
+val pretty = expr.renderPretty(indent = 2)
+val alsoPretty = expr.render(TextFormat.pretty(indent = 2))
+```
+
+## Derivation
+
+You can derive the type classes for product and sum types:
+
+- `derives Reader` for read-only use
+- `derives Writer` for write-only use
+- `derives ReadWriter` for both directions
+
+`ReadWriter` is usually the best fit for config models because it keeps both directions aligned.
+
+### Case Classes
+
+Case classes derive structurally from their fields:
+
+```scala
+import scalanotation.*
+
+case class Database(host: String, port: Int) derives ReadWriter
+case class Config(database: Database, debug: Boolean) derives ReadWriter
+```
+
+That corresponds to config shaped like:
+
+```scala
+val conf = (
+  database = (
+    host = "localhost",
+    port = 5432
+  ),
+  debug = true
+)
+```
+
+### Enums
+
+Enums derive as a single-field object whose field name is the case label.
+
+```scala
+import scalanotation.*
+
+enum Mode derives ReadWriter:
+  case Fast
+  case Scheduled(at: String, retries: Int)
+```
+
+The encoded form is:
+
+```scala
+// Fast
+(Fast = null)
+
+// Scheduled(at = "2026-03-15", retries = 2)
+(Scheduled = (at = "2026-03-15", retries = 2))
+```
+
+Case objects and empty products follow the same nullary representation:
+
+```scala
+// case object Foo
+(Foo = null)
+```
+
+## Custom Decoding And Encoding
+
+If a config field should still be represented as a simple scalar in text, but map to a richer type
+in Scala, build on an existing type class:
+
+```scala
+// convert result of decoding
+val r: Reader[T]
+r.map(...); r.mapResult(...)
+
+// convert input that will be passed to an encoder
+val w: Writer[T]
+w.contraMap(...)
+
+// map in both directions
+val rw: ReadWriter[T]
+rw.bimap(...)(...); rw.bimapResult(...)(...)
+```
+
+Typical examples are dates, paths, IDs, and string-backed enums:
 
 ```scala
 import scalanotation.*
 import steps.result.Result
 
-import java.time.LocalDate
+final case class UserId(value: Int)
 
-enum Mode:
-  case Fast, Safe
-
-given Reader[Mode] =
-  summon[Reader[String]].emap {
-    case "fast" => Result.Ok(Mode.Fast)
-    case "safe" => Result.Ok(Mode.Safe)
-    case other  => Result.Err(DecodeError.Custom(s"Unknown mode '$other'"))
-  }
-
-given Writer[Mode] =
-  summon[Writer[String]].contramap {
-    case Mode.Fast => "fast"
-    case Mode.Safe => "safe"
-  }
-
-given ReadWriter[Mode] =
-  summon[ReadWriter[String]].emap {
-    case "fast" => Result.Ok(Mode.Fast)
-    case "safe" => Result.Ok(Mode.Safe)
-    case other  => Result.Err(DecodeError.Custom(s"Unknown mode '$other'"))
-  } {
-    case Mode.Fast => "fast"
-    case Mode.Safe => "safe"
-  }
+given ReadWriter[UserId] =
+  summon[ReadWriter[Int]].map(UserId(_))(_.value)
 ```
 
-**Derived Schemas**
-For product and sum types, you can derive a decoder automatically, (semi-auto)
-it is composed of exising schemas for each field.
+## Working With `Expr`
+
+If you want a generic syntax tree first, read into `Expr` and decode later:
 
 ```scala
 import scalanotation.*
-import steps.result.Result, Result.eval.raise
 
-import java.time.LocalDate
-
-case class Metadata(created: LocalDate, tags: Vector[String]) derives ReadWriter
-case class User(name: String, age: Int, metadata: Metadata) derives ReadWriter
-
-given ReadWriter[LocalDate] =
-  summon[ReadWriter[String]].emap { raw =>
-    Result:
-      try LocalDate.parse(raw)
-      catch case _: java.time.format.DateTimeParseException =>
-        raise(DecodeError.Custom(s"Invalid ISO date '$raw'"))
-  }(_.toString)
+val expr = Readers.readDeclAs[Expr](input, rootName = "conf").get
+val decoded = expr.decodeAs[(ok: Boolean, retries: Int)]
 ```
 
-> Note: for case class with no fields or a case object, the payload should be a named tuple with a single field - the class label, and null value.
-> e.g. `case class Foo()` will derive a decoder for `(Foo = null)`
+This is useful if you want to inspect, transform, or export a config before decoding it into a
+final domain type.
 
-Derivation also supports enums. Each case is represented as a single-field object where the field name is the case label. Cases with fields use a nested named tuple payload, and nullary cases use `null`.
+## Strictness And Errors
 
-```scala
-import scalanotation.*
-import steps.result.Result, Result.eval.raise
-
-import java.time.LocalDate
-
-enum Mode derives ReadWriter:
-  case Fast
-  case Scheduled(at: LocalDate, retries: Int)
-
-given ReadWriter[LocalDate] =
-  summon[ReadWriter[String]].emap { raw =>
-    Result:
-      try LocalDate.parse(raw)
-      catch case _: java.time.format.DateTimeParseException =>
-        raise(DecodeError.Custom(s"Invalid ISO date '$raw'"))
-  }(_.toString)
-
-// Fast        => (Fast = null)
-// Scheduled   => (Scheduled = (at = "2026-03-15", retries = 2))
-```
-
-Typed decoding is strict:
+Typed decoding is intentionally strict:
 
 - the requested root declaration name must match
-- named tuple field order must match the target type
-- field count and field names must match exactly
-- decode errors include nested path information such as `.items[0].value`
-- token-based parsing errors include line and column information
+- named tuple field names must match exactly
+- field count must match exactly
+- field order must match exactly
+- duplicate fields are rejected
 
-### Why not support class constructors and object references?
+Errors include useful context:
 
-> i.e. why no `val data = Foo(23)` and `val data = Bar` in a source file?
+- decode errors include nested paths such as `.database.host` or `.items[1]`
+- token and parse errors include line and column information
 
-It is still possible to derive decoders automatically for these types, just the syntax may be awkward for enums,
-and singleton objects (i.e. a discriminator is needed) (e.g. `(Bar = null)` and `(Foo = (id = 23))`).
+This is especially useful for configuration, the exact location of an error helps a user correct
+the issue.
 
-The envisioned use case is to read a valid Scala file with no imports needed, i.e. to encode raw data
-with the syntax of Scala. Permitting references to external classes would mean we can no longer
-copy-paste the raw data into any scala file, (ignoring import overrides)
-now we need to resolve external references!
+## Supported Typed Targets
 
-Also opening the config file would render the presentation compiler useless, so we would be required
-to build a more specialised tool that expects unknown references.
+The library supports decoding and writing for:
 
-How would a generic tool such as a "`jq` for Scala Object Notation" work to traverse such objects
-without type information?
+- arbitrary Scala 3 named tuples, including deeply nested named tuple and `Vector` combinations
+- case classes, case objects, and enums via derivation
+- `String`, `Char`, `Int`, `Long`, `Float`, `Double`, `Boolean`, and `Null`
+- `Option[T]`
+- `Vector[T]`
+- `Array[T]` and `IArray[T]`
+- arbitrary `scala.collection.Seq[T]`
+- arbitrary `scala.collection.Map[String, T]`
+- `Expr`
+- custom types via mapping from an existing type class
 
-Likely `Foo(23)` would be illegal as it could be ambiguous with sequence syntax,
-and therefore only `Foo(id = 23)` allowed i.e. require named-arguments,
-and then it can be a "labelled object literal".
+## Why The Syntax Is Narrow
 
-Perhaps these could be traversed by a new notion of path, instead of just `.name` for a field, and
-`[i]` for an index, perhaps `#Foo` to "cast down" to that type, and nothing is needed for `Bar`  as
-it is an opaque reference.
+Scala Object Notation is meant to stay import-free and data-oriented. That is why it does not
+support constructors (e.g. `Foo(1)`) or references (e.g. `Bar`).
 
-It becomes tougher to understand the meaning of the document
-because now it is harder to preserve an illusion of "simple data",
-and we must now ask "what version of `Foo` is it?" what fields is it expected to have? is subtyping meaningful?
-
-And for a standalone identifier `Bar`, it can only be treated as a reference of unknown type until decoding.
-
-At least with decoding a literal like `(Foo = (id = 23))` into `Foo(23)` then it is more honest that
-it is unversioned, and now the document itself should carry that information.
-
-Another potential enabler could be to support explicit schemas to encode such definitions,
-but then they have to be included or referenced somehow in the document (again requiring tooling support).
+Keeping the format narrow has a few benefits:
+- the document is clearly raw data, not executable code
+- generic tooling can work without needing application-specific symbol resolution
+- config stays copy-pasteable into ordinary Scala files without extra imports
+- schema derivation remains structural and predictable
 
 ## Demo CLI
 
-The `demo` module provides a small CLI entry point:
+The `demo` module provides a small CLI for converting from Scala Object Notation to other
+data formats (YAML, JSON):
 
 ```bash
 ./mill demo.run example/config.scala --name conf
@@ -345,20 +383,19 @@ Examples:
 ./mill demo.run example/config.scala --name conf --json --safe-nums
 ```
 
-## Structure
-The current project state is:
+## Project Layout
 
-- `core`: tokenizer, AST model, parser, schema validation, and typed decoding into Scala 3 named tuples
-- `demo`: a CLI that reads a config-like Scala file, optionally prints tokens, and can render the parsed value as JSON or YAML
-- `example/config.scala`: a minimal input file used by the demo
+- `core`: tokenizer, AST, parser, schema derivation, decoding, and writing
+- `demo`: CLI for parsing config files and exporting JSON or YAML
+- `example/config.scala`: minimal sample input for the demo
 
-The code currently lives in the `scalanotation` package.
+The code lives in the `scalanotation` package.
 
 ## Build And Test
 
 This project uses Mill.
 
-Run the full test suite:
+Run all tests:
 
 ```bash
 ./mill __.test
@@ -375,17 +412,3 @@ Compile the demo module:
 ```bash
 ./mill demo.compile
 ```
-
-## Current Coverage
-
-The test suite currently covers:
-
-- AST parsing for nested tuples and vectors
-- booleans, negative numbers, binary and hexadecimal literals
-- line comments and nested block comments
-- typed decoding into nested named tuples
-- vector decoding for structured values
-- root-name validation and field-order validation
-- runtime decode error reporting with path and source location information
-- compile-time schema derivation failures for unsupported target types
-- demo JSON and YAML rendering

@@ -15,7 +15,7 @@ sealed trait Reader[T]:
   final def map[U](f: T => U): Reader[U] =
     Reader.mapped(this)(f)
 
-  final def emap[U](f: T => Result[U, DecodeError]): Reader[U] =
+  final def mapResult[U](f: T => Result[U, DecodeError]): Reader[U] =
     Reader.mappedResult(this)(f)
 
 private[scalanotation] trait ReaderLowPriority:

@@ -489,14 +489,14 @@ class ParserSuite extends FunSuite:
     final case class Schedule(dates: Vector[LocalDate])
 
     given Reader[Mode] =
-      summon[Reader[String]].emap {
+      summon[Reader[String]].mapResult {
         case "fast" => Result.Ok(Mode.Fast)
         case "safe" => Result.Ok(Mode.Safe)
         case other  => Result.Err(DecodeError.Custom(s"Unknown mode '$other'"))
       }
 
     given Reader[LocalDate] =
-      summon[Reader[String]].emap { raw =>
+      summon[Reader[String]].mapResult { raw =>
         Result.catchException({ case _: java.time.format.DateTimeParseException =>
           DecodeError.Custom(s"Invalid ISO date '$raw'")
         }) {
@@ -536,7 +536,7 @@ class ParserSuite extends FunSuite:
     import java.time.LocalDate
 
     given Reader[LocalDate] =
-      summon[Reader[String]].emap { raw =>
+      summon[Reader[String]].mapResult { raw =>
         try Result.Ok(LocalDate.parse(raw))
         catch
           case _: java.time.format.DateTimeParseException =>
@@ -562,7 +562,7 @@ class ParserSuite extends FunSuite:
     final case class NonEmptyInts(values: Vector[Int])
 
     given Reader[NonEmptyInts] =
-      summon[Reader[Vector[Int]]].emap { values =>
+      summon[Reader[Vector[Int]]].mapResult { values =>
         if values.nonEmpty then Result.Ok(NonEmptyInts(values))
         else Result.Err(DecodeError.Custom("Expected at least one integer"))
       }
@@ -583,7 +583,7 @@ class ParserSuite extends FunSuite:
     final case class User(name: String, age: Int, metadata: Metadata) derives Reader
 
     given Reader[LocalDate] =
-      summon[Reader[String]].emap { raw =>
+      summon[Reader[String]].mapResult { raw =>
         Result.catchException({ case _: java.time.format.DateTimeParseException =>
           DecodeError.Custom(s"Invalid ISO date '$raw'")
         }) {
@@ -621,7 +621,7 @@ class ParserSuite extends FunSuite:
     final case class User(metadata: Metadata)
 
     given Reader[LocalDate] =
-      summon[Reader[String]].emap { raw =>
+      summon[Reader[String]].mapResult { raw =>
         Result.catchException({ case _: java.time.format.DateTimeParseException =>
           DecodeError.Custom(s"Invalid ISO date '$raw'")
         }) {
@@ -654,7 +654,7 @@ class ParserSuite extends FunSuite:
       case Scheduled(at: LocalDate, retries: Int)
 
     given Reader[LocalDate] =
-      summon[Reader[String]].emap { raw =>
+      summon[Reader[String]].mapResult { raw =>
         Result.catchException({ case _: java.time.format.DateTimeParseException =>
           DecodeError.Custom(s"Invalid ISO date '$raw'")
         }) {
@@ -696,7 +696,7 @@ class ParserSuite extends FunSuite:
       case Scheduled(at: LocalDate)
 
     given Reader[LocalDate] =
-      summon[Reader[String]].emap { raw =>
+      summon[Reader[String]].mapResult { raw =>
         Result.catchException({ case _: java.time.format.DateTimeParseException =>
           DecodeError.Custom(s"Invalid ISO date '$raw'")
         }) {
@@ -752,7 +752,7 @@ class ParserSuite extends FunSuite:
     final case class User(name: String, mode: Mode, metadata: Metadata) derives Reader, Writer
 
     given Reader[LocalDate] =
-      summon[Reader[String]].emap { raw =>
+      summon[Reader[String]].mapResult { raw =>
         Result.catchException({ case _: java.time.format.DateTimeParseException =>
           DecodeError.Custom(s"Invalid ISO date '$raw'")
         }) {
@@ -880,7 +880,7 @@ class ParserSuite extends FunSuite:
     final case class User(name: String, mode: Mode, metadata: Metadata) derives ReadWriter
 
     given ReadWriter[LocalDate] =
-      summon[ReadWriter[String]].emap { raw =>
+      summon[ReadWriter[String]].bimapResult { raw =>
         Result.catchException({ case _: java.time.format.DateTimeParseException =>
           DecodeError.Custom(s"Invalid ISO date '$raw'")
         }) {
@@ -918,7 +918,7 @@ class ParserSuite extends FunSuite:
     final case class User(name: String, metadata: Metadata) derives ReadWriter
 
     given ReadWriter[LocalDate] =
-      summon[ReadWriter[String]].emap { raw =>
+      summon[ReadWriter[String]].bimapResult { raw =>
         Result.catchException({ case _: java.time.format.DateTimeParseException =>
           DecodeError.Custom(s"Invalid ISO date '$raw'")
         }) {
@@ -1059,7 +1059,7 @@ class ParserSuite extends FunSuite:
       case other =>
         fail(s"Expected a mapped writer schema, got $other")
 
-    val mappedReadWriter = summon[ReadWriter[Int]].map(UserId(_))(_.value)
+    val mappedReadWriter = summon[ReadWriter[Int]].bimap(UserId(_))(_.value)
     mappedReadWriter.schema match
       case RawSchema.Mapped(base, mapping) =>
         assertEquals(base, RawSchema.Int)
