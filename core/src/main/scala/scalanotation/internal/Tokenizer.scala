@@ -74,7 +74,7 @@ private[scalanotation] final class Tokenizer(input: String):
     currentChar() match
       case '('                         => advance(); Token.LParen(start)
       case ')'                         => advance(); Token.RParen(start)
-      case '=' if peekChar().contains('>') =>
+      case '=' if peekCompare('>') =>
         advance()
         advance()
         if !isAtEnd && currentChar() == '>' then
@@ -83,21 +83,21 @@ private[scalanotation] final class Tokenizer(input: String):
         else keyword(KW_arrow, start)
       case '='                         => advance(); Token.Equals(start)
       case ':'                         => advance(); keyword(KW_colon, start)
-      case '<' if peekChar().contains('-') =>
+      case '<' if peekCompare('-') =>
         advance()
         advance()
         keyword(KW_leftArrow, start)
-      case '<' if peekChar().contains(':') =>
+      case '<' if peekCompare(':') =>
         advance()
         advance()
         keyword(KW_subtype, start)
-      case '>' if peekChar().contains(':') =>
+      case '>' if peekCompare(':') =>
         advance()
         advance()
         keyword(KW_supertype, start)
       case '#'                         => advance(); keyword(KW_hash, start)
       case '@'                         => advance(); keyword(KW_at, start)
-      case '?' if peekChar().contains('=') && peekChar(2).contains('>') =>
+      case '?' if peekCompare('=') && peekCompare('>', 2) =>
         advance()
         advance()
         advance()
@@ -126,8 +126,11 @@ private[scalanotation] final class Tokenizer(input: String):
         Token.Identifier(nameCached(name), start)
 
   private def scanNumber(start: DecodeError.Span): Token =
-    if currentChar() == '0' && peekChar().exists(ch =>
-        ch == 'x' || ch == 'X' || ch == 'b' || ch == 'B'
+    if currentChar() == '0' && (
+        peekCompare('x')
+          || peekCompare('X')
+          || peekCompare('b')
+          || peekCompare('B')
       )
     then scanPrefixedInteger(start)
     else scanDecimalNumber(start)
@@ -196,7 +199,7 @@ private[scalanotation] final class Tokenizer(input: String):
       while !isAtEnd && (currentChar().isDigit || currentChar() == '_') do builder += advance()
 
     takeDigits()
-    if !isAtEnd && currentChar() == '.' && peekChar().exists(_.isDigit) then
+    if !isAtEnd && currentChar() == '.' && peekIsDigit() then
       hasDot = true
       builder += advance()
       takeDigits()
@@ -306,8 +309,8 @@ private[scalanotation] final class Tokenizer(input: String):
     while keepGoing && !isAtEnd do
       skipWhitespace()
       if isAtEnd then keepGoing = false
-      else if currentChar() == '/' && peekChar().contains('/') then skipLineComment()
-      else if currentChar() == '/' && peekChar().contains('*') then skipBlockComment()
+      else if currentChar() == '/' && peekCompare('/') then skipLineComment()
+      else if currentChar() == '/' && peekCompare('*') then skipBlockComment()
       else keepGoing = false
 
   private def skipWhitespace(): Unit =
@@ -325,11 +328,11 @@ private[scalanotation] final class Tokenizer(input: String):
     var depth = 1
     while depth > 0 do
       if isAtEnd then fail("Unterminated block comment", start)
-      else if currentChar() == '/' && peekChar().contains('*') then
+      else if currentChar() == '/' && peekCompare('*') then
         advance()
         advance()
         depth += 1
-      else if currentChar() == '*' && peekChar().contains('/') then
+      else if currentChar() == '*' && peekCompare('/') then
         advance()
         advance()
         depth -= 1
@@ -339,9 +342,13 @@ private[scalanotation] final class Tokenizer(input: String):
 
   private def currentChar(): Char = input.charAt(index)
 
-  private def peekChar(offset: Int = 1): Option[Char] =
+  private def peekCompare(expected: Char, offset: Int = 1): Boolean =
     val nextIndex = index + offset
-    if nextIndex < input.length then Some(input.charAt(nextIndex)) else None
+    nextIndex < input.length && input.charAt(nextIndex) == expected
+
+  private def peekIsDigit(offset: Int = 1): Boolean =
+    val nextIndex = index + offset
+    nextIndex < input.length && input.charAt(nextIndex).isDigit
 
   private def advance(): Char =
     val ch = input.charAt(index)
