@@ -1,28 +1,25 @@
 package scalanotation
 
 import scalanotation.internal.CommonTypeClassCompanion
-import scalanotation.internal.CompiledSchema
+import scalanotation.internal.Encode
 import scalanotation.internal.ExprRenderer
-import scalanotation.internal.OpaqueSupport
 import scalanotation.internal.RawSchema
 
 import scala.deriving.Mirror
 import scala.util.NotGiven
 
 sealed trait Writer[T]:
-  private[scalanotation] def compiled: CompiledSchema
-
-  private[scalanotation] final def schema: RawSchema = compiled.rawSchema
+  private[scalanotation] def schema: RawSchema
 
   final def write(value: T): Expr =
-    CompiledSchema.writeExpr(compiled, value)
+    Encode.writeExpr(schema, value)
 
   private[scalanotation] final def renderText(
       value: T,
       out: ExprRenderer.Output,
       depth: Int
   )(using format: TextFormat): Unit =
-    CompiledSchema.renderText(compiled, value, out, depth)
+    Encode.renderText(schema, value, out, depth)
 
   final def contramap[U](f: U => T): Writer[U] =
     Writer.contramapped(this)(f)
@@ -50,21 +47,16 @@ private[scalanotation] trait WriterLowPriority:
     readWriter.writer
 
 object Writer extends WriterLowPriority, CommonTypeClassCompanion[Writer]:
-  private final class Instance[T](val compiled: CompiledSchema) extends Writer[T]
+  private final class Instance[T](val schema: RawSchema) extends Writer[T]
 
-  private[scalanotation] def fromCompiled[T](compiled0: CompiledSchema): Writer[T] =
-    new Instance(compiled0)
+  private[scalanotation] def fromSchema[T](schema0: RawSchema): Writer[T] =
+    new Instance(schema0)
 
-  private[scalanotation] def compiledOf[T](typeclass: Writer[T]): CompiledSchema =
-    typeclass.compiled
+  private[scalanotation] def schemaOf[T](typeclass: Writer[T]): RawSchema =
+    typeclass.schema
 
-  private def opaque[T](
-      support: OpaqueSupport.Write[T]
-  ): Writer[T] =
-    fromCompiled[T](OpaqueSupport.compiled(support))
-
-  protected def primitiveTypeClass[T](codec: OpaqueSupport.ReadWrite[T]): Writer[T] =
-    opaque(codec.write)
+  protected def primitiveTypeClass[T](schema: RawSchema): Writer[T] =
+    fromSchema(schema)
 
   private[scalanotation] def renderText[T](
       writer: Writer[T],
@@ -89,18 +81,20 @@ object Writer extends WriterLowPriority, CommonTypeClassCompanion[Writer]:
     out.result()
 
   def contramapped[A, B](base: Writer[A])(transform: B => A): Writer[B] =
-    opaque(OpaqueSupport.Write.contramapped(base)(transform))
+    fromSchema(
+      RawSchema.mapInput(base.schema)(value => transform(value.asInstanceOf[B]))
+    )
 
   export Builders.{derived, ofFields, singleton, ofCases}
 
   def forNull[T]: Writer[T] =
-    opaque(OpaqueSupport.Write.nullary)
+    summon[Writer[Null]].contramap(_ => null)
 
   override object Builders extends CommonBuilders:
     val thisBuilder: this.type = this
     override type ThisBuilder = thisBuilder.type
-    type FieldRepr      = CompiledSchema.Field
-    type SumCaseRepr[A] = CompiledSchema.SumCase
+    type FieldRepr            = RawSchema.Field
+    type SumCaseRepr[A]       = RawSchema.SumCase
 
     import compiletime.ops.string.+
 
@@ -109,33 +103,33 @@ object Writer extends WriterLowPriority, CommonTypeClassCompanion[Writer]:
     private[scalanotation] def sumTypeClass[T](cases: List[SumCaseRepr[T]])(
         using mirror: Mirror.SumOf[T]
     ): Writer[T] =
-      fromCompiled[T](
-        CompiledSchema.Sum(
+      fromSchema[T](
+        RawSchema.Sum(
           IArray.from(cases),
-          CompiledSchema.SumWrite.from[T](mirror.ordinal)
+          RawSchema.SumWrite.from[T](mirror.ordinal)
         )
       )
 
     private[scalanotation] def makeField[T](name: String, typeclass: Writer[T]): FieldRepr =
-      CompiledSchema.Field(name, typeclass.compiled)
+      RawSchema.Field(name, typeclass.schema)
 
     private[scalanotation] def namedTupleTypeClass[T](fields: List[FieldRepr]): Writer[T] =
-      fromCompiled[T](
-        CompiledSchema.NamedTuple(
+      fromSchema[T](
+        RawSchema.NamedTuple(
           IArray.from(fields),
           read = null,
-          CompiledSchema.NamedTupleWrite.productLike
+          RawSchema.NamedTupleWrite.productLike
         )
       )
 
     private[scalanotation] def productTypeClass[T](fields: List[FieldRepr])(
         using mirror: Mirror.ProductOf[T]
     ): Writer[T] =
-      fromCompiled[T](
-        CompiledSchema.NamedTuple(
+      fromSchema[T](
+        RawSchema.NamedTuple(
           IArray.from(fields),
           read = null,
-          CompiledSchema.NamedTupleWrite.productLike
+          RawSchema.NamedTupleWrite.productLike
         )
       )
 
@@ -143,11 +137,11 @@ object Writer extends WriterLowPriority, CommonTypeClassCompanion[Writer]:
         using mirror: Mirror.ProductOf[T],
         noFields: mirror.MirroredElemTypes =:= EmptyTuple
     ): Writer[T] =
-      fromCompiled[T](
-        CompiledSchema.NamedTuple(
-          IArray(CompiledSchema.Field(label, forNull[Unit].compiled)),
+      fromSchema[T](
+        RawSchema.NamedTuple(
+          IArray(RawSchema.Field(label, forNull[Unit].schema)),
           read = null,
-          CompiledSchema.NamedTupleWrite.singleton
+          RawSchema.NamedTupleWrite.singleton
         )
       )
 
@@ -161,17 +155,17 @@ object Writer extends WriterLowPriority, CommonTypeClassCompanion[Writer]:
         name: String,
         typeclass: Writer[T]
     ): SumCaseRepr[A] =
-      CompiledSchema.SumCase(name, typeclass.compiled)
+      RawSchema.SumCase(name, typeclass.schema)
 
     given VectorAtPath: [Path <: String, T]
       => (wrapped: AtPath[Path + "[]", T])
       => AtPath[Path, Vector[T]] =
       liftAtPath[Path, Vector[T]](
-        fromCompiled[Vector[T]](
-          CompiledSchema.VectorShape(
-            wrapped.typeclass.compiled,
+        fromSchema[Vector[T]](
+          RawSchema.Vector(
+            wrapped.typeclass.schema,
             read = null,
-            CompiledSchema.VectorWrite.from[Vector[T], T](_.length, _.iterator)
+            RawSchema.VectorWrite.from[Vector[T], T](_.length, _.iterator)
           )
         )
       )
@@ -180,11 +174,11 @@ object Writer extends WriterLowPriority, CommonTypeClassCompanion[Writer]:
       => (wrapped: AtPath[Path + "[]", T])
       => AtPath[Path, Col[T]] =
       liftAtPath[Path, Col[T]](
-        fromCompiled[Col[T]](
-          CompiledSchema.VectorShape(
-            wrapped.typeclass.compiled,
+        fromSchema[Col[T]](
+          RawSchema.Vector(
+            wrapped.typeclass.schema,
             read = null,
-            CompiledSchema.VectorWrite.from[Col[T], T](_.size, _.iterator)
+            RawSchema.VectorWrite.from[Col[T], T](_.size, _.iterator)
           )
         )
       )
@@ -193,11 +187,11 @@ object Writer extends WriterLowPriority, CommonTypeClassCompanion[Writer]:
       => (wrapped: AtPath[Path + "[]", T])
       => AtPath[Path, IArray[T]] =
       liftAtPath[Path, IArray[T]](
-        fromCompiled[IArray[T]](
-          CompiledSchema.VectorShape(
-            wrapped.typeclass.compiled,
+        fromSchema[IArray[T]](
+          RawSchema.Vector(
+            wrapped.typeclass.schema,
             read = null,
-            CompiledSchema.VectorWrite.from[IArray[T], T](_.length, _.iterator)
+            RawSchema.VectorWrite.from[IArray[T], T](_.length, _.iterator)
           )
         )
       )
@@ -206,11 +200,11 @@ object Writer extends WriterLowPriority, CommonTypeClassCompanion[Writer]:
       => (wrapped: AtPath[Path + "[]", T])
       => AtPath[Path, Array[T]] =
       liftAtPath[Path, Array[T]](
-        fromCompiled[Array[T]](
-          CompiledSchema.VectorShape(
-            wrapped.typeclass.compiled,
+        fromSchema[Array[T]](
+          RawSchema.Vector(
+            wrapped.typeclass.schema,
             read = null,
-            CompiledSchema.VectorWrite.from[Array[T], T](_.length, _.iterator)
+            RawSchema.VectorWrite.from[Array[T], T](_.length, _.iterator)
           )
         )
       )
@@ -219,11 +213,11 @@ object Writer extends WriterLowPriority, CommonTypeClassCompanion[Writer]:
       => (wrapped: AtPath[Path + ".*", T])
       => AtPath[Path, Col[String, T]] =
       liftAtPath[Path, Col[String, T]](
-        fromCompiled[Col[String, T]](
-          CompiledSchema.DictShape(
-            wrapped.typeclass.compiled,
+        fromSchema[Col[String, T]](
+          RawSchema.Dict(
+            wrapped.typeclass.schema,
             read = null,
-            CompiledSchema.DictWrite.from[Col[String, T], T](_.size, _.iterator)
+            RawSchema.DictWrite.from[Col[String, T], T](_.size, _.iterator)
           )
         )
       )

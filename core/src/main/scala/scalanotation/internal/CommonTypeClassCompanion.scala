@@ -8,11 +8,11 @@ import scala.deriving.Mirror
 import scala.util.NotGiven
 
 private[scalanotation] trait CommonTypeClassCompanion[TC[_]]:
-  private[scalanotation] def fromCompiled[T](compiled0: CompiledSchema): TC[T]
+  private[scalanotation] def fromSchema[T](schema0: RawSchema): TC[T]
 
-  private[scalanotation] def compiledOf[T](typeclass: TC[T]): CompiledSchema
+  private[scalanotation] def schemaOf[T](typeclass: TC[T]): RawSchema
 
-  protected def primitiveTypeClass[T](codec: OpaqueSupport.ReadWrite[T]): TC[T]
+  protected def primitiveTypeClass[T](schema: RawSchema): TC[T]
 
   trait CommonDerivationBuilders:
     type ThisBuilder <: this.type & CommonDerivationBuilders
@@ -49,8 +49,7 @@ private[scalanotation] trait CommonTypeClassCompanion[TC[_]]:
     ): TC[T] = singletonTypeClass[T](label.value)
 
     final def ofFields[T](using mirror: Mirror.ProductOf[T])(
-        using
-        atPath: ProductFieldsAtPath["", mirror.MirroredElemLabels, mirror.MirroredElemTypes],
+        using atPath: ProductFieldsAtPath["", mirror.MirroredElemLabels, mirror.MirroredElemTypes],
         hasFields: NotGiven[mirror.MirroredElemTypes =:= EmptyTuple]
     ): TC[T] = productTypeClass[T](ProductFieldsAtPath.fields(atPath))
 
@@ -219,36 +218,39 @@ private[scalanotation] trait CommonTypeClassCompanion[TC[_]]:
       => (wrapped: AtPath[Path, T])
       => AtPath[Path, Option[T]] =
       liftAtPath[Path, Option[T]](
-        fromCompiled[Option[T]](
-          CompiledSchema.OptionShape(compiledOf(wrapped.typeclass))
+        fromSchema[Option[T]](
+          RawSchema.Option(schemaOf(wrapped.typeclass))
         )
       )
 
   val Builders: CommonBuilders
 
   given ExprSchema: TC[Expr] =
-    primitiveTypeClass(OpaqueSupport.Primitives.ExprCodec)
+    primitiveTypeClass(RawSchema.AnyExpr)
 
   given StringSchema: TC[String] =
-    primitiveTypeClass(OpaqueSupport.Primitives.StringCodec)
+    primitiveTypeClass(RawSchema.String)
 
   given CharSchema: TC[Char] =
-    primitiveTypeClass(OpaqueSupport.Primitives.CharCodec)
+    primitiveTypeClass(RawSchema.Char)
 
   given IntSchema: TC[Int] =
-    primitiveTypeClass(OpaqueSupport.Primitives.IntCodec)
+    primitiveTypeClass(RawSchema.Int)
 
   given LongSchema: TC[Long] =
-    primitiveTypeClass(OpaqueSupport.Primitives.LongCodec)
+    primitiveTypeClass(RawSchema.Long)
 
   given FloatSchema: TC[Float] =
-    primitiveTypeClass(OpaqueSupport.Primitives.FloatCodec)
+    primitiveTypeClass(RawSchema.Float)
 
   given DoubleSchema: TC[Double] =
-    primitiveTypeClass(OpaqueSupport.Primitives.DoubleCodec)
+    primitiveTypeClass(RawSchema.Double)
 
   given BooleanSchema: TC[Boolean] =
-    primitiveTypeClass(OpaqueSupport.Primitives.BooleanCodec)
+    primitiveTypeClass(RawSchema.Boolean)
+
+  given NullSchema: TC[Null] =
+    primitiveTypeClass(RawSchema.Null)
 
   given OptionSchema: [T] => (atPath: Builders.AtPath["", Option[T]]) => TC[Option[T]] =
     atPath.typeclass
@@ -267,10 +269,9 @@ private[scalanotation] trait CommonTypeClassCompanion[TC[_]]:
     => TC[Col[T]] =
     atPath.typeclass
 
-  given MapSchema
-      : [Col[X, Y] <: scala.collection.Map[X, Y], T]
-        => (atPath: Builders.AtPath["", Col[String, T]])
-        => TC[Col[String, T]] =
+  given MapSchema: [Col[X, Y] <: scala.collection.Map[X, Y], T]
+    => (atPath: Builders.AtPath["", Col[String, T]])
+    => TC[Col[String, T]] =
     atPath.typeclass
 
   given NamedTupleSchema: [NT <: NamedTuple.AnyNamedTuple]

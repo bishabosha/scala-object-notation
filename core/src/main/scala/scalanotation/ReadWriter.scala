@@ -1,8 +1,6 @@
 package scalanotation
 
 import scalanotation.internal.CommonTypeClassCompanion
-import scalanotation.internal.CompiledSchema
-import scalanotation.internal.OpaqueSupport
 import scalanotation.internal.PublicInternal
 import scalanotation.internal.RawSchema
 import steps.result.Result
@@ -12,15 +10,13 @@ import scala.reflect.ClassTag
 import scala.util.NotGiven
 
 sealed trait ReadWriter[T]:
-  private[scalanotation] def compiled: CompiledSchema
-
-  private[scalanotation] final def schema: RawSchema = compiled.rawSchema
+  private[scalanotation] def schema: RawSchema
 
   final def reader: Reader[T] =
-    Reader.fromCompiled(compiled)
+    Reader.fromSchema(schema)
 
   final def writer: Writer[T] =
-    Writer.fromCompiled(compiled)
+    Writer.fromSchema(schema)
 
   final def map[U](read: T => U)(write: U => T): ReadWriter[U] =
     ReadWriter.mapped(this)(read)(write)
@@ -50,21 +46,16 @@ sealed trait ReadWriter[T]:
     writer.writeDeclPretty(name, value, indent)
 
 object ReadWriter extends CommonTypeClassCompanion[ReadWriter]:
-  private final class Instance[T](val compiled: CompiledSchema) extends ReadWriter[T]
+  private final class Instance[T](val schema: RawSchema) extends ReadWriter[T]
 
-  private[scalanotation] def fromCompiled[T](compiled0: CompiledSchema): ReadWriter[T] =
-    new Instance(compiled0)
+  private[scalanotation] def fromSchema[T](schema0: RawSchema): ReadWriter[T] =
+    new Instance(schema0)
 
-  private[scalanotation] def compiledOf[T](typeclass: ReadWriter[T]): CompiledSchema =
-    typeclass.compiled
+  private[scalanotation] def schemaOf[T](typeclass: ReadWriter[T]): RawSchema =
+    typeclass.schema
 
-  private def opaque[T](
-      support: OpaqueSupport.ReadWrite[T]
-  ): ReadWriter[T] =
-    fromCompiled[T](OpaqueSupport.compiled(support))
-
-  protected def primitiveTypeClass[T](codec: OpaqueSupport.ReadWrite[T]): ReadWriter[T] =
-    opaque(codec)
+  protected def primitiveTypeClass[T](schema: RawSchema): ReadWriter[T] =
+    fromSchema(schema)
 
   def mapped[A, B](base: ReadWriter[A])(read: A => B)(write: B => A): ReadWriter[B] =
     mappedResult(base)(value => Result.Ok(read(value)))(write)
@@ -74,18 +65,23 @@ object ReadWriter extends CommonTypeClassCompanion[ReadWriter]:
   )(
       write: B => A
   ): ReadWriter[B] =
-    opaque(OpaqueSupport.ReadWrite.mapped(base)(read)(write))
+    fromSchema(
+      RawSchema.mapResultAndInput(base.schema)(
+        resultMap0 = value => read(value.asInstanceOf[A]).asInstanceOf[Result[Any, DecodeError]],
+        inputMap0 = value => write(value.asInstanceOf[B])
+      )
+    )
 
   export Builders.{derived, ofFields, singleton, ofCases}
 
   def forNull[T](value: T): ReadWriter[T] =
-    opaque(OpaqueSupport.ReadWrite.nullary(value))
+    summon[ReadWriter[Null]].map(_ => value)(_ => null)
 
   override object Builders extends CommonBuilders:
     val thisBuilder: this.type = this
     override type ThisBuilder = thisBuilder.type
-    type FieldRepr      = CompiledSchema.Field
-    type SumCaseRepr[A] = CompiledSchema.SumCase
+    type FieldRepr            = RawSchema.Field
+    type SumCaseRepr[A]       = RawSchema.SumCase
 
     import compiletime.ops.string.+
 
@@ -94,35 +90,35 @@ object ReadWriter extends CommonTypeClassCompanion[ReadWriter]:
     private[scalanotation] def sumTypeClass[T](cases: List[SumCaseRepr[T]])(
         using mirror: Mirror.SumOf[T]
     ): ReadWriter[T] =
-      fromCompiled[T](
-        CompiledSchema.Sum(
+      fromSchema[T](
+        RawSchema.Sum(
           IArray.from(cases),
-          CompiledSchema.SumWrite.from[T](mirror.ordinal)
+          RawSchema.SumWrite.from[T](mirror.ordinal)
         )
       )
 
     private[scalanotation] def makeField[T](name: String, typeclass: ReadWriter[T]): FieldRepr =
-      CompiledSchema.Field(name, typeclass.compiled)
+      RawSchema.Field(name, typeclass.schema)
 
     private[scalanotation] def namedTupleTypeClass[T](fields: List[FieldRepr]): ReadWriter[T] =
-      fromCompiled[T](
-        CompiledSchema.NamedTuple(
+      fromSchema[T](
+        RawSchema.NamedTuple(
           IArray.from(fields),
-          CompiledSchema.NamedTupleRead.from(
+          RawSchema.NamedTupleRead.from(
             PublicInternal.buildNamedTuple.asInstanceOf[Array[AnyRef] => T]
           ),
-          CompiledSchema.NamedTupleWrite.productLike
+          RawSchema.NamedTupleWrite.productLike
         )
       )
 
     private[scalanotation] def productTypeClass[T](fields: List[FieldRepr])(
         using mirror: Mirror.ProductOf[T]
     ): ReadWriter[T] =
-      fromCompiled[T](
-        CompiledSchema.NamedTuple(
+      fromSchema[T](
+        RawSchema.NamedTuple(
           IArray.from(fields),
-          CompiledSchema.NamedTupleRead.from(PublicInternal.caseClassBuilder[T]),
-          CompiledSchema.NamedTupleWrite.productLike
+          RawSchema.NamedTupleRead.from(PublicInternal.caseClassBuilder[T]),
+          RawSchema.NamedTupleWrite.productLike
         )
       )
 
@@ -131,11 +127,11 @@ object ReadWriter extends CommonTypeClassCompanion[ReadWriter]:
         noFields: mirror.MirroredElemTypes =:= EmptyTuple
     ): ReadWriter[T] =
       val value = mirror.fromProduct(EmptyTuple)
-      fromCompiled[T](
-        CompiledSchema.NamedTuple(
-          IArray(CompiledSchema.Field(label, forNull(value).compiled)),
-          CompiledSchema.NamedTupleRead.from(_ => value),
-          CompiledSchema.NamedTupleWrite.singleton
+      fromSchema[T](
+        RawSchema.NamedTuple(
+          IArray(RawSchema.Field(label, forNull(value).schema)),
+          RawSchema.NamedTupleRead.from(_ => value),
+          RawSchema.NamedTupleWrite.singleton
         )
       )
 
@@ -149,17 +145,17 @@ object ReadWriter extends CommonTypeClassCompanion[ReadWriter]:
         name: String,
         typeclass: ReadWriter[T]
     ): SumCaseRepr[A] =
-      CompiledSchema.SumCase(name, typeclass.compiled)
+      RawSchema.SumCase(name, typeclass.schema)
 
     given VectorAtPath: [Path <: String, T]
       => (wrapped: AtPath[Path + "[]", T])
       => AtPath[Path, Vector[T]] =
       liftAtPath[Path, Vector[T]](
-        fromCompiled[Vector[T]](
-          CompiledSchema.VectorShape(
-            wrapped.typeclass.compiled,
-            CompiledSchema.VectorRead.FromReaderBuilder(PublicInternal.BuildVector[T]),
-            CompiledSchema.VectorWrite.from[Vector[T], T](_.length, _.iterator)
+        fromSchema[Vector[T]](
+          RawSchema.Vector(
+            wrapped.typeclass.schema,
+            RawSchema.VectorRead.FromReaderBuilder(PublicInternal.BuildVector[T]),
+            RawSchema.VectorWrite.from[Vector[T], T](_.length, _.iterator)
           )
         )
       )
@@ -169,11 +165,11 @@ object ReadWriter extends CommonTypeClassCompanion[ReadWriter]:
       => (factory: scala.collection.Factory[T, Col[T]])
       => AtPath[Path, Col[T]] =
       liftAtPath[Path, Col[T]](
-        fromCompiled[Col[T]](
-          CompiledSchema.VectorShape(
-            wrapped.typeclass.compiled,
-            CompiledSchema.VectorRead.FromReaderBuilder(PublicInternal.SeqFactoryVector[T, Col]),
-            CompiledSchema.VectorWrite.from[Col[T], T](_.size, _.iterator)
+        fromSchema[Col[T]](
+          RawSchema.Vector(
+            wrapped.typeclass.schema,
+            RawSchema.VectorRead.FromReaderBuilder(PublicInternal.SeqFactoryVector[T, Col]),
+            RawSchema.VectorWrite.from[Col[T], T](_.size, _.iterator)
           )
         )
       )
@@ -182,11 +178,11 @@ object ReadWriter extends CommonTypeClassCompanion[ReadWriter]:
       => (wrapped: AtPath[Path + "[]", T])
       => AtPath[Path, IArray[T]] =
       liftAtPath[Path, IArray[T]](
-        fromCompiled[IArray[T]](
-          CompiledSchema.VectorShape(
-            wrapped.typeclass.compiled,
-            CompiledSchema.VectorRead.FromReaderBuilder(PublicInternal.BuildIArray[T]),
-            CompiledSchema.VectorWrite.from[IArray[T], T](_.length, _.iterator)
+        fromSchema[IArray[T]](
+          RawSchema.Vector(
+            wrapped.typeclass.schema,
+            RawSchema.VectorRead.FromReaderBuilder(PublicInternal.BuildIArray[T]),
+            RawSchema.VectorWrite.from[IArray[T], T](_.length, _.iterator)
           )
         )
       )
@@ -195,11 +191,11 @@ object ReadWriter extends CommonTypeClassCompanion[ReadWriter]:
       => (wrapped: AtPath[Path + "[]", T])
       => AtPath[Path, Array[T]] =
       liftAtPath[Path, Array[T]](
-        fromCompiled[Array[T]](
-          CompiledSchema.VectorShape(
-            wrapped.typeclass.compiled,
-            CompiledSchema.VectorRead.FromReaderBuilder(PublicInternal.BuildArray[T]),
-            CompiledSchema.VectorWrite.from[Array[T], T](_.length, _.iterator)
+        fromSchema[Array[T]](
+          RawSchema.Vector(
+            wrapped.typeclass.schema,
+            RawSchema.VectorRead.FromReaderBuilder(PublicInternal.BuildArray[T]),
+            RawSchema.VectorWrite.from[Array[T], T](_.length, _.iterator)
           )
         )
       )
@@ -209,11 +205,11 @@ object ReadWriter extends CommonTypeClassCompanion[ReadWriter]:
       => (factory: scala.collection.Factory[(String, T), Col[String, T]])
       => AtPath[Path, Col[String, T]] =
       liftAtPath[Path, Col[String, T]](
-        fromCompiled[Col[String, T]](
-          CompiledSchema.DictShape(
-            wrapped.typeclass.compiled,
-            CompiledSchema.DictRead.FromReaderBuilder(PublicInternal.MapFactoryDict[T, Col]),
-            CompiledSchema.DictWrite.from[Col[String, T], T](_.size, _.iterator)
+        fromSchema[Col[String, T]](
+          RawSchema.Dict(
+            wrapped.typeclass.schema,
+            RawSchema.DictRead.FromReaderBuilder(PublicInternal.MapFactoryDict[T, Col]),
+            RawSchema.DictWrite.from[Col[String, T], T](_.size, _.iterator)
           )
         )
       )

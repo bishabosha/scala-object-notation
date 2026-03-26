@@ -1,8 +1,6 @@
 package scalanotation
 
 import scalanotation.internal.CommonTypeClassCompanion
-import scalanotation.internal.CompiledSchema
-import scalanotation.internal.OpaqueSupport
 import scalanotation.internal.PublicInternal
 import scalanotation.internal.RawSchema
 import steps.result.Result
@@ -12,9 +10,7 @@ import scala.reflect.ClassTag
 import scala.util.NotGiven
 
 sealed trait Reader[T]:
-  private[scalanotation] def compiled: CompiledSchema
-
-  private[scalanotation] final def schema: RawSchema = compiled.rawSchema
+  private[scalanotation] def schema: RawSchema
 
   final def map[U](f: T => U): Reader[U] =
     Reader.mapped(this)(f)
@@ -37,21 +33,16 @@ object Reader extends ReaderLowPriority, CommonTypeClassCompanion[Reader]:
     def add(repr: Repr, key: String, elem: Elem): Repr
     def finish(repr: Repr): A
 
-  private final class Instance[T](val compiled: CompiledSchema) extends Reader[T]
+  private final class Instance[T](val schema: RawSchema) extends Reader[T]
 
-  private[scalanotation] def fromCompiled[T](compiled0: CompiledSchema): Reader[T] =
-    new Instance(compiled0)
+  private[scalanotation] def fromSchema[T](schema0: RawSchema): Reader[T] =
+    new Instance(schema0)
 
-  private[scalanotation] def compiledOf[T](typeclass: Reader[T]): CompiledSchema =
-    typeclass.compiled
+  private[scalanotation] def schemaOf[T](typeclass: Reader[T]): RawSchema =
+    typeclass.schema
 
-  private def opaque[T](
-      support: OpaqueSupport.Read[T]
-  ): Reader[T] =
-    fromCompiled[T](OpaqueSupport.compiled(support))
-
-  protected def primitiveTypeClass[T](codec: OpaqueSupport.ReadWrite[T]): Reader[T] =
-    opaque(codec.read)
+  protected def primitiveTypeClass[T](schema: RawSchema): Reader[T] =
+    fromSchema(schema)
 
   def mapped[A, B](base: Reader[A])(transform: A => B): Reader[B] =
     mappedResult(base)(value => Result.Ok(transform(value)))
@@ -59,18 +50,22 @@ object Reader extends ReaderLowPriority, CommonTypeClassCompanion[Reader]:
   def mappedResult[A, B](base: Reader[A])(
       transform: A => Result[B, DecodeError]
   ): Reader[B] =
-    opaque(OpaqueSupport.Read.mapped(base)(transform))
+    fromSchema(
+      RawSchema.mapResult(base.schema)(value =>
+        transform(value.asInstanceOf[A]).asInstanceOf[Result[Any, DecodeError]]
+      )
+    )
 
   export Builders.{derived, ofFields, singleton, ofCases}
 
   def forNull[T](value: T): Reader[T] =
-    opaque(OpaqueSupport.Read.nullary(value))
+    summon[Reader[Null]].map(_ => value)
 
   override object Builders extends CommonBuilders:
     val thisBuilder: this.type = this
     override type ThisBuilder = thisBuilder.type
-    type FieldRepr      = CompiledSchema.Field
-    type SumCaseRepr[A] = CompiledSchema.SumCase
+    type FieldRepr            = RawSchema.Field
+    type SumCaseRepr[A]       = RawSchema.SumCase
 
     import compiletime.ops.string.+
 
@@ -79,18 +74,18 @@ object Reader extends ReaderLowPriority, CommonTypeClassCompanion[Reader]:
     private[scalanotation] def sumTypeClass[T](cases: List[SumCaseRepr[T]])(
         using mirror: Mirror.SumOf[T]
     ): Reader[T] =
-      fromCompiled[T](
-        CompiledSchema.Sum(IArray.from(cases), write = null)
+      fromSchema[T](
+        RawSchema.Sum(IArray.from(cases), write = null)
       )
 
     private[scalanotation] def makeField[T](name: String, typeclass: Reader[T]): FieldRepr =
-      CompiledSchema.Field(name, typeclass.compiled)
+      RawSchema.Field(name, typeclass.schema)
 
     private[scalanotation] def namedTupleTypeClass[T](fields: List[FieldRepr]): Reader[T] =
-      fromCompiled[T](
-        CompiledSchema.NamedTuple(
+      fromSchema[T](
+        RawSchema.NamedTuple(
           IArray.from(fields),
-          CompiledSchema.NamedTupleRead.from(
+          RawSchema.NamedTupleRead.from(
             PublicInternal.buildNamedTuple.asInstanceOf[Array[AnyRef] => T]
           ),
           write = null
@@ -100,10 +95,10 @@ object Reader extends ReaderLowPriority, CommonTypeClassCompanion[Reader]:
     private[scalanotation] def productTypeClass[T](fields: List[FieldRepr])(
         using mirror: Mirror.ProductOf[T]
     ): Reader[T] =
-      fromCompiled[T](
-        CompiledSchema.NamedTuple(
+      fromSchema[T](
+        RawSchema.NamedTuple(
           IArray.from(fields),
-          CompiledSchema.NamedTupleRead.from(PublicInternal.caseClassBuilder[T]),
+          RawSchema.NamedTupleRead.from(PublicInternal.caseClassBuilder[T]),
           write = null
         )
       )
@@ -113,10 +108,10 @@ object Reader extends ReaderLowPriority, CommonTypeClassCompanion[Reader]:
         noFields: mirror.MirroredElemTypes =:= EmptyTuple
     ): Reader[T] =
       val value = mirror.fromProduct(EmptyTuple)
-      fromCompiled[T](
-        CompiledSchema.NamedTuple(
-          IArray(CompiledSchema.Field(label, forNull(value).compiled)),
-          CompiledSchema.NamedTupleRead.from(_ => value),
+      fromSchema[T](
+        RawSchema.NamedTuple(
+          IArray(RawSchema.Field(label, forNull(value).schema)),
+          RawSchema.NamedTupleRead.from(_ => value),
           write = null
         )
       )
@@ -131,16 +126,16 @@ object Reader extends ReaderLowPriority, CommonTypeClassCompanion[Reader]:
         name: String,
         typeclass: Reader[T]
     ): SumCaseRepr[A] =
-      CompiledSchema.SumCase(name, typeclass.compiled)
+      RawSchema.SumCase(name, typeclass.schema)
 
     given VectorAtPath: [Path <: String, T]
       => (wrapped: AtPath[Path + "[]", T])
       => AtPath[Path, Vector[T]] =
       liftAtPath[Path, Vector[T]](
-        fromCompiled[Vector[T]](
-          CompiledSchema.VectorShape(
-            wrapped.typeclass.compiled,
-            CompiledSchema.VectorRead.FromReaderBuilder(PublicInternal.BuildVector[T]),
+        fromSchema[Vector[T]](
+          RawSchema.Vector(
+            wrapped.typeclass.schema,
+            RawSchema.VectorRead.FromReaderBuilder(PublicInternal.BuildVector[T]),
             write = null
           )
         )
@@ -151,10 +146,10 @@ object Reader extends ReaderLowPriority, CommonTypeClassCompanion[Reader]:
       => (factory: scala.collection.Factory[T, Col[T]])
       => AtPath[Path, Col[T]] =
       liftAtPath[Path, Col[T]](
-        fromCompiled[Col[T]](
-          CompiledSchema.VectorShape(
-            wrapped.typeclass.compiled,
-            CompiledSchema.VectorRead.FromReaderBuilder(PublicInternal.SeqFactoryVector[T, Col]),
+        fromSchema[Col[T]](
+          RawSchema.Vector(
+            wrapped.typeclass.schema,
+            RawSchema.VectorRead.FromReaderBuilder(PublicInternal.SeqFactoryVector[T, Col]),
             write = null
           )
         )
@@ -164,10 +159,10 @@ object Reader extends ReaderLowPriority, CommonTypeClassCompanion[Reader]:
       => (wrapped: AtPath[Path + "[]", T])
       => AtPath[Path, IArray[T]] =
       liftAtPath[Path, IArray[T]](
-        fromCompiled[IArray[T]](
-          CompiledSchema.VectorShape(
-            wrapped.typeclass.compiled,
-            CompiledSchema.VectorRead.FromReaderBuilder(PublicInternal.BuildIArray[T]),
+        fromSchema[IArray[T]](
+          RawSchema.Vector(
+            wrapped.typeclass.schema,
+            RawSchema.VectorRead.FromReaderBuilder(PublicInternal.BuildIArray[T]),
             write = null
           )
         )
@@ -177,10 +172,10 @@ object Reader extends ReaderLowPriority, CommonTypeClassCompanion[Reader]:
       => (wrapped: AtPath[Path + "[]", T])
       => AtPath[Path, Array[T]] =
       liftAtPath[Path, Array[T]](
-        fromCompiled[Array[T]](
-          CompiledSchema.VectorShape(
-            wrapped.typeclass.compiled,
-            CompiledSchema.VectorRead.FromReaderBuilder(PublicInternal.BuildArray[T]),
+        fromSchema[Array[T]](
+          RawSchema.Vector(
+            wrapped.typeclass.schema,
+            RawSchema.VectorRead.FromReaderBuilder(PublicInternal.BuildArray[T]),
             write = null
           )
         )
@@ -191,10 +186,10 @@ object Reader extends ReaderLowPriority, CommonTypeClassCompanion[Reader]:
       => (factory: scala.collection.Factory[(String, T), Col[String, T]])
       => AtPath[Path, Col[String, T]] =
       liftAtPath[Path, Col[String, T]](
-        fromCompiled[Col[String, T]](
-          CompiledSchema.DictShape(
-            wrapped.typeclass.compiled,
-            CompiledSchema.DictRead.FromReaderBuilder(PublicInternal.MapFactoryDict[T, Col]),
+        fromSchema[Col[String, T]](
+          RawSchema.Dict(
+            wrapped.typeclass.schema,
+            RawSchema.DictRead.FromReaderBuilder(PublicInternal.MapFactoryDict[T, Col]),
             write = null
           )
         )
