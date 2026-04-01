@@ -1,7 +1,9 @@
 package scalanotation.internal
 
+import scalanotation.DecodeError
 import scalanotation.Expr
 import scalanotation.internal.PublicInternal.showType
+import steps.result.Result
 
 import scala.NamedTuple.NamedTuple
 import scala.deriving.Mirror
@@ -13,6 +15,17 @@ private[scalanotation] trait CommonTypeClassCompanion[TC[_]]:
   private[scalanotation] def schemaOf[T](typeclass: TC[T]): RawSchema
 
   protected def primitiveTypeClass[T](schema: RawSchema): TC[T]
+
+  protected def mappedStringTypeClass[T](
+      read: String => Result[T, DecodeError],
+      write: T => String
+  ): TC[T] =
+    fromSchema(
+      RawSchema.mapResultAndInput(RawSchema.String)(
+        resultMap0 = value => read(value.asInstanceOf[String]).asInstanceOf[Result[Any, DecodeError]],
+        inputMap0 = value => write(value.asInstanceOf[T])
+      )
+    )
 
   trait CommonDerivationBuilders:
     type ThisBuilder <: this.type & CommonDerivationBuilders
@@ -230,6 +243,31 @@ private[scalanotation] trait CommonTypeClassCompanion[TC[_]]:
 
   given StringSchema: TC[String] =
     primitiveTypeClass(RawSchema.String)
+
+  private def invalidMappedStringValue(typeName: String, raw: String): DecodeError =
+    DecodeError.Custom(s"Invalid $typeName '$raw'")
+
+  given BigIntSchema: TC[BigInt] =
+    mappedStringTypeClass(
+      read = raw =>
+        Result.catchException({ case _: NumberFormatException =>
+          invalidMappedStringValue("BigInt", raw)
+        }) {
+          BigInt(raw)
+        },
+      write = _.toString
+    )
+
+  given BigDecimalSchema: TC[BigDecimal] =
+    mappedStringTypeClass(
+      read = raw =>
+        Result.catchException({ case _: NumberFormatException =>
+          invalidMappedStringValue("BigDecimal", raw)
+        }) {
+          BigDecimal(raw)
+        },
+      write = _.toString
+    )
 
   given CharSchema: TC[Char] =
     primitiveTypeClass(RawSchema.Char)

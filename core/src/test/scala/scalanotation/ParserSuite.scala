@@ -203,6 +203,33 @@ class ParserSuite extends FunSuite:
       Result.Err(DecodeError.ExpectedType("Double", "(3.5: Float)"))
     )
 
+  test("BigInt and BigDecimal map through String instances"):
+    val bigIntValue     = BigInt("123456789012345678901234567890")
+    val bigDecimalValue = BigDecimal("1234567890.012345678900")
+
+    assertEquals(summon[Reader[BigInt]].schema.describeSelf, "String")
+    assertEquals(summon[Writer[BigInt]].schema.describeSelf, "String")
+    assertEquals(summon[ReadWriter[BigInt]].schema.describeSelf, "String")
+    assertEquals(summon[Reader[BigDecimal]].schema.describeSelf, "String")
+    assertEquals(summon[Writer[BigDecimal]].schema.describeSelf, "String")
+    assertEquals(summon[ReadWriter[BigDecimal]].schema.describeSelf, "String")
+
+    assertEquals(Readers.readAs[BigInt](s""""$bigIntValue""""), Result.Ok(bigIntValue))
+    assertEquals(Readers.readAs[BigDecimal](s""""$bigDecimalValue""""), Result.Ok(bigDecimalValue))
+    assertEquals(Writers.write(bigIntValue), s""""$bigIntValue"""")
+    assertEquals(Writers.write(bigDecimalValue), s""""$bigDecimalValue"""")
+
+    type Data = (count: BigInt, amount: BigDecimal)
+    val value: Data =
+      (
+        count = bigIntValue,
+        amount = bigDecimalValue
+      )
+
+    val rendered = Writers.write(value)
+    assertEquals(rendered, s"""(count = "$bigIntValue", amount = "$bigDecimalValue")""")
+    assertEquals(Readers.readAs[Data](rendered), Result.Ok(value))
+
   test("tokenize booleans and negative numbers"):
     val input  = "val data = (a = true, b = false, c = -12, d = -1.5f)"
     val parsed = Readers.quick.readDecls(input)
