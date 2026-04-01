@@ -1,5 +1,8 @@
 package scalanotation
 
+import java.time.LocalDate
+import java.time.format.DateTimeParseException
+
 import munit.FunSuite
 import scalanotation.internal.PublicInternal
 import scalanotation.internal.RawSchema
@@ -794,8 +797,6 @@ class ParserSuite extends FunSuite:
       case Result.Ok(value) => fail(s"Expected a decode failure, got $value")
 
   test("decode custom types from single-level Reader transformations"):
-    import java.time.LocalDate
-
     enum Mode:
       case Fast, Safe
 
@@ -811,7 +812,7 @@ class ParserSuite extends FunSuite:
 
     given Reader[LocalDate] =
       summon[Reader[String]].mapResult { raw =>
-        Result.catchException({ case _: java.time.format.DateTimeParseException =>
+        Result.catchException({ case _: DateTimeParseException =>
           DecodeError.Custom(s"Invalid ISO date '$raw'")
         }) {
           LocalDate.parse(raw)
@@ -847,13 +848,11 @@ class ParserSuite extends FunSuite:
     assertEquals(decoded, Result.Ok(expected))
 
   test("report composed paths for custom string decoders inside vectors"):
-    import java.time.LocalDate
-
     given Reader[LocalDate] =
       summon[Reader[String]].mapResult { raw =>
         try Result.Ok(LocalDate.parse(raw))
         catch
-          case _: java.time.format.DateTimeParseException =>
+          case _: DateTimeParseException =>
             Result.Err(DecodeError.Custom(s"Invalid ISO date '$raw'"))
       }
 
@@ -891,14 +890,12 @@ class ParserSuite extends FunSuite:
       case Result.Ok(value) => fail(s"Expected a decode failure, got $value")
 
   test("decode directly into nested case classes"):
-    import java.time.LocalDate
-
     final case class Metadata(created: LocalDate, tags: Vector[String]) derives Reader
     final case class User(name: String, age: Int, metadata: Metadata) derives Reader
 
     given Reader[LocalDate] =
       summon[Reader[String]].mapResult { raw =>
-        Result.catchException({ case _: java.time.format.DateTimeParseException =>
+        Result.catchException({ case _: DateTimeParseException =>
           DecodeError.Custom(s"Invalid ISO date '$raw'")
         }) {
           LocalDate.parse(raw)
@@ -929,14 +926,12 @@ class ParserSuite extends FunSuite:
     assertEquals(decoded, Result.Ok(expected))
 
   test("report nested paths for direct case class decoders"):
-    import java.time.LocalDate
-
     final case class Metadata(created: LocalDate)
     final case class User(metadata: Metadata)
 
     given Reader[LocalDate] =
       summon[Reader[String]].mapResult { raw =>
-        Result.catchException({ case _: java.time.format.DateTimeParseException =>
+        Result.catchException({ case _: DateTimeParseException =>
           DecodeError.Custom(s"Invalid ISO date '$raw'")
         }) {
           LocalDate.parse(raw)
@@ -961,15 +956,13 @@ class ParserSuite extends FunSuite:
       case Result.Ok(value) => fail(s"Expected a decode failure, got $value")
 
   test("derive enum schemas with nullary and structured cases"):
-    import java.time.LocalDate
-
     enum Mode derives Reader:
       case Fast
       case Scheduled(at: LocalDate, retries: Int)
 
     given Reader[LocalDate] =
       summon[Reader[String]].mapResult { raw =>
-        Result.catchException({ case _: java.time.format.DateTimeParseException =>
+        Result.catchException({ case _: DateTimeParseException =>
           DecodeError.Custom(s"Invalid ISO date '$raw'")
         }) {
           LocalDate.parse(raw)
@@ -995,23 +988,19 @@ class ParserSuite extends FunSuite:
     )
 
   test("derive case object schemas"):
-    import java.time.LocalDate
-
     case object Foo derives Reader
 
     val foo = Readers.readDeclAs[Foo.type]("val data = (Foo = null)", rootName = "data")
     assertEquals(foo, Result.Ok(Foo))
 
   test("report nested enum case paths"):
-    import java.time.LocalDate
-
     enum Mode derives Reader:
       case Fast
       case Scheduled(at: LocalDate)
 
     given Reader[LocalDate] =
       summon[Reader[String]].mapResult { raw =>
-        Result.catchException({ case _: java.time.format.DateTimeParseException =>
+        Result.catchException({ case _: DateTimeParseException =>
           DecodeError.Custom(s"Invalid ISO date '$raw'")
         }) {
           LocalDate.parse(raw)
@@ -1057,8 +1046,6 @@ class ParserSuite extends FunSuite:
     assertEquals(rendered, """(x = (label = "abc", ys = Vector(-1, 2, 3)), y = 23, ok = true)""")
 
   test("write derived case classes and enums"):
-    import java.time.LocalDate
-
     final case class Metadata(created: LocalDate, tags: Vector[String]) derives Reader, Writer
     enum Mode derives Reader, Writer:
       case Fast
@@ -1067,7 +1054,7 @@ class ParserSuite extends FunSuite:
 
     given Reader[LocalDate] =
       summon[Reader[String]].mapResult { raw =>
-        Result.catchException({ case _: java.time.format.DateTimeParseException =>
+        Result.catchException({ case _: DateTimeParseException =>
           DecodeError.Custom(s"Invalid ISO date '$raw'")
         }) {
           LocalDate.parse(raw)
@@ -1185,8 +1172,6 @@ class ParserSuite extends FunSuite:
     assertEquals(readerSchema, writerSchema)
 
   test("derived ReadWriter provides aligned reader and writer views"):
-    import java.time.LocalDate
-
     final case class Metadata(created: LocalDate, tags: Vector[String]) derives ReadWriter
     enum Mode derives ReadWriter:
       case Fast
@@ -1195,7 +1180,7 @@ class ParserSuite extends FunSuite:
 
     given ReadWriter[LocalDate] =
       summon[ReadWriter[String]].bimapResult { raw =>
-        Result.catchException({ case _: java.time.format.DateTimeParseException =>
+        Result.catchException({ case _: DateTimeParseException =>
           DecodeError.Custom(s"Invalid ISO date '$raw'")
         }) {
           LocalDate.parse(raw)
@@ -1226,14 +1211,12 @@ class ParserSuite extends FunSuite:
     )
 
   test("derived ReadWriter can round-trip through Writers.write and Readers.readAs"):
-    import java.time.LocalDate
-
     final case class Metadata(created: LocalDate) derives ReadWriter
     final case class User(name: String, metadata: Metadata) derives ReadWriter
 
     given ReadWriter[LocalDate] =
       summon[ReadWriter[String]].bimapResult { raw =>
-        Result.catchException({ case _: java.time.format.DateTimeParseException =>
+        Result.catchException({ case _: DateTimeParseException =>
           DecodeError.Custom(s"Invalid ISO date '$raw'")
         }) {
           LocalDate.parse(raw)

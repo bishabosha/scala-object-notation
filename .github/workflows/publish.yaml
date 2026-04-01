@@ -6,8 +6,27 @@ on:
   workflow_dispatch:
 jobs:
   test:
+    name: test (${{ matrix.platform }})
     strategy:
       fail-fast: false
+      matrix:
+        include:
+          - platform: jvm
+            mill-targets: mill.scalalib.scalafmt/checkFormatAll + core.test + demo.test
+            node-version: ''
+            install-native-deps: false
+          - platform: scala-js
+            mill-targets: core.js.test
+            node-version: '24'
+            install-native-deps: false
+          - platform: scala-js-wasm
+            mill-targets: core.jsWasm.test
+            node-version: '24'
+            install-native-deps: false
+          - platform: scala-native
+            mill-targets: core.native.test
+            node-version: ''
+            install-native-deps: true
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
@@ -15,11 +34,37 @@ jobs:
         submodules: recursive
         fetch-depth: 0
     - uses: coursier/cache-action@v6
-    - uses: actions/setup-java@v3
+    - uses: actions/setup-java@v4
       with:
         distribution: temurin
         java-version: 17
-    - run: ./mill mill.javalib.SonatypeCentralPublishModule/
+    - uses: actions/setup-node@v4
+      if: ${{ matrix.node-version != '' }}
+      with:
+        node-version: ${{ matrix.node-version }}
+    - name: Verify Node.js version
+      if: ${{ matrix.node-version != '' }}
+      run: |
+        node --version
+        test "$(node -p 'process.versions.node.split(".")[0]')" = "${{ matrix.node-version }}"
+    - name: Install Scala Native toolchain
+      if: ${{ matrix.install-native-deps }}
+      run: sudo apt-get update && sudo apt-get install -y clang libgc-dev libunwind-dev
+    - run: ./mill --no-server ${{ matrix.mill-targets }}
+  publish:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: recursive
+        fetch-depth: 0
+    - uses: coursier/cache-action@v6
+    - uses: actions/setup-java@v4
+      with:
+        distribution: temurin
+        java-version: 17
+    - run: ./mill --no-server mill.javalib.SonatypeCentralPublishModule/
       env:
         MILL_PGP_PASSPHRASE: ${{ secrets.MILL_PGP_PASSPHRASE }}
         MILL_PGP_SECRET_BASE64: ${{ secrets.MILL_PGP_SECRET_BASE64 }}
