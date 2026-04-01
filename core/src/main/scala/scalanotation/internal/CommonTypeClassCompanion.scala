@@ -22,7 +22,8 @@ private[scalanotation] trait CommonTypeClassCompanion[TC[_]]:
   ): TC[T] =
     fromSchema(
       RawSchema.mapResultAndInput(RawSchema.String)(
-        resultMap0 = value => read(value.asInstanceOf[String]).asInstanceOf[Result[Any, DecodeError]],
+        resultMap0 =
+          value => read(value.asInstanceOf[String]).asInstanceOf[Result[Any, DecodeError]],
         inputMap0 = value => write(value.asInstanceOf[T])
       )
     )

@@ -85,7 +85,7 @@ private[scalanotation] class ExprDecoder extends Internal.PoolHolder:
       case RawSchema.Float =>
         Result:
           expr match
-            case Expr.FloatConstant(value) => value
+            case Expr.FloatConstant(value)                      => value
             case Expr.IntConstant(value) if isExactFloat(value) =>
               value.toFloat
             case other => raise(expectedType(RawSchema.Float, other))
@@ -729,7 +729,7 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
           case Token.FloatLit(value = value)                                        => value
           case Token.IntLit(value = value) if NumericPromotions.isExactFloat(value) =>
             value.toFloat
-          case other                                                                => raise(expectedType(RawSchema.Float, other)),
+          case other => raise(expectedType(RawSchema.Float, other)),
       negator = -1.0f,
       one = 1.0f,
       prod = _ * _,

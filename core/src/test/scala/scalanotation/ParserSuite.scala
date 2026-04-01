@@ -97,9 +97,9 @@ class ParserSuite extends FunSuite:
   test("decode lossless numeric literal promotions in read mode"):
     type Data =
       (
-        intToLong: Long,
-        intToDouble: Double,
-        intToFloat: Float
+          intToLong: Long,
+          intToDouble: Double,
+          intToFloat: Float
       )
 
     val input =
@@ -120,7 +120,7 @@ class ParserSuite extends FunSuite:
     assertEquals(Readers.readAs[Data](input), Result.Ok(expected))
 
   test("reject numeric literal promotions that would lose precision"):
-    val floatErr  = Readers.readAs[Float]("16_777_217")
+    val floatErr         = Readers.readAs[Float]("16_777_217")
     val doubleToFloatErr = Readers.readAs[Float]("0.1")
     val longToFloatErr   = Readers.readAs[Float]("33_554_432L")
     val longToDoubleErr  = Readers.readAs[Double]("9L")
@@ -169,17 +169,17 @@ class ParserSuite extends FunSuite:
   test("decode lossless numeric literal promotions from Expr values"):
     val expr = Expr.NamedTupleExpr(
       IndexedSeq(
-        "intToLong"     -> Expr.IntConstant(1),
-        "intToDouble"   -> Expr.IntConstant(2),
-        "intToFloat"    -> Expr.IntConstant(16_777_216)
+        "intToLong"   -> Expr.IntConstant(1),
+        "intToDouble" -> Expr.IntConstant(2),
+        "intToFloat"  -> Expr.IntConstant(16_777_216)
       )
     )
 
     type Data =
       (
-        intToLong: Long,
-        intToDouble: Double,
-        intToFloat: Float
+          intToLong: Long,
+          intToDouble: Double,
+          intToFloat: Float
       )
 
     val expected: Data =
