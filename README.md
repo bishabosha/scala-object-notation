@@ -322,6 +322,7 @@ Typed decoding is intentionally strict:
 - field count must match exactly
 - field order must match exactly
 - duplicate fields are rejected
+- only `Int` literals, plus `Double` literals when reading as `Float`, are promoted across numeric targets, and only when exact
 
 Errors include useful context:
 

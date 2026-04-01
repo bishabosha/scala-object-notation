@@ -18,23 +18,24 @@ private[scalanotation] object ExprDecoder:
   def decodeExpr[A: Reader as reader](expr: Expr): Result[A, DecodeError] =
     ExprDecoder().decodeInto(reader, expr)
 
+private[scalanotation] object NumericPromotions:
+  private[scalanotation] def isExactFloat(value: Int): Boolean =
+    value.toFloat.toInt == value
+
 private[scalanotation] class ExprDecoder extends Internal.PoolHolder:
   private def missingReadCapability(schema: RawSchema): Nothing =
     throw IllegalStateException(
       s"read is not available for schema ${schema.describeSelf}"
     )
 
-  private val pfSentinel: Any => Any = _ => pfSentinel
-  private def decodeScalarExpr[T](
-      schema: RawSchema,
-      expr: Expr
-  )(
-      extract: PartialFunction[Expr, T]
-  ): Result[T, DecodeError] =
-    val res = extract.applyOrElse(expr, pfSentinel)
-    if res.asInstanceOf[AnyRef] eq pfSentinel then
-      Result.Err(DecodeError.ExpectedType(schema.describeSelf, describe(expr)))
-    else Result.Ok(res.asInstanceOf[T])
+  private def isExactFloat(value: Int): Boolean =
+    NumericPromotions.isExactFloat(value)
+
+  private def describeExpr(expr: Expr): String =
+    TokenDecoder.describe(expr)
+
+  private def expectedType(schema: RawSchema, expr: Expr): DecodeError =
+    DecodeError.ExpectedType(schema.describeSelf, describeExpr(expr))
 
   def decodeInto[A](reader: Reader[A], expr: Expr): Result[A, DecodeError] =
     decodeBase(reader.schema, expr).asInstanceOf[Result[A, DecodeError]]
@@ -61,38 +62,48 @@ private[scalanotation] class ExprDecoder extends Internal.PoolHolder:
       case RawSchema.AnyExpr =>
         Result.Ok(expr)
       case RawSchema.String =>
-        decodeScalarExpr(RawSchema.String, expr) { case Expr.StringConstant(value) =>
-          value
-        }
+        Result:
+          expr match
+            case Expr.StringConstant(value) => value
+            case other                      => raise(expectedType(RawSchema.String, other))
       case RawSchema.Char =>
-        decodeScalarExpr(RawSchema.Char, expr) { case Expr.CharConstant(value) =>
-          value
-        }
+        Result:
+          expr match
+            case Expr.CharConstant(value) => value
+            case other                    => raise(expectedType(RawSchema.Char, other))
       case RawSchema.Int =>
-        decodeScalarExpr(RawSchema.Int, expr) { case Expr.IntConstant(value) =>
-          value
-        }
+        Result:
+          expr match
+            case Expr.IntConstant(value) => value
+            case other                   => raise(expectedType(RawSchema.Int, other))
       case RawSchema.Long =>
-        decodeScalarExpr(RawSchema.Long, expr) { case Expr.LongConstant(value) =>
-          value
-        }
+        Result:
+          expr match
+            case Expr.LongConstant(value) => value
+            case Expr.IntConstant(value)  => value.toLong
+            case other                    => raise(expectedType(RawSchema.Long, other))
       case RawSchema.Float =>
-        decodeScalarExpr(RawSchema.Float, expr) { case Expr.FloatConstant(value) =>
-          value
-        }
+        Result:
+          expr match
+            case Expr.FloatConstant(value)                      => value
+            case Expr.IntConstant(value) if isExactFloat(value) =>
+              value.toFloat
+            case other => raise(expectedType(RawSchema.Float, other))
       case RawSchema.Double =>
-        decodeScalarExpr(RawSchema.Double, expr) { case Expr.DoubleConstant(value) =>
-          value
-        }
+        Result:
+          expr match
+            case Expr.DoubleConstant(value) => value
+            case Expr.IntConstant(value)    => value.toDouble
+            case other                      => raise(expectedType(RawSchema.Double, other))
       case RawSchema.Boolean =>
-        decodeScalarExpr(RawSchema.Boolean, expr) { case Expr.BooleanConstant(value) =>
-          value
-        }
+        Result:
+          expr match
+            case Expr.BooleanConstant(value) => value
+            case other                       => raise(expectedType(RawSchema.Boolean, other))
       case RawSchema.Null =>
         expr match
           case Expr.NullConstant => Result.Ok(null)
-          case other             =>
-            Result.Err(DecodeError.ExpectedType(schema.describeSelf, describe(other)))
+          case other             => Result.Err(expectedType(schema, other))
 
   private def decodeVector(
       schema: RawSchema.Vector,
@@ -256,6 +267,9 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
   import scala.util.boundary.Label
 
   type Resulting[+A, +E] = Label[Result.Err[E]] ?=> A
+
+  private def expectedType(schema: RawSchema, token: Token): DecodeError =
+    DecodeError.ExpectedType(schema.describeSelf, describe(token)).atToken(token.span)
 
   def decodeRoot[T](
       schema: Reader[T],
@@ -673,11 +687,7 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
         advance()
         value
       case other =>
-        raise(
-          DecodeError
-            .ExpectedType(RawSchema.String.describeSelf, describe(other))
-            .atToken(other.span)
-        )
+        raise(expectedType(RawSchema.String, other))
 
   private[scalanotation] def decodeChar[A](wrap: Char => A): Result[A, DecodeError] = Result:
     currentToken() match
@@ -685,21 +695,14 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
         advance()
         wrap(value)
       case other =>
-        raise(
-          DecodeError.ExpectedType(RawSchema.Char.describeSelf, describe(other)).atToken(other.span)
-        )
+        raise(expectedType(RawSchema.Char, other))
 
   private[scalanotation] def decodeInt[A](wrap: Int => A): Result[A, DecodeError] = Result:
     decodeSigned(
-      literal = {
-        case Token.IntLit(value = value) => value
-        case other                       =>
-          raise(
-            DecodeError
-              .ExpectedType(RawSchema.Int.describeSelf, describe(other))
-              .atToken(other.span)
-          )
-      },
+      literal = token =>
+        token match
+          case Token.IntLit(value = value) => value
+          case other                       => raise(expectedType(RawSchema.Int, other)),
       negator = -1,
       one = 1,
       prod = _ * _,
@@ -708,15 +711,11 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
 
   private[scalanotation] def decodeLong[A](wrap: Long => A): Result[A, DecodeError] = Result:
     decodeSigned(
-      literal = {
-        case Token.LongLit(value = value) => value
-        case other                        =>
-          raise(
-            DecodeError
-              .ExpectedType(RawSchema.Long.describeSelf, describe(other))
-              .atToken(other.span)
-          )
-      },
+      literal = token =>
+        token match
+          case Token.LongLit(value = value) => value
+          case Token.IntLit(value = value)  => value.toLong
+          case other                        => raise(expectedType(RawSchema.Long, other)),
       negator = -1L,
       one = 1L,
       prod = _ * _,
@@ -725,15 +724,12 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
 
   private[scalanotation] def decodeFloat[A](wrap: Float => A): Result[A, DecodeError] = Result:
     decodeSigned(
-      literal = {
-        case Token.FloatLit(value = value) => value
-        case other                         =>
-          raise(
-            DecodeError
-              .ExpectedType(RawSchema.Float.describeSelf, describe(other))
-              .atToken(other.span)
-          )
-      },
+      literal = token =>
+        token match
+          case Token.FloatLit(value = value)                                        => value
+          case Token.IntLit(value = value) if NumericPromotions.isExactFloat(value) =>
+            value.toFloat
+          case other => raise(expectedType(RawSchema.Float, other)),
       negator = -1.0f,
       one = 1.0f,
       prod = _ * _,
@@ -742,15 +738,11 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
 
   private[scalanotation] def decodeDouble[A](wrap: Double => A): Result[A, DecodeError] = Result:
     decodeSigned(
-      literal = {
-        case Token.DoubleLit(value = value) => value
-        case other                          =>
-          raise(
-            DecodeError
-              .ExpectedType(RawSchema.Double.describeSelf, describe(other))
-              .atToken(other.span)
-          )
-      },
+      literal = token =>
+        token match
+          case Token.DoubleLit(value = value) => value
+          case Token.IntLit(value = value)    => value.toDouble
+          case other                          => raise(expectedType(RawSchema.Double, other)),
       negator = -1.0d,
       one = 1.0d,
       prod = _ * _,
@@ -767,11 +759,7 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
           advance()
           wrap(false)
         case other =>
-          raise(
-            DecodeError
-              .ExpectedType(RawSchema.Boolean.describeSelf, describe(other))
-              .atToken(other.span)
-          )
+          raise(expectedType(RawSchema.Boolean, other))
 
   private[scalanotation] def decodeNull[A](wrap: Null => A): Result[A, DecodeError] = Result:
     currentToken() match
@@ -779,11 +767,7 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
         advance()
         wrap(null)
       case other =>
-        raise(
-          DecodeError
-            .ExpectedType(RawSchema.Null.describeSelf, describe(other))
-            .atToken(other.span)
-        )
+        raise(expectedType(RawSchema.Null, other))
 
   private inline def decodeSigned[N, A](
       inline literal: Token => N,
