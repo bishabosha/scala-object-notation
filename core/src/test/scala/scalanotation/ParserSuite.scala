@@ -119,6 +119,34 @@ class ParserSuite extends FunSuite:
 
     assertEquals(Readers.readAs[Data](input), Result.Ok(expected))
 
+  test("round-trip int literal promotions for float and double through declaration text"):
+    type Data =
+      (
+          intToFloat: Float,
+          intToDouble: Double
+      )
+
+    val input =
+      """val data = (
+        |  intToFloat = 16_777_216,
+        |  intToDouble = 2_147_483_647
+        |)
+        |""".stripMargin
+
+    val expected: Data =
+      (
+        intToFloat = 16_777_216.0f,
+        intToDouble = 2_147_483_647.0d
+      )
+
+    val decoded  = Readers.readDeclAs[Data](input, rootName = "data")
+    val value    = decoded.getOrElse(fail(s"Expected successful parse, got $decoded"))
+    val rendered = Writers.writeDecl("data", value)
+    val reparsed = Readers.readDeclAs[Data](rendered, rootName = "data")
+
+    assertEquals(value, expected)
+    assertEquals(reparsed, Result.Ok(expected))
+
   test("reject numeric literal promotions that would lose precision"):
     val floatErr         = Readers.readAs[Float]("16_777_217")
     val doubleToFloatErr = Readers.readAs[Float]("0.1")
