@@ -1,47 +1,112 @@
 package build
 
 import mill.*
-import mill.api.Discover
-import mill.scalalib.*
-import mill.api.daemon.internal.bsp.BspBuildTarget
-import mainargs.Flag
-import mill.javalib.publish.PomSettings
-import mill.javalib.publish.VersionControl
+import mill.api.Task.Simple
 import mill.javalib.publish.Developer
 import mill.javalib.publish.License
-import mill.util.JarManifest
-import mill.api.ModuleRef
-import mill.api.Task.Simple
+import mill.javalib.publish.PomSettings
+import mill.javalib.publish.VersionControl
+import mill.scalalib.*
+import mill.scalajslib.*
+import mill.scalajslib.api.*
+import mill.scalanativelib.*
+
+object Versions:
+  val scala       = "3.8.3"
+  val munit       = "1.1.0"
+  val scalaJs     = "1.21.0"
+  val scalaNative = "0.5.11"
+  val scalaJavaTime = "2.6.0"
 
 trait ScalaObjectNotationModule extends SbtModule:
-  def scalaVersion = "3.8.1"
+  def scalaVersion = Versions.scala
+
   object test extends SbtTests with TestModule.Munit:
-    override def munitVersion = "1.1.0"
+    override def munitVersion = Versions.munit
+
+trait ScalaObjectNotationPlatformModule extends SbtPlatformModule:
+  def scalaVersion = Versions.scala
+
+trait ScalaObjectNotationJsModule extends ScalaObjectNotationPlatformModule, ScalaJSModule:
+  def scalaJSVersion = Versions.scalaJs
+
+  object test extends ScalaJSTests with SbtPlatformTests with TestModule.Munit:
+    override def munitVersion = Versions.munit
+
+    override def mvnDeps: Simple[Seq[Dep]] = super.mvnDeps() ++ Seq(
+      mvn"io.github.cquiroz::scala-java-time::${Versions.scalaJavaTime}"
+    )
+
+trait ScalaObjectNotationJsWasmModule extends ScalaObjectNotationJsModule:
+  override def platformCrossSuffix = "js"
+
+  override def jsEnvConfig: T[JsEnvConfig] = Task {
+    JsEnvConfig.NodeJs(
+      args = List(
+        "--experimental-wasm-exnref",
+        "--experimental-wasm-imported-strings"
+      )
+    )
+  }
+
+  override def moduleKind: T[ModuleKind] = Task { ModuleKind.ESModule }
+  override def moduleSplitStyle: T[ModuleSplitStyle] = Task { ModuleSplitStyle.FewestModules }
+  override def scalaJSExperimentalUseWebAssembly: T[Boolean] = Task { true }
+
+trait ScalaObjectNotationNativeModule
+    extends ScalaObjectNotationPlatformModule,
+      ScalaNativeModule:
+  def scalaNativeVersion = Versions.scalaNative
+
+  object test extends ScalaNativeTests with SbtPlatformTests with TestModule.Munit:
+    override def munitVersion = Versions.munit
+
+    override def mvnDeps: Simple[Seq[Dep]] = super.mvnDeps() ++ Seq(
+      mvn"io.github.cquiroz::scala-java-time::${Versions.scalaJavaTime}"
+    )
+
+trait CoreModuleBase extends ScalaModule:
+  def artifactName = "scala-object-notation"
+
+  override def mvnDeps: Simple[Seq[Dep]] = super.mvnDeps() ++ Seq(
+    mvn"ch.epfl.lamp::steps::0.2.1"
+  )
 
 trait PublishSettings extends PublishModule, mill.util.VcsVersionModule:
   def projectDesc: String
+
   def pomSettings = PomSettings(
     description = projectDesc,
     organization = "io.github.bishabosha",
     url = "https://github.com/bishabosha/scala-object-notation",
     licenses = Seq(License.`Apache-2.0`),
     versionControl = VersionControl.github("bishabosha", "scala-object-notation"),
-    developers = Seq(Developer("bishabosha", "Jamie Thompson", "https://bishabosha.github.io", email = "thompsonjamesrichard@gmail.com"))
+    developers = Seq(
+      Developer(
+        "bishabosha",
+        "Jamie Thompson",
+        "https://bishabosha.github.io",
+        email = "thompsonjamesrichard@gmail.com"
+      )
+    )
   )
 
-object core extends ScalaObjectNotationModule, PublishSettings:
-  def projectDesc  = "parser for a subset of Scala syntax for interpreting directly to data"
-  def artifactName = "scala-object-notation"
-  def mvnDeps: Simple[Seq[Dep]] = super.mvnDeps() ++ Seq(
-    mvn"ch.epfl.lamp::steps:0.2.0"
-  )
+trait CorePublishedModule extends CoreModuleBase, PublishSettings:
+  def projectDesc = "parser for a subset of Scala syntax for interpreting directly to data"
+
+object core extends ScalaObjectNotationModule, CorePublishedModule:
+  object js extends ScalaObjectNotationJsModule, CorePublishedModule
+  object jsWasm extends ScalaObjectNotationJsWasmModule, CoreModuleBase
+  object native extends ScalaObjectNotationNativeModule, CorePublishedModule
 
 object demo extends ScalaObjectNotationModule:
   def artifactName = "scala-object-notation-config"
   def moduleDeps   = Seq(core)
-  def mvnDeps      = super.mvnDeps() ++ Seq(
+
+  def mvnDeps = super.mvnDeps() ++ Seq(
     mvn"com.lihaoyi::upickle:4.3.2",
     mvn"com.lihaoyi::ujson:4.3.2",
     mvn"org.virtuslab::scala-yaml:0.3.1"
   )
+
   def mainClass = Some("scalableconfig.Main")
