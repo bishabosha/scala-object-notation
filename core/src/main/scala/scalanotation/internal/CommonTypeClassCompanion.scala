@@ -28,8 +28,8 @@ private[scalanotation] trait CommonTypeClassCompanion[TC[_]]:
       )
     )
 
-  trait CommonDerivationBuilders:
-    type ThisBuilder <: this.type & CommonDerivationBuilders
+  trait CommonDerivationBuilders[RejectAllOptionalProducts <: Boolean]:
+    type ThisBuilder <: this.type & CommonDerivationBuilders[RejectAllOptionalProducts]
     val thisBuilder: ThisBuilder
     type FieldRepr
     type SumCaseRepr[A]
@@ -66,7 +66,7 @@ private[scalanotation] trait CommonTypeClassCompanion[TC[_]]:
         using atPath: ProductFieldsAtPath["", mirror.MirroredElemLabels, mirror.MirroredElemTypes],
         hasFields: NotGiven[mirror.MirroredElemTypes =:= EmptyTuple]
     ): TC[T] =
-      HasNonOptionalField.validate["", mirror.MirroredElemTypes]
+      validateProductFields[RejectAllOptionalProducts, "", mirror.MirroredElemTypes]
       productTypeClass[T](ProductFieldsAtPath.fields(atPath))
 
     final def ofCases[T](using mirror: Mirror.SumOf[T])(
@@ -104,6 +104,15 @@ private[scalanotation] trait CommonTypeClassCompanion[TC[_]]:
     private[scalanotation] def sumTypeClass[T](cases: List[SumCaseRepr[T]])(
         using mirror: Mirror.SumOf[T]
     ): TC[T]
+
+    private inline def validateProductFields[
+        RejectAllOptional <: Boolean,
+        Path <: String,
+        Values <: Tuple
+    ]: Unit =
+      inline compiletime.erasedValue[RejectAllOptional] match
+        case _: true  => HasNonOptionalField.validate[Path, Values]
+        case _: false => ()
 
     inline def formatPath[Path <: String]: String = ("'" + compiletime.constValue[Path] + "'")
 
@@ -241,7 +250,8 @@ private[scalanotation] trait CommonTypeClassCompanion[TC[_]]:
       given NamedTupleEmpty: [Path <: String] => AtPath[Path, NamedTuple.Empty] =
         Nil
 
-  trait CommonBuilders extends CommonDerivationBuilders:
+  trait CommonBuilders[RejectAllOptionalProducts <: Boolean]
+      extends CommonDerivationBuilders[RejectAllOptionalProducts]:
     given OptionAtPath: [Path <: String, T]
       => NonNestedOption[Path, T]
       => (wrapped: AtPath[Path, T])
@@ -252,7 +262,7 @@ private[scalanotation] trait CommonTypeClassCompanion[TC[_]]:
         )
       )
 
-  val Builders: CommonBuilders
+  val Builders: CommonBuilders[false]
 
   given ExprSchema: TC[Expr] =
     primitiveTypeClass(RawSchema.AnyExpr)

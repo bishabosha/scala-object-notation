@@ -227,6 +227,17 @@ case class Database(host: String, port: Int) derives ReadWriter
 case class Config(database: Database, debug: Boolean) derives ReadWriter
 ```
 
+Derived case class readers and read-writers keep fields ordered and required by default. To allow
+nullable `Option` fields to be skipped while decoding, opt in with the skippable namespace:
+
+```scala
+case class Config(host: String, port: Option[Int])
+
+given Reader[Config] = Reader.skippable.derived
+```
+
+Use `ReadWriter.skippable.derived` for bidirectional schemas.
+
 That corresponds to config shaped like:
 
 ```scala

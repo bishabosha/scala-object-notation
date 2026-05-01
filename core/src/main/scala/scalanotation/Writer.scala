@@ -62,7 +62,7 @@ object Writer extends WriterLowPriority, CommonTypeClassCompanion[Writer]:
   def forNull[T]: Writer[T] =
     summon[Writer[Null]].contramap(_ => null)
 
-  override object Builders extends CommonBuilders:
+  override object Builders extends CommonBuilders[false]:
     val thisBuilder: this.type = this
     override type ThisBuilder = thisBuilder.type
     type FieldRepr            = RawSchema.Field
