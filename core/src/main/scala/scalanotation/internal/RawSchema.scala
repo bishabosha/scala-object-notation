@@ -5,7 +5,7 @@ import scalanotation.Reader
 import scalanotation.internal.Internal
 import steps.result.Result
 
-import Result.eval.ok
+import Result.eval.check
 import Result.eval.raise
 import scalanotation.internal.RawSchema.SchemaMapping
 
@@ -70,7 +70,7 @@ private[scalanotation] enum RawSchema:
   private def validateNamedTuple[T: Internal.NameSet](
       pool: Internal.LocalPool[T]
   ): Result[Unit, DecodeError] = pool.withBorrowed { seenNames =>
-    Result:
+    Result.task:
       this match
         case namedTuple: RawSchema.NamedTuple =>
           val fields = namedTuple.fields
@@ -84,7 +84,7 @@ private[scalanotation] enum RawSchema:
               raise(fmtErr(DecodeError.DuplicateSchemaField(name)))
             i += 1
         case RawSchema.Mapped(base, _) =>
-          base.validateNamedTuple(pool).ok
+          base.validateNamedTuple(pool).check
         case _ => ()
   }
 

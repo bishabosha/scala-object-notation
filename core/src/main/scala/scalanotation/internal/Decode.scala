@@ -5,6 +5,7 @@ import scalanotation.Expr
 import scalanotation.Reader
 import scalanotation.internal.Token
 import steps.result.Result
+import steps.result.Result.eval.check
 import steps.result.Result.eval.ok
 import steps.result.Result.eval.raise
 
@@ -147,7 +148,7 @@ private[scalanotation] class ExprDecoder extends Internal.PoolHolder:
     Result:
       val read = schema.read
       if read == null then missingReadCapability(schema)
-      schema.isValidNamedTuple(namesPool).ok
+      schema.isValidNamedTuple(namesPool).check
       expr match
         case Expr.NamedTupleExpr(fieldExprs) =>
           val fields = schema.fields
@@ -343,29 +344,29 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
       rootName: String
   ): Result[T, DecodeError] =
     Result:
-      expectVal().ok
+      expectVal().check
       val declaredName = expectIdentifier().ok
       if declaredName != rootName then raise(DecodeError.UnexpectedRoot(declaredName))
-      expectEquals().ok
+      expectEquals().check
       val value = decodeTaggedAs(schema).ok
-      expectEof().ok
+      expectEof().check
       value
 
   def decodeAnyRoot[T](
       schema: Reader[T]
   ): Result[Expr.SourceFile[T], DecodeError] =
     Result:
-      expectVal().ok
+      expectVal().check
       val declaredName = expectIdentifier().ok
-      expectEquals().ok
+      expectEquals().check
       val value = decodeTaggedAs(schema).ok
-      expectEof().ok
+      expectEof().check
       Expr.SourceFile(Map(declaredName -> value))
 
   def decodeExpression[T](schema: Reader[T]): Result[T, DecodeError] =
     Result:
       val value = decodeTaggedAs(schema).ok
-      expectEof().ok
+      expectEof().check
       value
 
   private def missingReadCapability(schema: RawSchema): Nothing =
@@ -415,7 +416,7 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
     Result {
       val read = schema.read
       if read == null then missingReadCapability(schema)
-      schema.isValidNamedTuple(namesPool).ok
+      schema.isValidNamedTuple(namesPool).check
       val fields     = schema.fields
       val values     = new Array[AnyRef](fields.length)
       var fieldIndex = 0
@@ -883,7 +884,7 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
     advance()
     wrap(prod(sign, value))
 
-  private def expectVal(): Result[Unit, DecodeError] = Result:
+  private def expectVal(): Result[Unit, DecodeError] = Result.task:
     currentToken() match
       case Token.ValKw(_) =>
         advance()
@@ -898,14 +899,14 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
       case other =>
         raise(DecodeError.ExpectedIdentifier(describe(other)).atToken(other.span))
 
-  private def expectEquals(): Result[Unit, DecodeError] = Result:
+  private def expectEquals(): Result[Unit, DecodeError] = Result.task:
     currentToken() match
       case Token.Equals(_) =>
         advance()
       case other =>
         raise(DecodeError.ExpectedEquals(describe(other)).atToken(other.span))
 
-  private def expectEof(): Result[Unit, DecodeError] = Result:
+  private def expectEof(): Result[Unit, DecodeError] = Result.task:
     currentToken() match
       case Token.Eof(_) => ()
       case other        => raise(DecodeError.ExpectedEof(describe(other)).atToken(other.span))
