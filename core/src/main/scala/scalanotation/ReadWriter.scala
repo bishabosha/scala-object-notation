@@ -97,7 +97,8 @@ object ReadWriter extends CommonTypeClassCompanion[ReadWriter]:
         RawSchema.NamedTuple(
           IArray.from(fields),
           RawSchema.NamedTupleRead.from(PublicInternal.caseClassBuilder[T]),
-          RawSchema.NamedTupleWrite.productLike
+          RawSchema.NamedTupleWrite.productLike,
+          allowSkippedNullableFields = true
         )
       )
 

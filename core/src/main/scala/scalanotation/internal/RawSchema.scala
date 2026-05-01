@@ -16,7 +16,8 @@ private[scalanotation] enum RawSchema:
   case NamedTuple(
       fields: IArray[RawSchema.Field],
       read: RawSchema.NamedTupleRead | Null = null,
-      write: RawSchema.NamedTupleWrite | Null = null
+      write: RawSchema.NamedTupleWrite | Null = null,
+      allowSkippedNullableFields: Boolean = false
   )
   case Sum(
       cases: IArray[RawSchema.SumCase],
