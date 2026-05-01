@@ -157,8 +157,8 @@ private[scalanotation] class ExprDecoder extends Internal.PoolHolder:
             var fieldExprIndex = 0
             var fieldIndex     = 0
             while fieldExprIndex < fieldExprs.length do
-              val fieldExpr = fieldExprs(fieldExprIndex)
-              val fieldName = fieldExpr.name
+              val fieldExpr          = fieldExprs(fieldExprIndex)
+              val fieldName          = fieldExpr.name
               val expectedBeforeSkip =
                 if fieldIndex < fields.length then fields(fieldIndex) else null
               fieldIndex = fillSkippedNullableFields(fields, values, fieldIndex, fieldName)
@@ -416,8 +416,8 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
       val read = schema.read
       if read == null then missingReadCapability(schema)
       schema.isValidNamedTuple(namesPool).ok
-      val fields = schema.fields
-      val values = new Array[AnyRef](fields.length)
+      val fields     = schema.fields
+      val values     = new Array[AnyRef](fields.length)
       var fieldIndex = 0
 
       val allowEmpty =
@@ -430,29 +430,32 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
           val validated: DecodeError | Field = eval {
             if seenNames.alreadySeen(actualName) then
               actualFieldErr(DecodeError.DuplicateField(actualName))
-            else
-              if schema.allowSkippedNullableFields then
-                val expectedBeforeSkip =
-                  if fieldIndex < fields.length then fields(fieldIndex) else null
-                fieldIndex = fillSkippedNullableFields(fields, values, fieldIndex, actualName)
+            else if schema.allowSkippedNullableFields then
+              val expectedBeforeSkip =
+                if fieldIndex < fields.length then fields(fieldIndex) else null
+              fieldIndex = fillSkippedNullableFields(fields, values, fieldIndex, actualName)
 
-                if fieldIndex >= fields.length then
-                  if expectedBeforeSkip == null then
-                    actualFieldErr(DecodeError.FieldCountMismatch(fields.length, parsedFieldIndex + 1))
-                  else
-                    actualFieldErr(DecodeError.FieldOrderMismatch(expectedBeforeSkip.name, actualName))
+              if fieldIndex >= fields.length then
+                if expectedBeforeSkip == null then
+                  actualFieldErr(
+                    DecodeError.FieldCountMismatch(fields.length, parsedFieldIndex + 1)
+                  )
                 else
-                  val expectedField = fields(fieldIndex)
-                  if actualName != expectedField.name then
-                    actualFieldErr(DecodeError.FieldOrderMismatch(expectedField.name, actualName))
-                  else expectedField
-              else if parsedFieldIndex >= fields.length then
-                actualFieldErr(DecodeError.FieldCountMismatch(fields.length, parsedFieldIndex + 1))
+                  actualFieldErr(
+                    DecodeError.FieldOrderMismatch(expectedBeforeSkip.name, actualName)
+                  )
               else
-                val expectedField = fields(parsedFieldIndex)
+                val expectedField = fields(fieldIndex)
                 if actualName != expectedField.name then
                   actualFieldErr(DecodeError.FieldOrderMismatch(expectedField.name, actualName))
                 else expectedField
+            else if parsedFieldIndex >= fields.length then
+              actualFieldErr(DecodeError.FieldCountMismatch(fields.length, parsedFieldIndex + 1))
+            else
+              val expectedField = fields(parsedFieldIndex)
+              if actualName != expectedField.name then
+                actualFieldErr(DecodeError.FieldOrderMismatch(expectedField.name, actualName))
+              else expectedField
           }
           validated match
             case expectedField: Field =>
