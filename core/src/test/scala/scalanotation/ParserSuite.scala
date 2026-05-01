@@ -19,6 +19,7 @@ class ParserSuite extends FunSuite:
       .tokenize(input, debug = false)
       .getOrElse(fail(s"Expected tokenization to succeed for input: $input"))
     tokens.map {
+      case Token.PackageKw(_)        => "package"
       case Token.ValKw(_)            => "val"
       case Token.VectorId(_)         => "Vector"
       case Token.TrueKw(_)           => "true"
@@ -27,6 +28,7 @@ class ParserSuite extends FunSuite:
       case Token.Keyword(raw, _)     => raw
       case Token.Identifier(name, _) => s"<Identifier:$name>"
       case Token.Equals(_)           => "="
+      case Token.Dot(_)              => "."
       case Token.Plus(_)             => "+"
       case Token.Minus(_)            => "-"
       case Token.Comma(_)            => ","
@@ -268,6 +270,16 @@ class ParserSuite extends FunSuite:
     val Expr.NamedTupleExpr(fieldExprs) = parsed.declarations.head(1).runtimeChecked
     assertEquals(fieldExprs.length, 4)
 
+  test("tokenize package statements"):
+    assertEquals(
+      tokenLabels("package foo.bar"),
+      List("package", "<Identifier:foo>", ".", "<Identifier:bar>", "eof")
+    )
+    assertEquals(
+      tokenLabels("package foo"),
+      List("package", "<Identifier:foo>", "eof")
+    )
+
   test("tokenize Scala regular keywords as reserved syntax"):
     val regularKeywords = List(
       "abstract",
@@ -397,6 +409,65 @@ class ParserSuite extends FunSuite:
 
     val Expr.VectorExpr(elements) = parsed.declarations.head(1).runtimeChecked
     assertEquals(elements.length, 1)
+
+  test("read expected package statement"):
+    type Data = (x: Int)
+    val input =
+      """package foo.bar
+        |val data = (x = 1)
+        |""".stripMargin
+
+    val parsed   = Readers.quick.readDecls(input, packageName = "foo.bar")
+    val expected = Expr.SourceFile(
+      Map("data" -> Expr.NamedTupleExpr(IndexedSeq("x" -> Expr.IntConstant(1))))
+    )
+
+    assertEquals(parsed, expected)
+    assertEquals(
+      Readers.readDeclAs[Data](input, rootName = "data", packageName = "foo.bar"),
+      Result.Ok((x = 1))
+    )
+
+  test("read expected single-level package statement"):
+    type Data = (x: Int)
+    val input =
+      """package foo
+        |val data = (x = 1)
+        |""".stripMargin
+
+    assertEquals(
+      Readers.readDeclAs[Data](input, rootName = "data", packageName = "foo"),
+      Result.Ok((x = 1))
+    )
+
+  test("reject package statement before top-level expression"):
+    assertEquals(
+      Readers.readAs[Expr]("package foo.bar\n(x = 1)").map(_ => ()),
+      Result.Err(DecodeError.ExpectedExpression("'package'").atToken(DecodeError.Span(0, 1, 1)))
+    )
+
+  test("reject missing or unexpected package statement"):
+    val missing =
+      Readers.readDeclAs[Expr]("val data = null", rootName = "data", packageName = "foo.bar")
+    assertEquals(
+      missing.map(_ => ()),
+      Result.Err(DecodeError.ExpectedPackage("'val'").atToken(DecodeError.Span(0, 1, 1)))
+    )
+
+    val mismatch =
+      Readers.readDeclAs[Expr](
+        "package foo.baz\nval data = null",
+        rootName = "data",
+        packageName = "foo.bar"
+      )
+    assertEquals(mismatch, Result.Err(DecodeError.UnexpectedPackage("foo.baz")))
+
+  test("reject package statement when expected package is empty"):
+    val obtained = Readers.readDeclAs[Expr]("package foo\nval data = null", rootName = "data")
+    assertEquals(
+      obtained.map(_ => ()),
+      Result.Err(DecodeError.ExpectedVal("'package'").atToken(DecodeError.Span(0, 1, 1)))
+    )
 
   test("skip single-line comments"):
     val input =

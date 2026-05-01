@@ -12,6 +12,7 @@ enum DecodeError:
   case ExpectedRParen(found: String)
   case ExpectedFieldName(found: String)
   case ExpectedVal(found: String)
+  case ExpectedPackage(found: String)
   case ExpectedIdentifier(found: String)
   case ExpectedEof(found: String)
   case FieldCountMismatch(expected: Int, actual: Int)
@@ -19,6 +20,7 @@ enum DecodeError:
   case MissingField(fieldName: String)
   case UnexpectedField(fieldName: String)
   case UnexpectedRoot(rootName: String)
+  case UnexpectedPackage(packageName: String)
   case DuplicateField(fieldName: String)
   case DuplicateSchemaField(fieldName: String)
   case Custom(message: String)
@@ -63,6 +65,8 @@ enum DecodeError:
         s"expected field name 'x = ' but found ${found}"
       case DecodeError.ExpectedVal(found) =>
         s"Expected 'val' but found ${found}"
+      case DecodeError.ExpectedPackage(found) =>
+        s"Expected 'package' but found ${found}"
       case DecodeError.ExpectedIdentifier(found) =>
         s"Expected an identifier but found ${found}"
       case DecodeError.ExpectedEof(found) =>
@@ -77,6 +81,8 @@ enum DecodeError:
         s"Unexpected field '$fieldName'"
       case DecodeError.UnexpectedRoot(rootName) =>
         s"Unexpected root declaration '$rootName'"
+      case DecodeError.UnexpectedPackage(packageName) =>
+        s"Unexpected package statement '$packageName'"
       case DecodeError.DuplicateField(fieldName) =>
         s"Duplicate field '$fieldName'"
       case DecodeError.DuplicateSchemaField(fieldName) =>

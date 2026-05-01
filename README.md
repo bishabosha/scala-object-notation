@@ -4,9 +4,13 @@ Scala Object Notation is subset of Scala programming language that can decode di
 
 ## Example: Configuration
 
-Scala Object Notation supports writing a Scala source file with one top-level `val` declaration:
+Scala Object Notation supports writing a Scala source files in two modes:
+- a single one top-level `val` declaration, optionally preceded by a single package statement;
+- or a top-level expression.
 
 ```scala
+package example.config
+
 /** Comments are supported! */
 val conf = (
   app = (
@@ -41,6 +45,7 @@ There are no methods (yet?) only pure data.
 
 The supported syntax is deliberately small:
 
+- an optional single `package foo.bar` statement before a declaration
 - one top-level `val` declaration
 - named tuples for structured objects,
 - `Vector(...)` for sequences,
@@ -58,7 +63,8 @@ import scalanotation.*
 import steps.result.Result
 
 val input =
-  """val conf = (
+  """package example.config
+    |val conf = (
     |  app = (
     |    host = "127.0.0.1",
     |    port = 8080,
@@ -92,8 +98,12 @@ type Config =
   )
 
 val decoded: Result[Config, DecodeError] =
-  Readers.readDeclAs[Config](input, rootName = "conf")
+  Readers.readDeclAs[Config](input, rootName = "conf", packageName = "example.config")
 ```
+
+If you don't require a package statement, then omit the `packageName` argument (its default value is `""`).
+
+Package statements are always rejected by top-level expression readers such as `readAs` and `quick.read`.
 
 This direct structural decoding is especially useful when your config is already naturally
 tree-shaped and you want Scala’s nested named tuple types to mirror the file exactly.
@@ -169,7 +179,7 @@ case class Schedule(start: LocalDate, refreshSeconds: Option[Int]) derives ReadW
 case class Config(app: App, schedule: Schedule, features: Vector[String]) derives ReadWriter
 
 // decode the same input as before to a richer type
-val decoded = Readers.readDeclAs[Config](input, rootName = "conf")
+val decoded = Readers.readDeclAs[Config](input, rootName = "conf", packageName = "example.config")
 ```
 
 That lets you keep the text format simple while still decoding into domain-specific Scala types.
@@ -317,7 +327,7 @@ If you want a generic syntax tree first, read into `Expr` and decode later:
 ```scala
 import scalanotation.*
 
-val expr = Readers.readDeclAs[Expr](input, rootName = "conf").get
+val expr = Readers.readDeclAs[Expr](input, rootName = "conf", packageName = "example.config").get
 val decoded = expr.decodeAs[(ok: Boolean, retries: Int)]
 ```
 
@@ -328,6 +338,7 @@ final domain type.
 
 Typed decoding is intentionally strict:
 
+- if `packageName` is supplied for declaration parsing, the package statement must match exactly
 - the requested root declaration name must match
 - named tuple field names must match exactly
 - field count must match exactly

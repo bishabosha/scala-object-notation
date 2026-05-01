@@ -250,15 +250,17 @@ private[scalanotation] object TokenDecoder:
   private[scalanotation] def decode[T](
       tokens: List[Token],
       rootName: String,
+      packageName: String,
       decoder: Reader[T]
   ): Result[T, DecodeError] =
-    TokenDecoder(tokens).decodeRoot(decoder, rootName)
+    TokenDecoder(tokens).decodeRoot(decoder, rootName, packageName)
 
   private[scalanotation] def decodeAnyRoot[T](
       tokens: List[Token],
+      packageName: String,
       decoder: Reader[T]
   ): Result[Expr.SourceFile[T], DecodeError] =
-    TokenDecoder(tokens).decodeAnyRoot(decoder)
+    TokenDecoder(tokens).decodeAnyRoot(decoder, packageName)
 
   private[scalanotation] def decodeExpression[T](
       tokens: List[Token],
@@ -279,6 +281,7 @@ private[scalanotation] object TokenDecoder:
 
   private[scalanotation] def describe(token: Token): String =
     token match
+      case Token.PackageKw(_)         => "'package'"
       case Token.ValKw(_)             => "'val'"
       case Token.VectorId(_)          => "'Vector'"
       case Token.TrueKw(_)            => "'true'"
@@ -293,6 +296,7 @@ private[scalanotation] object TokenDecoder:
       case Token.StringLit(raw, _, _) => s"string literal $raw"
       case Token.CharLit(raw, _, _)   => s"character literal '$raw'"
       case Token.Equals(_)            => "'='"
+      case Token.Dot(_)               => "'.'"
       case Token.Plus(_)              => "'+'"
       case Token.Minus(_)             => "'-'"
       case Token.Comma(_)             => "','"
@@ -341,9 +345,11 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
 
   def decodeRoot[T](
       schema: Reader[T],
-      rootName: String
+      rootName: String,
+      packageName: String
   ): Result[T, DecodeError] =
     Result:
+      expectPackageStatement(packageName).check
       expectVal().check
       val declaredName = expectIdentifier().ok
       if declaredName != rootName then raise(DecodeError.UnexpectedRoot(declaredName))
@@ -353,9 +359,11 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
       value
 
   def decodeAnyRoot[T](
-      schema: Reader[T]
+      schema: Reader[T],
+      packageName: String
   ): Result[Expr.SourceFile[T], DecodeError] =
     Result:
+      expectPackageStatement(packageName).check
       expectVal().check
       val declaredName = expectIdentifier().ok
       expectEquals().check
@@ -890,6 +898,28 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
         advance()
       case other =>
         raise(DecodeError.ExpectedVal(describe(other)).atToken(other.span))
+
+  private def expectPackageStatement(packageName: String): Result[Unit, DecodeError] =
+    Result.task:
+      if packageName.nonEmpty then
+        expectPackage().check
+        val declaredName = expectQualifiedIdentifier().ok
+        if declaredName != packageName then raise(DecodeError.UnexpectedPackage(declaredName))
+
+  private def expectPackage(): Result[Unit, DecodeError] = Result.task:
+    currentToken() match
+      case Token.PackageKw(_) =>
+        advance()
+      case other =>
+        raise(DecodeError.ExpectedPackage(describe(other)).atToken(other.span))
+
+  private def expectQualifiedIdentifier(): Result[String, DecodeError] = Result:
+    val builder = new StringBuilder(expectIdentifier().ok)
+    while currentToken().isInstanceOf[Token.Dot] do
+      advance()
+      builder += '.'
+      builder ++= expectIdentifier().ok
+    builder.result()
 
   private def expectIdentifier(): Result[String, DecodeError] = Result:
     currentToken() match
