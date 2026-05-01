@@ -62,10 +62,12 @@ private[scalanotation] trait CommonTypeClassCompanion[TC[_]]:
         noFields: mirror.MirroredElemTypes =:= EmptyTuple
     ): TC[T] = singletonTypeClass[T](label.value)
 
-    final def ofFields[T](using mirror: Mirror.ProductOf[T])(
+    final inline def ofFields[T](using mirror: Mirror.ProductOf[T])(
         using atPath: ProductFieldsAtPath["", mirror.MirroredElemLabels, mirror.MirroredElemTypes],
         hasFields: NotGiven[mirror.MirroredElemTypes =:= EmptyTuple]
-    ): TC[T] = productTypeClass[T](ProductFieldsAtPath.fields(atPath))
+    ): TC[T] =
+      HasNonOptionalField.validate["", mirror.MirroredElemTypes]
+      productTypeClass[T](ProductFieldsAtPath.fields(atPath))
 
     final def ofCases[T](using mirror: Mirror.SumOf[T])(
         using casesAtPath: SumCasesAtPath[
@@ -124,6 +126,19 @@ private[scalanotation] trait CommonTypeClassCompanion[TC[_]]:
         => (rest: ProductFieldsAtPath[Path, Labels, Values])
         => ProductFieldsAtPath[Path, Label *: Labels, Value *: Values] =
         makeField(valueOf.value, atPath.typeclass) :: rest.fields
+
+    object HasNonOptionalField:
+      inline def validate[Path <: String, Values <: Tuple]: Unit =
+        inline compiletime.erasedValue[Values] match
+          case _: EmptyTuple =>
+            compiletime.error(
+              "at path " + formatPath[Path] + ": " + typeClassName +
+                " derivation for a product with only Option fields is not supported."
+            )
+          case _: (Option[?] *: tail) =>
+            validate[Path, tail]
+          case _: (_ *: _) =>
+            ()
 
     opaque type SumCasesAtPath[Path <: String, A, Labels <: Tuple, Cases <: Tuple] =
       List[SumCaseRepr[A]]

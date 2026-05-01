@@ -925,6 +925,79 @@ class ParserSuite extends FunSuite:
 
     assertEquals(decoded, Result.Ok(expected))
 
+  test("derived case class readers allow skipped nullable Option fields"):
+    final case class User(
+        name: String,
+        refreshSeconds: Option[Int],
+        debug: Boolean,
+        description: Option[String]
+    ) derives Reader
+
+    val input =
+      """val data = (
+        |  name = "Ada",
+        |  debug = true
+        |)
+        |""".stripMargin
+
+    val decoded  = Readers.readDeclAs[User](input, rootName = "data")
+    val expected = User(
+      name = "Ada",
+      refreshSeconds = None,
+      debug = true,
+      description = None
+    )
+
+    assertEquals(decoded, Result.Ok(expected))
+
+  test("named tuple readers keep Option fields ordered and required"):
+    type Data = (name: String, refreshSeconds: Option[Int], debug: Boolean)
+
+    val input =
+      """val data = (
+        |  name = "Ada",
+        |  debug = true
+        |)
+        |""".stripMargin
+
+    val obtained = Readers.readDeclAs[Data](input, rootName = "data")
+    obtained match
+      case Result.Err(error) =>
+        assertEquals(
+          error.rootCause,
+          DecodeError.FieldOrderMismatch("refreshSeconds", "debug")
+        )
+      case Result.Ok(value) => fail(s"Expected a decode failure, got $value")
+
+  test("derived case class readers reject empty named tuple input"):
+    final case class User(name: String, refreshSeconds: Option[Int]) derives Reader
+
+    val obtained = Readers.readAs[User]("()")
+
+    obtained match
+      case Result.Err(error) =>
+        assertEquals(error.rootCause, DecodeError.UnitValueNotAllowed())
+      case Result.Ok(value) => fail(s"Expected a decode failure, got $value")
+
+  test("expr decoder rejects empty input for skipped nullable fields"):
+    val reader = Reader.fromSchema[Any](
+      RawSchema.NamedTuple(
+        IArray(
+          RawSchema.Field("start", summon[Reader[Option[Int]]].schema),
+          RawSchema.Field("end", summon[Reader[Option[String]]].schema)
+        ),
+        RawSchema.NamedTupleRead.from(identity),
+        allowSkippedNullableFields = true
+      )
+    )
+
+    val obtained = Expr.NamedTupleExpr(Vector.empty).decodeAs[Any](using reader)
+
+    obtained match
+      case Result.Err(error) =>
+        assertEquals(error.rootCause, DecodeError.UnitValueNotAllowed())
+      case Result.Ok(value) => fail(s"Expected a decode failure, got $value")
+
   test("report nested paths for direct case class decoders"):
     final case class Metadata(created: LocalDate)
     final case class User(metadata: Metadata)
@@ -1266,6 +1339,17 @@ class ParserSuite extends FunSuite:
         .contains("Reader[Option[Option[?]]] is not supported")
     )
 
+  test("no case class reader is derived when every field is an Option"):
+    val errors = typeCheckErrors(
+      "final case class Data(x: Option[Int], y: Option[String]) derives scalanotation.Reader"
+    )
+
+    assert(errors.nonEmpty)
+    assert(
+      clue(errors.head.message)
+        .contains("Reader derivation for a product with only Option fields is not supported")
+    )
+
   test("no read-writer is derived for nested Option"):
     val errors = typeCheckErrors(
       "type Data = (x: Option[Option[Int]])\nsummon[scalanotation.ReadWriter[Data]]"
@@ -1276,6 +1360,17 @@ class ParserSuite extends FunSuite:
     assert(
       clue(errors.head.message)
         .contains("ReadWriter[Option[Option[?]]] is not supported")
+    )
+
+  test("no case class read-writer is derived when every field is an Option"):
+    val errors = typeCheckErrors(
+      "final case class Data(x: Option[Int], y: Option[String]) derives scalanotation.ReadWriter"
+    )
+
+    assert(errors.nonEmpty)
+    assert(
+      clue(errors.head.message)
+        .contains("ReadWriter derivation for a product with only Option fields is not supported")
     )
 
   test("compile-time derivation error includes nested field path"):

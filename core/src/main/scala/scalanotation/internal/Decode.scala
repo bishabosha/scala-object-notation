@@ -37,6 +37,21 @@ private[scalanotation] class ExprDecoder extends Internal.PoolHolder:
   private def expectedType(schema: RawSchema, expr: Expr): DecodeError =
     DecodeError.ExpectedType(schema.describeSelf, describeExpr(expr))
 
+  private def fillSkippedNullableFields(
+      fields: IArray[Field],
+      values: Array[AnyRef],
+      startIndex: Int,
+      actualName: String
+  ): Int =
+    var index = startIndex
+    while index < fields.length
+      && fields(index).name != actualName
+      && TokenDecoder.isNullable(fields(index).schema)
+    do
+      values(index) = None.asInstanceOf[AnyRef]
+      index += 1
+    index
+
   def decodeInto[A](reader: Reader[A], expr: Expr): Result[A, DecodeError] =
     decodeBase(reader.schema, expr).asInstanceOf[Result[A, DecodeError]]
 
@@ -136,22 +151,53 @@ private[scalanotation] class ExprDecoder extends Internal.PoolHolder:
       expr match
         case Expr.NamedTupleExpr(fieldExprs) =>
           val fields = schema.fields
-          if fieldExprs.length != fields.length then
-            raise(DecodeError.FieldCountMismatch(fields.length, fieldExprs.length))
-          var index  = 0
           val values = new Array[AnyRef](fields.length)
-          while index < fields.length do
-            val field     = fields(index)
-            val fieldExpr = fieldExprs(index)
-            val fieldName = fieldExpr.name
-            if fieldName != field.name then
-              raise(DecodeError.FieldOrderMismatch(field.name, fieldName))
+          if schema.allowSkippedNullableFields then
+            if fieldExprs.isEmpty && fields.nonEmpty then raise(DecodeError.UnitValueNotAllowed())
+            var fieldExprIndex = 0
+            var fieldIndex     = 0
+            while fieldExprIndex < fieldExprs.length do
+              val fieldExpr          = fieldExprs(fieldExprIndex)
+              val fieldName          = fieldExpr.name
+              val expectedBeforeSkip =
+                if fieldIndex < fields.length then fields(fieldIndex) else null
+              fieldIndex = fillSkippedNullableFields(fields, values, fieldIndex, fieldName)
 
-            val value = decodeBase(field.schema, fieldExpr.value)
-              .mapErr(_.atPath(s".${field.name}"))
-              .ok
-            values(index) = value.asInstanceOf[AnyRef]
-            index += 1
+              if fieldIndex >= fields.length then
+                if expectedBeforeSkip == null then
+                  raise(DecodeError.FieldCountMismatch(fields.length, fieldExprIndex + 1))
+                else raise(DecodeError.FieldOrderMismatch(expectedBeforeSkip.name, fieldName))
+
+              val field = fields(fieldIndex)
+              if fieldName != field.name then
+                raise(DecodeError.FieldOrderMismatch(field.name, fieldName))
+
+              val value = decodeBase(field.schema, fieldExpr.value)
+                .mapErr(_.atPath(s".${field.name}"))
+                .ok
+              values(fieldIndex) = value.asInstanceOf[AnyRef]
+              fieldIndex += 1
+              fieldExprIndex += 1
+
+            fieldIndex = fillSkippedNullableFields(fields, values, fieldIndex, "")
+            if fieldIndex != fields.length then
+              raise(DecodeError.FieldCountMismatch(fields.length, fieldExprs.length))
+          else
+            if fieldExprs.length != fields.length then
+              raise(DecodeError.FieldCountMismatch(fields.length, fieldExprs.length))
+            var index = 0
+            while index < fields.length do
+              val field     = fields(index)
+              val fieldExpr = fieldExprs(index)
+              val fieldName = fieldExpr.name
+              if fieldName != field.name then
+                raise(DecodeError.FieldOrderMismatch(field.name, fieldName))
+
+              val value = decodeBase(field.schema, fieldExpr.value)
+                .mapErr(_.atPath(s".${field.name}"))
+                .ok
+              values(index) = value.asInstanceOf[AnyRef]
+              index += 1
 
           read.build(values)
         case other =>
@@ -219,6 +265,12 @@ private[scalanotation] object TokenDecoder:
   ): Result[T, DecodeError] =
     TokenDecoder(tokens).decodeExpression(decoder)
 
+  private[scalanotation] def isNullable(schema: RawSchema): Boolean =
+    schema match
+      case RawSchema.Option(_)       => true
+      case RawSchema.Mapped(base, _) => isNullable(base)
+      case _                         => false
+
   private[scalanotation] def describe(token: Token | Expr): String =
     token match
       case t: Token => describe(t)
@@ -270,6 +322,21 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
 
   private def expectedType(schema: RawSchema, token: Token): DecodeError =
     DecodeError.ExpectedType(schema.describeSelf, describe(token)).atToken(token.span)
+
+  private def fillSkippedNullableFields(
+      fields: IArray[Field],
+      values: Array[AnyRef],
+      startIndex: Int,
+      actualName: String
+  ): Int =
+    var index = startIndex
+    while index < fields.length
+      && fields(index).name != actualName
+      && TokenDecoder.isNullable(fields(index).schema)
+    do
+      values(index) = None.asInstanceOf[AnyRef]
+      index += 1
+    index
 
   def decodeRoot[T](
       schema: Reader[T],
@@ -349,23 +416,43 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
       val read = schema.read
       if read == null then missingReadCapability(schema)
       schema.isValidNamedTuple(namesPool).ok
-      val fields = schema.fields
-      val values = new Array[AnyRef](fields.length)
+      val fields     = schema.fields
+      val values     = new Array[AnyRef](fields.length)
+      var fieldIndex = 0
 
       val allowEmpty =
         fields.isEmpty // FIXME: must be hoisted to allow inlining parseNamedTupleStructure!
 
       val parsed = parseNamedTupleStructure(schema, allowEmpty = allowEmpty) {
-        (actualName, nameSpan, fieldIndex) =>
+        (actualName, nameSpan, parsedFieldIndex) =>
           def actualFieldErr(err: DecodeError): DecodeError =
             err.atPath(s".${actualName}").atToken(nameSpan)
           val validated: DecodeError | Field = eval {
-            if fieldIndex >= fields.length then
-              actualFieldErr(DecodeError.FieldCountMismatch(fields.length, fieldIndex + 1))
-            else if seenNames.alreadySeen(actualName) then
+            if seenNames.alreadySeen(actualName) then
               actualFieldErr(DecodeError.DuplicateField(actualName))
+            else if schema.allowSkippedNullableFields then
+              val expectedBeforeSkip =
+                if fieldIndex < fields.length then fields(fieldIndex) else null
+              fieldIndex = fillSkippedNullableFields(fields, values, fieldIndex, actualName)
+
+              if fieldIndex >= fields.length then
+                if expectedBeforeSkip == null then
+                  actualFieldErr(
+                    DecodeError.FieldCountMismatch(fields.length, parsedFieldIndex + 1)
+                  )
+                else
+                  actualFieldErr(
+                    DecodeError.FieldOrderMismatch(expectedBeforeSkip.name, actualName)
+                  )
+              else
+                val expectedField = fields(fieldIndex)
+                if actualName != expectedField.name then
+                  actualFieldErr(DecodeError.FieldOrderMismatch(expectedField.name, actualName))
+                else expectedField
+            else if parsedFieldIndex >= fields.length then
+              actualFieldErr(DecodeError.FieldCountMismatch(fields.length, parsedFieldIndex + 1))
             else
-              val expectedField = fields(fieldIndex)
+              val expectedField = fields(parsedFieldIndex)
               if actualName != expectedField.name then
                 actualFieldErr(DecodeError.FieldOrderMismatch(expectedField.name, actualName))
               else expectedField
@@ -375,10 +462,19 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
               def decoded = decodeBase(expectedField.schema).mapErr(actualFieldErr)
               val value   = decoded.ok
               values(fieldIndex) = value.asInstanceOf[AnyRef]
+              fieldIndex += 1
             case err: DecodeError => raise(err)
       }
 
-      if parsed.fieldCount != fields.length then
+      if schema.allowSkippedNullableFields && fields.nonEmpty && parsed.fieldCount == 0 then
+        raise(DecodeError.UnitValueNotAllowed().atToken(parsed.closingSpan))
+
+      if schema.allowSkippedNullableFields then
+        fieldIndex = fillSkippedNullableFields(fields, values, fieldIndex, "")
+
+      val decodedFieldCount =
+        if schema.allowSkippedNullableFields then fieldIndex else parsed.fieldCount
+      if decodedFieldCount != fields.length then
         def err =
           var err0 = DecodeError.FieldCountMismatch(fields.length, parsed.fieldCount)
           if parsed.fieldName != null then err0 = err0.atPath(s".${parsed.fieldName}")

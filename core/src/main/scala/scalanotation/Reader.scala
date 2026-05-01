@@ -99,7 +99,8 @@ object Reader extends ReaderLowPriority, CommonTypeClassCompanion[Reader]:
         RawSchema.NamedTuple(
           IArray.from(fields),
           RawSchema.NamedTupleRead.from(PublicInternal.caseClassBuilder[T]),
-          write = null
+          write = null,
+          allowSkippedNullableFields = true
         )
       )
 
