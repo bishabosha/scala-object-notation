@@ -6,6 +6,7 @@ import steps.result.Result
 import scala.collection.mutable
 
 private[scalanotation] enum Token:
+  case PackageKw(span: DecodeError.Span)
   case ValKw(span: DecodeError.Span)
   case VectorId(span: DecodeError.Span)
   case TrueKw(span: DecodeError.Span)
@@ -20,6 +21,7 @@ private[scalanotation] enum Token:
   case StringLit(raw: String, value: String, span: DecodeError.Span)
   case CharLit(raw: String, value: Char, span: DecodeError.Span)
   case Equals(span: DecodeError.Span)
+  case Dot(span: DecodeError.Span)
   case Plus(span: DecodeError.Span)
   case Minus(span: DecodeError.Span)
   case Comma(span: DecodeError.Span)
@@ -74,6 +76,7 @@ private[scalanotation] final class Tokenizer(input: String):
     currentChar() match
       case '('                         => advance(); Token.LParen(start)
       case ')'                         => advance(); Token.RParen(start)
+      case '.'                         => advance(); Token.Dot(start)
       case ','                         => advance(); Token.Comma(start)
       case '"'                         => scanString(start)
       case '\''                        => scanChar(start)
@@ -86,6 +89,7 @@ private[scalanotation] final class Tokenizer(input: String):
     val builder = new StringBuilder
     while !isAtEnd && isIdentifierPart(currentChar()) do builder += advance()
     builder.result() match
+      case KW_package                                        => Token.PackageKw(start)
       case KW_val                                            => Token.ValKw(start)
       case KW_true                                           => Token.TrueKw(start)
       case KW_false                                          => Token.FalseKw(start)
@@ -416,6 +420,7 @@ private[scalanotation] final class Tokenizer(input: String):
 
 private[scalanotation] object Tokenizer:
   private val KW_val       = "val"
+  private val KW_package   = "package"
   private val KW_true      = "true"
   private val KW_false     = "false"
   private val KW_null      = "null"
