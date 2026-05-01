@@ -28,13 +28,18 @@ private[scalanotation] trait CommonTypeClassCompanion[TC[_]]:
       )
     )
 
-  trait CommonDerivationBuilders[RejectAllOptionalProducts <: Boolean]:
-    type ThisBuilder <: this.type & CommonDerivationBuilders[RejectAllOptionalProducts]
+  trait CommonDerivationBuilders[
+      RejectAllOptionalProducts <: Boolean,
+      TypeClassName <: "Reader" | "Writer" | "ReadWriter"
+  ]:
+    type ThisBuilder <: this.type &
+      CommonDerivationBuilders[
+        RejectAllOptionalProducts,
+        TypeClassName
+      ]
     val thisBuilder: ThisBuilder
     type FieldRepr
     type SumCaseRepr[A]
-
-    private[scalanotation] inline def typeClassName: String
 
     inline def derived[T](using mirror: Mirror.Of[T]): TC[T] =
       inline mirror match
@@ -140,10 +145,22 @@ private[scalanotation] trait CommonTypeClassCompanion[TC[_]]:
       inline def validate[Path <: String, Values <: Tuple]: Unit =
         inline compiletime.erasedValue[Values] match
           case _: EmptyTuple =>
-            compiletime.error(
-              "at path " + formatPath[Path] + ": " + typeClassName +
-                " derivation for a product with only Option fields is not supported."
-            )
+            inline compiletime.erasedValue[TypeClassName] match
+              case _: "Reader" =>
+                compiletime.error(
+                  "at path " + formatPath[Path] +
+                    ": Reader derivation for a product with only Option fields is not supported."
+                )
+              case _: "Writer" =>
+                compiletime.error(
+                  "at path " + formatPath[Path] +
+                    ": Writer derivation for a product with only Option fields is not supported."
+                )
+              case _: "ReadWriter" =>
+                compiletime.error(
+                  "at path " + formatPath[Path] +
+                    ": ReadWriter derivation for a product with only Option fields is not supported."
+                )
           case _: (Option[?] *: tail) =>
             validate[Path, tail]
           case _: (_ *: _) =>
@@ -200,10 +217,22 @@ private[scalanotation] trait CommonTypeClassCompanion[TC[_]]:
       inline given [Path <: String, T]: NonNestedOption[Path, T] =
         compiletime.summonFrom {
           case _: (T <:< Option[?]) =>
-            compiletime.error(
-              "at path " + formatPath[Path] +
-                ": " + typeClassName + "[Option[Option[?]]] is not supported."
-            )
+            inline compiletime.erasedValue[TypeClassName] match
+              case _: "Reader" =>
+                compiletime.error(
+                  "at path " + formatPath[Path] +
+                    ": Reader[Option[Option[?]]] is not supported."
+                )
+              case _: "Writer" =>
+                compiletime.error(
+                  "at path " + formatPath[Path] +
+                    ": Writer[Option[Option[?]]] is not supported."
+                )
+              case _: "ReadWriter" =>
+                compiletime.error(
+                  "at path " + formatPath[Path] +
+                    ": ReadWriter[Option[Option[?]]] is not supported."
+                )
           case _ =>
             ()
         }
@@ -229,11 +258,21 @@ private[scalanotation] trait CommonTypeClassCompanion[TC[_]]:
         compiletime.summonFrom {
           case tc: TC[T] => liftAtPath[Path, T](tc)
           case _         =>
-            compiletime.error(
-              "at path " + formatPath[Path] + ": Could not find " + typeClassName + "[" + showType[
-                T
-              ] + "]."
-            )
+            inline compiletime.erasedValue[TypeClassName] match
+              case _: "Reader" =>
+                compiletime.error(
+                  "at path " + formatPath[Path] + ": Could not find Reader[" + showType[T] + "]."
+                )
+              case _: "Writer" =>
+                compiletime.error(
+                  "at path " + formatPath[Path] + ": Could not find Writer[" + showType[T] + "]."
+                )
+              case _: "ReadWriter" =>
+                compiletime.error(
+                  "at path " + formatPath[Path] + ": Could not find ReadWriter[" + showType[
+                    T
+                  ] + "]."
+                )
         }
 
       given NamedTupleCons: [Path <: String, N <: String, V, Ns <: Tuple, Vs <: Tuple]
@@ -250,8 +289,10 @@ private[scalanotation] trait CommonTypeClassCompanion[TC[_]]:
       given NamedTupleEmpty: [Path <: String] => AtPath[Path, NamedTuple.Empty] =
         Nil
 
-  trait CommonBuilders[RejectAllOptionalProducts <: Boolean]
-      extends CommonDerivationBuilders[RejectAllOptionalProducts]:
+  trait CommonBuilders[
+      RejectAllOptionalProducts <: Boolean,
+      TypeClassName <: "Reader" | "Writer" | "ReadWriter"
+  ] extends CommonDerivationBuilders[RejectAllOptionalProducts, TypeClassName]:
     given OptionAtPath: [Path <: String, T]
       => NonNestedOption[Path, T]
       => (wrapped: AtPath[Path, T])
@@ -262,7 +303,7 @@ private[scalanotation] trait CommonTypeClassCompanion[TC[_]]:
         )
       )
 
-  val Builders: CommonBuilders[false]
+  val Builders: CommonBuilders[false, ? <: "Reader" | "Writer" | "ReadWriter"]
 
   given ExprSchema: TC[Expr] =
     primitiveTypeClass(RawSchema.AnyExpr)

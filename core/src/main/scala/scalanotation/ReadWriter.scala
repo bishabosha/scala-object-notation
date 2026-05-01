@@ -63,15 +63,13 @@ object ReadWriter extends CommonTypeClassCompanion[ReadWriter]:
     protected def allowSkippedNullableFields: Boolean = true
 
   private[scalanotation] trait ReadWriterBuilders[RejectAllOptionalProducts <: Boolean]
-      extends CommonBuilders[RejectAllOptionalProducts]:
+      extends CommonBuilders[RejectAllOptionalProducts, "ReadWriter"]:
     type FieldRepr      = RawSchema.Field
     type SumCaseRepr[A] = RawSchema.SumCase
 
     import compiletime.ops.string.+
 
     protected def allowSkippedNullableFields: Boolean
-
-    private[scalanotation] inline def typeClassName: String = "ReadWriter"
 
     private[scalanotation] def sumTypeClass[T](cases: List[SumCaseRepr[T]])(
         using mirror: Mirror.SumOf[T]
