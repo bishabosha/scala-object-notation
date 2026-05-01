@@ -62,15 +62,13 @@ object Writer extends WriterLowPriority, CommonTypeClassCompanion[Writer]:
   def forNull[T]: Writer[T] =
     summon[Writer[Null]].contramap(_ => null)
 
-  override object Builders extends CommonBuilders:
+  override object Builders extends CommonBuilders[false, "Writer"]:
     val thisBuilder: this.type = this
     override type ThisBuilder = thisBuilder.type
     type FieldRepr            = RawSchema.Field
     type SumCaseRepr[A]       = RawSchema.SumCase
 
     import compiletime.ops.string.+
-
-    private[scalanotation] inline def typeClassName: String = "Writer"
 
     private[scalanotation] def sumTypeClass[T](cases: List[SumCaseRepr[T]])(
         using mirror: Mirror.SumOf[T]

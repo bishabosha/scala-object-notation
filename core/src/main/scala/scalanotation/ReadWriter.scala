@@ -56,15 +56,20 @@ object ReadWriter extends CommonTypeClassCompanion[ReadWriter]:
   def forNull[T](value: T): ReadWriter[T] =
     summon[ReadWriter[Null]].bimap(_ => value)(_ => null)
 
-  override object Builders extends CommonBuilders:
+  object skippable extends ReadWriterBuilders[true]:
     val thisBuilder: this.type = this
     override type ThisBuilder = thisBuilder.type
-    type FieldRepr            = RawSchema.Field
-    type SumCaseRepr[A]       = RawSchema.SumCase
+
+    protected def allowSkippedNullableFields: Boolean = true
+
+  private[scalanotation] trait ReadWriterBuilders[RejectAllOptionalProducts <: Boolean]
+      extends CommonBuilders[RejectAllOptionalProducts, "ReadWriter"]:
+    type FieldRepr      = RawSchema.Field
+    type SumCaseRepr[A] = RawSchema.SumCase
 
     import compiletime.ops.string.+
 
-    private[scalanotation] inline def typeClassName: String = "ReadWriter"
+    protected def allowSkippedNullableFields: Boolean
 
     private[scalanotation] def sumTypeClass[T](cases: List[SumCaseRepr[T]])(
         using mirror: Mirror.SumOf[T]
@@ -98,7 +103,7 @@ object ReadWriter extends CommonTypeClassCompanion[ReadWriter]:
           IArray.from(fields),
           RawSchema.NamedTupleRead.from(PublicInternal.caseClassBuilder[T]),
           RawSchema.NamedTupleWrite.productLike,
-          allowSkippedNullableFields = true
+          allowSkippedNullableFields = allowSkippedNullableFields
         )
       )
 
@@ -193,3 +198,9 @@ object ReadWriter extends CommonTypeClassCompanion[ReadWriter]:
           )
         )
       )
+
+  override object Builders extends ReadWriterBuilders[false]:
+    val thisBuilder: this.type = this
+    override type ThisBuilder = thisBuilder.type
+
+    protected def allowSkippedNullableFields: Boolean = false

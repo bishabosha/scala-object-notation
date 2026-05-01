@@ -925,13 +925,39 @@ class ParserSuite extends FunSuite:
 
     assertEquals(decoded, Result.Ok(expected))
 
-  test("derived case class readers allow skipped nullable Option fields"):
+  test("case class reader derivation keeps Option fields ordered and required by default"):
     final case class User(
         name: String,
         refreshSeconds: Option[Int],
         debug: Boolean,
         description: Option[String]
     ) derives Reader
+
+    val input =
+      """val data = (
+        |  name = "Ada",
+        |  debug = true
+        |)
+        |""".stripMargin
+
+    val obtained = Readers.readDeclAs[User](input, rootName = "data")
+    obtained match
+      case Result.Err(error) =>
+        assertEquals(
+          error.rootCause,
+          DecodeError.FieldOrderMismatch("refreshSeconds", "debug")
+        )
+      case Result.Ok(value) => fail(s"Expected a decode failure, got $value")
+
+  test("skippable case class readers allow skipped nullable Option fields"):
+    final case class User(
+        name: String,
+        refreshSeconds: Option[Int],
+        debug: Boolean,
+        description: Option[String]
+    )
+
+    given Reader[User] = Reader.skippable.derived
 
     val input =
       """val data = (
@@ -949,6 +975,13 @@ class ParserSuite extends FunSuite:
     )
 
     assertEquals(decoded, Result.Ok(expected))
+
+  test("case class reader derivation allows all optional fields by default"):
+    final case class Data(x: Option[Int], y: Option[String]) derives Reader
+
+    val decoded = Readers.readAs[Data]("""(x = null, y = "present")""")
+
+    assertEquals(decoded, Result.Ok(Data(None, Some("present"))))
 
   test("named tuple readers keep Option fields ordered and required"):
     type Data = (name: String, refreshSeconds: Option[Int], debug: Boolean)
@@ -969,8 +1002,10 @@ class ParserSuite extends FunSuite:
         )
       case Result.Ok(value) => fail(s"Expected a decode failure, got $value")
 
-  test("derived case class readers reject empty named tuple input"):
-    final case class User(name: String, refreshSeconds: Option[Int]) derives Reader
+  test("skippable case class readers reject empty named tuple input"):
+    final case class User(name: String, refreshSeconds: Option[Int])
+
+    given Reader[User] = Reader.skippable.derived
 
     val obtained = Readers.readAs[User]("()")
 
@@ -1306,6 +1341,47 @@ class ParserSuite extends FunSuite:
     )
     assertEquals(decoded, Result.Ok(value))
 
+  test("case class read-writer derivation allows all optional fields by default"):
+    final case class Data(x: Option[Int], y: Option[String]) derives ReadWriter
+
+    val value    = Data(None, Some("present"))
+    val rendered = Writers.write(value)
+    val decoded  = Readers.readAs[Data](rendered)
+
+    assertEquals(rendered, """(x = null, y = "present")""")
+    assertEquals(decoded, Result.Ok(value))
+
+  test("skippable case class read-writers allow skipped nullable Option fields"):
+    final case class User(
+        name: String,
+        refreshSeconds: Option[Int],
+        debug: Boolean,
+        description: Option[String]
+    )
+
+    given ReadWriter[User] = ReadWriter.skippable.derived
+
+    val input =
+      """val data = (
+        |  name = "Ada",
+        |  debug = true
+        |)
+        |""".stripMargin
+
+    val decoded  = Readers.readDeclAs[User](input, rootName = "data")
+    val expected = User(
+      name = "Ada",
+      refreshSeconds = None,
+      debug = true,
+      description = None
+    )
+
+    assertEquals(decoded, Result.Ok(expected))
+    assertEquals(
+      Writers.write(expected),
+      """(name = "Ada", refreshSeconds = null, debug = true, description = null)"""
+    )
+
   test("no writer is derived for nested Option"):
     val errors = typeCheckErrors(
       "type Data = (x: Option[Option[Int]])\nsummon[scalanotation.Writer[Data]]"
@@ -1339,9 +1415,9 @@ class ParserSuite extends FunSuite:
         .contains("Reader[Option[Option[?]]] is not supported")
     )
 
-  test("no case class reader is derived when every field is an Option"):
+  test("no skippable case class reader is derived when every field is an Option"):
     val errors = typeCheckErrors(
-      "final case class Data(x: Option[Int], y: Option[String]) derives scalanotation.Reader"
+      "final case class Data(x: Option[Int], y: Option[String])\ngiven scalanotation.Reader[Data] = scalanotation.Reader.skippable.derived"
     )
 
     assert(errors.nonEmpty)
@@ -1362,9 +1438,9 @@ class ParserSuite extends FunSuite:
         .contains("ReadWriter[Option[Option[?]]] is not supported")
     )
 
-  test("no case class read-writer is derived when every field is an Option"):
+  test("no skippable case class read-writer is derived when every field is an Option"):
     val errors = typeCheckErrors(
-      "final case class Data(x: Option[Int], y: Option[String]) derives scalanotation.ReadWriter"
+      "final case class Data(x: Option[Int], y: Option[String])\ngiven scalanotation.ReadWriter[Data] = scalanotation.ReadWriter.skippable.derived"
     )
 
     assert(errors.nonEmpty)

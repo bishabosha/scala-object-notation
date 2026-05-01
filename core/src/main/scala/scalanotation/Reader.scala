@@ -61,15 +61,20 @@ object Reader extends ReaderLowPriority, CommonTypeClassCompanion[Reader]:
   def forNull[T](value: T): Reader[T] =
     summon[Reader[Null]].map(_ => value)
 
-  override object Builders extends CommonBuilders:
+  object skippable extends ReaderBuilders[true]:
     val thisBuilder: this.type = this
     override type ThisBuilder = thisBuilder.type
-    type FieldRepr            = RawSchema.Field
-    type SumCaseRepr[A]       = RawSchema.SumCase
+
+    protected def allowSkippedNullableFields: Boolean = true
+
+  private[scalanotation] trait ReaderBuilders[RejectAllOptionalProducts <: Boolean]
+      extends CommonBuilders[RejectAllOptionalProducts, "Reader"]:
+    type FieldRepr      = RawSchema.Field
+    type SumCaseRepr[A] = RawSchema.SumCase
 
     import compiletime.ops.string.+
 
-    private[scalanotation] inline def typeClassName: String = "Reader"
+    protected def allowSkippedNullableFields: Boolean
 
     private[scalanotation] def sumTypeClass[T](cases: List[SumCaseRepr[T]])(
         using mirror: Mirror.SumOf[T]
@@ -100,7 +105,7 @@ object Reader extends ReaderLowPriority, CommonTypeClassCompanion[Reader]:
           IArray.from(fields),
           RawSchema.NamedTupleRead.from(PublicInternal.caseClassBuilder[T]),
           write = null,
-          allowSkippedNullableFields = true
+          allowSkippedNullableFields = allowSkippedNullableFields
         )
       )
 
@@ -195,3 +200,9 @@ object Reader extends ReaderLowPriority, CommonTypeClassCompanion[Reader]:
           )
         )
       )
+
+  override object Builders extends ReaderBuilders[false]:
+    val thisBuilder: this.type = this
+    override type ThisBuilder = thisBuilder.type
+
+    protected def allowSkippedNullableFields: Boolean = false

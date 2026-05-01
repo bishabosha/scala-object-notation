@@ -28,13 +28,18 @@ private[scalanotation] trait CommonTypeClassCompanion[TC[_]]:
       )
     )
 
-  trait CommonDerivationBuilders:
-    type ThisBuilder <: this.type & CommonDerivationBuilders
+  trait CommonDerivationBuilders[
+      RejectAllOptionalProducts <: Boolean,
+      TypeClassName <: "Reader" | "Writer" | "ReadWriter"
+  ]:
+    type ThisBuilder <: this.type &
+      CommonDerivationBuilders[
+        RejectAllOptionalProducts,
+        TypeClassName
+      ]
     val thisBuilder: ThisBuilder
     type FieldRepr
     type SumCaseRepr[A]
-
-    private[scalanotation] inline def typeClassName: String
 
     inline def derived[T](using mirror: Mirror.Of[T]): TC[T] =
       inline mirror match
@@ -66,7 +71,7 @@ private[scalanotation] trait CommonTypeClassCompanion[TC[_]]:
         using atPath: ProductFieldsAtPath["", mirror.MirroredElemLabels, mirror.MirroredElemTypes],
         hasFields: NotGiven[mirror.MirroredElemTypes =:= EmptyTuple]
     ): TC[T] =
-      HasNonOptionalField.validate["", mirror.MirroredElemTypes]
+      validateProductFields[RejectAllOptionalProducts, "", mirror.MirroredElemTypes]
       productTypeClass[T](ProductFieldsAtPath.fields(atPath))
 
     final def ofCases[T](using mirror: Mirror.SumOf[T])(
@@ -105,6 +110,15 @@ private[scalanotation] trait CommonTypeClassCompanion[TC[_]]:
         using mirror: Mirror.SumOf[T]
     ): TC[T]
 
+    private inline def validateProductFields[
+        RejectAllOptional <: Boolean,
+        Path <: String,
+        Values <: Tuple
+    ]: Unit =
+      inline compiletime.erasedValue[RejectAllOptional] match
+        case _: true  => HasNonOptionalField.validate[Path, Values]
+        case _: false => ()
+
     inline def formatPath[Path <: String]: String = ("'" + compiletime.constValue[Path] + "'")
 
     opaque type ProductFieldsAtPath[Path <: String, Labels <: Tuple, Values <: Tuple] =
@@ -132,7 +146,7 @@ private[scalanotation] trait CommonTypeClassCompanion[TC[_]]:
         inline compiletime.erasedValue[Values] match
           case _: EmptyTuple =>
             compiletime.error(
-              "at path " + formatPath[Path] + ": " + typeClassName +
+              "at path " + formatPath[Path] + ": " + compiletime.constValue[TypeClassName] +
                 " derivation for a product with only Option fields is not supported."
             )
           case _: (Option[?] *: tail) =>
@@ -192,8 +206,8 @@ private[scalanotation] trait CommonTypeClassCompanion[TC[_]]:
         compiletime.summonFrom {
           case _: (T <:< Option[?]) =>
             compiletime.error(
-              "at path " + formatPath[Path] +
-                ": " + typeClassName + "[Option[Option[?]]] is not supported."
+              "at path " + formatPath[Path] + ": " + compiletime.constValue[TypeClassName] +
+                "[Option[Option[?]]] is not supported."
             )
           case _ =>
             ()
@@ -221,9 +235,8 @@ private[scalanotation] trait CommonTypeClassCompanion[TC[_]]:
           case tc: TC[T] => liftAtPath[Path, T](tc)
           case _         =>
             compiletime.error(
-              "at path " + formatPath[Path] + ": Could not find " + typeClassName + "[" + showType[
-                T
-              ] + "]."
+              "at path " + formatPath[Path] + ": Could not find " +
+                compiletime.constValue[TypeClassName] + "[" + showType[T] + "]."
             )
         }
 
@@ -241,7 +254,10 @@ private[scalanotation] trait CommonTypeClassCompanion[TC[_]]:
       given NamedTupleEmpty: [Path <: String] => AtPath[Path, NamedTuple.Empty] =
         Nil
 
-  trait CommonBuilders extends CommonDerivationBuilders:
+  trait CommonBuilders[
+      RejectAllOptionalProducts <: Boolean,
+      TypeClassName <: "Reader" | "Writer" | "ReadWriter"
+  ] extends CommonDerivationBuilders[RejectAllOptionalProducts, TypeClassName]:
     given OptionAtPath: [Path <: String, T]
       => NonNestedOption[Path, T]
       => (wrapped: AtPath[Path, T])
@@ -252,7 +268,7 @@ private[scalanotation] trait CommonTypeClassCompanion[TC[_]]:
         )
       )
 
-  val Builders: CommonBuilders
+  val Builders: CommonBuilders[false, ? <: "Reader" | "Writer" | "ReadWriter"]
 
   given ExprSchema: TC[Expr] =
     primitiveTypeClass(RawSchema.AnyExpr)
