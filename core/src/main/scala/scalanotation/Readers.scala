@@ -1,7 +1,6 @@
 package scalanotation
 
 import scala.NamedTuple
-import scala.annotation.publicInBinary
 import steps.result.Result
 import steps.result.Result.eval.{ok, raise, break}
 
@@ -20,12 +19,6 @@ object Readers:
       readDeclsAs[Expr](input, debugTokens, packageName) match
         case Result.Ok(value) => value
         case Result.Err(err)  => throw IllegalArgumentException(err.format)
-
-    @publicInBinary private[scalanotation] def readDecls(
-        input: String,
-        debugTokens: Boolean
-    ): Expr.SourceFile[Expr] =
-      readDecls(input, debugTokens, packageName = "")
 
     def read(input: String, debugTokens: Boolean = false): Expr =
       // TODO: add an okOrElse method that can recover the error somehow or return the value.
@@ -50,12 +43,6 @@ object Readers:
       val tokens = Tokenizer.tokenize(input, debugTokens).ok
       break(TokenDecoder.decodeAnyRoot(tokens, packageName, reader))
 
-  @publicInBinary private[scalanotation] def readDeclsAs[T: Reader as reader](
-      input: String,
-      debugTokens: Boolean
-  ): Result[Expr.SourceFile[T], DecodeError] =
-    readDeclsAs(input, debugTokens, packageName = "")
-
   def readDeclAs[T: Reader as reader](
       input: String,
       rootName: String,
@@ -65,10 +52,3 @@ object Readers:
     Result:
       val tokens = Tokenizer.tokenize(input, debugTokens).ok
       break(TokenDecoder.decode(tokens, rootName, packageName, reader))
-
-  @publicInBinary private[scalanotation] def readDeclAs[T: Reader as reader](
-      input: String,
-      rootName: String,
-      debugTokens: Boolean
-  ): Result[T, DecodeError] =
-    readDeclAs(input, rootName, debugTokens, packageName = "")

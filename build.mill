@@ -1,5 +1,11 @@
+//| mvnDeps: [
+//|   "com.github.lolgab::mill-mima::0.2.1",
+//|   "ch.epfl.scala::tasty-mima:1.4.1",
+//|   "ch.epfl.scala::tasty-query:1.8.0"
+//| ]
 package build
 
+import com.github.lolgab.mill.mima.Mima
 import mill.*
 import mill.api.Task.Simple
 import mill.javalib.publish.Developer
@@ -17,6 +23,7 @@ object Versions:
   val scalaJs     = "1.21.0"
   val scalaNative = "0.5.11"
   val scalaJavaTime = "2.6.0"
+  val previous    = "0.2.1"
 
 trait ScalaObjectNotationModule extends SbtModule:
   def scalaVersion = Versions.scala
@@ -94,7 +101,18 @@ trait PublishSettings extends PublishModule, mill.util.VcsVersionModule:
 trait CorePublishedModule extends CoreModuleBase, PublishSettings:
   def projectDesc = "parser for a subset of Scala syntax for interpreting directly to data"
 
-object core extends ScalaObjectNotationModule, CorePublishedModule:
+object core extends ScalaObjectNotationModule, CorePublishedModule, Mima, TastyMimaModule:
+  override def mimaPreviousVersions: T[Seq[String]] = Task {
+    Seq(Versions.previous)
+  }
+
+  override def tastyMimaArtifactPrivatePackages: T[Seq[String]] = Task {
+    Seq("scalanotation.internal")
+  }
+
+  override def tastyMimaExcludedArtifactEntryPrefixes: Seq[String] =
+    Seq("scalanotation/internal/TokenDecoder")
+
   object js extends ScalaObjectNotationJsModule, CorePublishedModule
   object jsWasm extends ScalaObjectNotationJsWasmModule, CoreModuleBase
   object native extends ScalaObjectNotationNativeModule, CorePublishedModule
