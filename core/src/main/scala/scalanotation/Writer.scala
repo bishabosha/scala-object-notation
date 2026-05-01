@@ -45,7 +45,21 @@ object Writer extends WriterLowPriority, CommonTypeClassCompanion[Writer]:
       value: T,
       format: TextFormat
   ): String =
+    renderDecl(writer, name, value, packageName = "", format)
+
+  private[scalanotation] def renderDecl[T](
+      writer: Writer[T],
+      name: String,
+      value: T,
+      packageName: String,
+      format: TextFormat
+  ): String =
     val out = ExprRenderer.Output()
+    if packageName.nonEmpty then
+      out.append("package ")
+      out.append(packageName)
+      if format.pretty then out.newlineAndIndent(0)(using format)
+      else out.append("; ")
     out.append("val ")
     out.append(name)
     out.append(" = ")

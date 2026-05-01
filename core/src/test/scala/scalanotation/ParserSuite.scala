@@ -32,6 +32,7 @@ class ParserSuite extends FunSuite:
       case Token.Plus(_)             => "+"
       case Token.Minus(_)            => "-"
       case Token.Comma(_)            => ","
+      case Token.Semicolon(_)        => ";"
       case Token.LParen(_)           => "("
       case Token.RParen(_)           => ")"
       case Token.Eof(_)              => "eof"
@@ -276,6 +277,21 @@ class ParserSuite extends FunSuite:
       List("package", "<Identifier:foo>", ".", "<Identifier:bar>", "eof")
     )
     assertEquals(
+      tokenLabels("package foo.bar; val data = null"),
+      List(
+        "package",
+        "<Identifier:foo>",
+        ".",
+        "<Identifier:bar>",
+        ";",
+        "val",
+        "<Identifier:data>",
+        "=",
+        "null",
+        "eof"
+      )
+    )
+    assertEquals(
       tokenLabels("package foo"),
       List("package", "<Identifier:foo>", "eof")
     )
@@ -423,6 +439,15 @@ class ParserSuite extends FunSuite:
     )
 
     assertEquals(parsed, expected)
+    assertEquals(
+      Readers.readDeclAs[Data](input, rootName = "data", packageName = "foo.bar"),
+      Result.Ok((x = 1))
+    )
+
+  test("read expected package statement with semicolon separator"):
+    type Data = (x: Int)
+    val input = "package foo.bar; val data = (x = 1)"
+
     assertEquals(
       Readers.readDeclAs[Data](input, rootName = "data", packageName = "foo.bar"),
       Result.Ok((x = 1))
@@ -1257,6 +1282,27 @@ class ParserSuite extends FunSuite:
       """val data = (name = "Ada", mode = (Scheduled = (at = "2026-03-15", retries = 2)), metadata = (created = "2026-03-14", tags = Vector("compiler", "scala")))"""
     )
     assertEquals(decoded, Result.Ok(value))
+
+  test("write declarations with package statements"):
+    type Data = (x: Int, ok: Boolean)
+    val value: Data = (x = 1, ok = true)
+
+    val compact = Writers.writeDecl("data", value, packageName = "foo.bar")
+    val pretty  = Writers.writeDeclPretty("data", value, packageName = "foo.bar", indent = 2)
+
+    assertEquals(compact, "package foo.bar; val data = (x = 1, ok = true)")
+    assertEquals(
+      pretty,
+      """package foo.bar
+        |val data = (
+        |  x = 1,
+        |  ok = true
+        |)""".stripMargin
+    )
+    assertEquals(
+      Readers.readDeclAs[Data](compact, rootName = "data", packageName = "foo.bar"),
+      Result.Ok(value)
+    )
 
   test("write strings and chars with escaping"):
     val rendered = Writers.write(

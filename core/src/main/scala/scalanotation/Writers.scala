@@ -22,5 +22,24 @@ object Writers:
   def writeDecl[T: Writer](rootName: String, value: T, format: TextFormat): String =
     Writer.renderDecl(summon[Writer[T]], rootName, value, format)
 
+  def writeDecl[T: Writer](rootName: String, value: T, packageName: String): String =
+    Writer.renderDecl(summon[Writer[T]], rootName, value, packageName, TextFormat.compact)
+
+  def writeDecl[T: Writer](
+      rootName: String,
+      value: T,
+      packageName: String,
+      format: TextFormat
+  ): String =
+    Writer.renderDecl(summon[Writer[T]], rootName, value, packageName, format)
+
   def writeDeclPretty[T: Writer](rootName: String, value: T, indent: Int = 2): String =
     Writer.renderDecl(summon[Writer[T]], rootName, value, TextFormat.pretty(indent))
+
+  def writeDeclPretty[T: Writer](
+      rootName: String,
+      value: T,
+      packageName: String,
+      indent: Int
+  ): String =
+    Writer.renderDecl(summon[Writer[T]], rootName, value, packageName, TextFormat.pretty(indent))

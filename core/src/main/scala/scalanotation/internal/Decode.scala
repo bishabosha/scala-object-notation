@@ -300,6 +300,7 @@ private[scalanotation] object TokenDecoder:
       case Token.Plus(_)              => "'+'"
       case Token.Minus(_)             => "'-'"
       case Token.Comma(_)             => "','"
+      case Token.Semicolon(_)         => "';'"
       case Token.LParen(_)            => "'('"
       case Token.RParen(_)            => "')'"
       case Token.Eof(_)               => "end of input"
@@ -905,6 +906,12 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
         expectPackage().check
         val declaredName = expectQualifiedIdentifier().ok
         if declaredName != packageName then raise(DecodeError.UnexpectedPackage(declaredName))
+        acceptStatementSeparator()
+
+  private def acceptStatementSeparator(): Unit =
+    currentToken() match
+      case Token.Semicolon(_) => advance()
+      case _                  => ()
 
   private def expectPackage(): Result[Unit, DecodeError] = Result.task:
     currentToken() match
