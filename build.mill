@@ -23,7 +23,7 @@ object Versions:
   val scalaJs     = "1.21.0"
   val scalaNative = "0.5.11"
   val scalaJavaTime = "2.6.0"
-  val previous    = "0.2.1"
+  val previous    = "0.3.0"
 
 trait ScalaObjectNotationModule extends SbtModule:
   def scalaVersion = Versions.scala
