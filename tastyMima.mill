@@ -1,0 +1,139 @@
+package build
+
+import com.github.lolgab.mill.mima.Mima
+import mill.*
+import mill.api.Result
+import mill.scalalib.*
+
+import java.io.FileInputStream
+import java.io.FileOutputStream
+import java.nio.file.FileSystems
+import java.nio.file.Path
+import java.nio.file.Paths
+import java.util.jar.JarEntry
+import java.util.jar.JarInputStream
+import java.util.jar.JarOutputStream
+
+trait TastyMimaModule extends ScalaModule, Mima:
+  def tastyMimaProblemFilters: Seq[tastymima.intf.ProblemMatcher] =
+    Seq.empty[tastymima.intf.ProblemMatcher]
+
+  def tastyMimaArtifactPrivatePackages: T[Seq[String]] = Task {
+    Seq.empty[String]
+  }
+
+  def tastyMimaExcludedArtifactEntryPrefixes: Seq[String] =
+    Seq.empty[String]
+
+  private def resolvedTastyMimaPreviousArtifacts: T[Seq[(Dep, PathRef, Seq[PathRef])]] = Task {
+    val builder = Seq.newBuilder[(Dep, PathRef, Seq[PathRef])]
+    var failure = null.asInstanceOf[Result[Seq[(Dep, PathRef, Seq[PathRef])]]]
+
+    mimaPreviousArtifacts().foreach { dep =>
+      val boundDep = bindDependency()(dep)
+      val targetResult = Lib.resolveDependencies(
+        repositories = repositoriesTask(),
+        deps = Seq(boundDep.copy(dep = boundDep.dep.withTransitive(false))),
+        checkGradleModules = false
+      )
+      val classpathResult = Lib.resolveDependencies(
+        repositories = repositoriesTask(),
+        deps = Seq(boundDep),
+        ctx = Some(Task.ctx()),
+        checkGradleModules = false
+      )
+
+      (targetResult, classpathResult) match
+        case (other: Result.Failure, _) =>
+          failure = other.asInstanceOf[Result[Seq[(Dep, PathRef, Seq[PathRef])]]]
+        case (_, other: Result.Failure) =>
+          failure = other.asInstanceOf[Result[Seq[(Dep, PathRef, Seq[PathRef])]]]
+        case (Result.Success(Seq(target)), Result.Success(classpath)) =>
+          builder += ((dep, target, classpath))
+        case (Result.Success(other), _) =>
+          failure = Result.Failure(
+            s"Expected exactly one artifact for $dep, resolved ${other.size} artifacts"
+          )
+    }
+
+    if failure == null then Result.Success(builder.result())
+    else failure
+  }
+
+  def tastyMimaReportIssues(): Command[Unit] = Task.Command {
+    import scala.jdk.CollectionConverters.*
+
+    val config = new tastymima.intf.Config()
+      .withMoreProblemFilters(tastyMimaProblemFilters.asJava)
+      .withMoreArtifactPrivatePackages(tastyMimaArtifactPrivatePackages().asJava)
+    val checker = new tastymima.TastyMiMa(config)
+    val excludedEntryPrefixes = tastyMimaExcludedArtifactEntryPrefixes
+    def filteredArtifact(source: os.Path, name: String): os.Path =
+      val dest = Task.dest / s"$name.jar"
+      val input = new JarInputStream(FileInputStream(source.toIO))
+      val output = new JarOutputStream(FileOutputStream(dest.toIO))
+      try
+        Iterator.continually(input.getNextJarEntry).takeWhile(_ != null).foreach { entry =>
+          val entryName = entry.getName
+          if !excludedEntryPrefixes.exists(entryName.startsWith) then
+            output.putNextEntry(JarEntry(entryName))
+            input.transferTo(output)
+            output.closeEntry()
+        }
+      finally
+        input.close()
+        output.close()
+      dest
+
+    val javaBootClasspath: Seq[Path] =
+      Option(System.getProperty("sun.boot.class.path")) match
+        case Some(bootClasspath) =>
+          val rtJar = bootClasspath
+            .split(java.io.File.pathSeparatorChar)
+            .find(path => java.io.File(path).getName == "rt.jar")
+            .getOrElse(throw RuntimeException(s"Cannot find rt.jar in $bootClasspath"))
+          Seq(Paths.get(rtJar))
+        case None =>
+          Seq(FileSystems.getFileSystem(java.net.URI.create("jrt:/")).getPath("modules", "java.base"))
+
+    val currentArtifact = jar().path
+    val currentTastyArtifact = filteredArtifact(currentArtifact, "current")
+    val currentClasspath = javaBootClasspath ++ (currentTastyArtifact +: compileClasspath().map(_.path))
+      .filter(os.exists)
+      .distinct
+      .map(_.toNIO)
+    val currentClasspathJava = currentClasspath.asJava
+
+    val problems = resolvedTastyMimaPreviousArtifacts().flatMap {
+      case (_, previousArtifact, previousClasspath) =>
+        val previousTastyArtifact = filteredArtifact(
+          previousArtifact.path,
+          s"previous-${previousArtifact.path.baseName}"
+        )
+        val previousClasspathPaths = (previousTastyArtifact +: previousClasspath.map(_.path))
+          .filter(_ != previousArtifact.path)
+          .filter(os.exists)
+          .distinct
+        val previousClasspathJava =
+          (javaBootClasspath ++ previousClasspathPaths.map(_.toNIO)).asJava
+        checker
+          .analyze(
+            previousClasspathJava,
+            previousTastyArtifact.toNIO,
+            currentClasspathJava,
+            currentTastyArtifact.toNIO
+          )
+          .asScala
+          .map(problem =>
+            s"${previousArtifact.path.baseName}: ${problem.getDescription}\n  filter with: ${problem.getFilterIncantation}"
+          )
+    }
+
+    if problems.isEmpty then Result.Success(())
+    else Result.Failure(problems.mkString("TASTy-MiMa found incompatible changes:\n", "\n", ""))
+  }
+
+  def checkCompatibility(): Command[Unit] = Task.Command {
+    mimaReportBinaryIssues()()
+    tastyMimaReportIssues()()
+  }
