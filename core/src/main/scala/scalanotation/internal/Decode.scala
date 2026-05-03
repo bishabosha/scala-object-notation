@@ -693,47 +693,55 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
       case rParen: DecodeError.Span => NamedTupleParseResultBuf.push(0, null, rParen)
       case err: DecodeError         => raise(err)
       case _                        =>
-        var fieldIndex                   = 0
-        var lastFieldName: String | Null = null
-        val rparen: Token.RParen         = loop {
+        var fieldIndex                                                            = 0
+        var lastFieldName: String | Null                                          = null
+        def parseNamedField(actualName: String, nameSpan: DecodeError.Span): Unit =
+          val skipToValue = eval {
+            advance()
+            currentToken() match
+              case Token.Equals(_) =>
+                advance()
+                null
+              case other =>
+                DecodeError.ExpectedEquals(describe(other)).atToken(other.span)
+          }
+
+          skipToValue match
+            case null => ()
+            case err  => raise(err)
+
+          consumeFieldValue(actualName, nameSpan, fieldIndex)
+          lastFieldName = actualName
+          fieldIndex += 1
+
+        val rparen: Token.RParen = loop {
           currentToken() match
             case Token.Identifier(actualName, nameSpan) =>
-              val skipToValue = eval {
-                advance()
-                currentToken() match
-                  case Token.Equals(_) =>
-                    advance()
-                    null
-                  case other =>
-                    DecodeError.ExpectedEquals(describe(other)).atToken(other.span)
-              }
-
-              skipToValue match
-                case null => ()
-                case err  => raise(err)
-
-              consumeFieldValue(actualName, nameSpan, fieldIndex)
-              lastFieldName = actualName
-              fieldIndex += 1
-
-              val expectCommaOrRParen: Token | DecodeError = eval {
-                currentToken() match
-                  case Token.Comma(_) =>
-                    advance()
-                    currentToken() match
-                      case rparen @ Token.RParen(_) => rparen
-                      case nextToken                => nextToken
-                  case rparen @ Token.RParen(_) => rparen
-                  case other                    =>
-                    DecodeError.ExpectedRParen(describe(other)).atToken(other.span)
-              }
-              expectCommaOrRParen match
-                case rparen: Token.RParen => loop.break(rparen)
-                case err: DecodeError     => raise(err)
-                case _                    => ()
-
+              parseNamedField(actualName, nameSpan)
+            case Token.VectorId(nameSpan) =>
+              parseNamedField("Vector", nameSpan)
+            case Token.Plus(nameSpan) =>
+              parseNamedField("+", nameSpan)
+            case Token.Minus(nameSpan) =>
+              parseNamedField("-", nameSpan)
             case other =>
               raise(DecodeError.ExpectedFieldName(describe(other)).atToken(other.span))
+
+          val expectCommaOrRParen: Token | DecodeError = eval {
+            currentToken() match
+              case Token.Comma(_) =>
+                advance()
+                currentToken() match
+                  case rparen @ Token.RParen(_) => rparen
+                  case nextToken                => nextToken
+              case rparen @ Token.RParen(_) => rparen
+              case other                    =>
+                DecodeError.ExpectedRParen(describe(other)).atToken(other.span)
+          }
+          expectCommaOrRParen match
+            case rparen: Token.RParen => loop.break(rparen)
+            case err: DecodeError     => raise(err)
+            case _                    => ()
         }
         advance()
         NamedTupleParseResultBuf.push(fieldIndex, lastFieldName, rparen.span)
@@ -933,6 +941,15 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
       case Token.Identifier(name, _) =>
         advance()
         name
+      case Token.VectorId(_) =>
+        advance()
+        "Vector"
+      case Token.Plus(_) =>
+        advance()
+        "+"
+      case Token.Minus(_) =>
+        advance()
+        "-"
       case other =>
         raise(DecodeError.ExpectedIdentifier(describe(other)).atToken(other.span))
 

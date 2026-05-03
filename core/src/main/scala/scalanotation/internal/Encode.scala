@@ -80,7 +80,7 @@ private[scalanotation] object Encode:
       val fields = namedTuple.fields
       ExprRenderer.renderNamedTuple(out, depth, fields.length) { index =>
         val field = fields(index)
-        out.append(field.name)
+        IdentifierSyntax.appendIdentifier(field.name, out)
         out.append(" = ")
         renderText(field.schema, write.fieldValue(value, index), out, depth + 1)
       }
@@ -89,7 +89,7 @@ private[scalanotation] object Encode:
       if write == null then missingWriteCapability(schema)
       val sumCase = sum.cases(write.caseIndex(value))
       ExprRenderer.renderNamedTuple(out, depth, 1) { _ =>
-        out.append(sumCase.name)
+        IdentifierSyntax.appendIdentifier(sumCase.name, out)
         out.append(" = ")
         renderText(sumCase.schema, value, out, depth + 1)
       }
@@ -106,7 +106,7 @@ private[scalanotation] object Encode:
       val values = write.iterator(value)
       ExprRenderer.renderNamedTuple(out, depth, write.size(value)) { _ =>
         val (key, elem) = values.next()
-        out.append(key)
+        IdentifierSyntax.appendIdentifier(key, out)
         out.append(" = ")
         renderText(dict.element, elem, out, depth + 1)
       }

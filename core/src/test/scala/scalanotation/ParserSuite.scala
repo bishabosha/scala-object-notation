@@ -391,6 +391,59 @@ class ParserSuite extends FunSuite:
       softKeywords.map(name => s"<Identifier:$name>") :+ "eof"
     )
 
+  test("tokenize quoted identifiers according to Scala lexical syntax"):
+    val unicodeBacktick = "`" + "\\" + "u0060" + "`"
+
+    assertEquals(
+      tokenLabels("""`def` `has space` `a-b` `line\nindent\tpath\\` """ + unicodeBacktick),
+      List(
+        "<Identifier:def>",
+        "<Identifier:has space>",
+        "<Identifier:a-b>",
+        "<Identifier:line\nindent\tpath\\>",
+        "<Identifier:`>",
+        "eof"
+      )
+    )
+
+  test("parse quoted identifiers in identifier positions"):
+    val input =
+      """val `type` = (`yield` = 1, `has space` = 2, `a-b` = 3, + = 4, - = 5)
+        |""".stripMargin
+
+    val parsed = Readers.quick.readDecls(input)
+
+    val expected = Expr.SourceFile(
+      Map(
+        "type" -> Expr.NamedTupleExpr(
+          IndexedSeq(
+            "yield"     -> Expr.IntConstant(1),
+            "has space" -> Expr.IntConstant(2),
+            "a-b"       -> Expr.IntConstant(3),
+            "+"         -> Expr.IntConstant(4),
+            "-"         -> Expr.IntConstant(5)
+          )
+        )
+      )
+    )
+
+    assertEquals(parsed, expected)
+
+  test("parse Vector in identifier positions"):
+    val input =
+      """val Vector = (Vector = 99)
+        |""".stripMargin
+
+    val parsed = Readers.quick.readDecls(input)
+
+    val expected = Expr.SourceFile(
+      Map(
+        "Vector" -> Expr.NamedTupleExpr(IndexedSeq("Vector" -> Expr.IntConstant(99)))
+      )
+    )
+
+    assertEquals(parsed, expected)
+
   test("soft keywords remain valid field names"):
     val input  = "val data = (using = 1, extension = 2, derives = 3, end = 4)"
     val parsed = Readers.quick.readDecls(input)
@@ -1324,6 +1377,39 @@ class ParserSuite extends FunSuite:
       decoded,
       Result.Ok((message = "line1\nline2\t\"quoted\"", mark = '\'', slash = '\\'))
     )
+
+  test("render quoted identifiers only when needed"):
+    val expr = Expr.NamedTupleExpr(
+      IndexedSeq(
+        "type"        -> Expr.IntConstant(1),
+        "has space"   -> Expr.IntConstant(2),
+        "a-b"         -> Expr.IntConstant(3),
+        "line\nbreak" -> Expr.IntConstant(4),
+        "tick`name"   -> Expr.IntConstant(5),
+        "Vector"      -> Expr.IntConstant(6),
+        "empty_?"     -> Expr.IntConstant(7),
+        "+"           -> Expr.IntConstant(8),
+        "-"           -> Expr.IntConstant(9)
+      )
+    )
+
+    val rendered        = expr.render
+    val escapedBacktick = "\\" + "u0060"
+
+    assertEquals(
+      rendered,
+      s"""(`type` = 1, `has space` = 2, `a-b` = 3, `line\\nbreak` = 4, `tick${escapedBacktick}name` = 5, Vector = 6, empty_? = 7, + = 8, - = 9)"""
+    )
+    assertEquals(Readers.quick.read(rendered), expr)
+
+  test("derived writers quote hard-keyword field names"):
+    final case class Data(`type`: Int, Vector: Int) derives ReadWriter
+
+    val value    = Data(1, 2)
+    val rendered = Writers.write(value)
+
+    assertEquals(rendered, "(`type` = 1, Vector = 2)")
+    assertEquals(Readers.readAs[Data](rendered), Result.Ok(value))
 
   test("pretty print typed values with configurable indentation"):
     type Data =
