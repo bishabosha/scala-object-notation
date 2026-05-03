@@ -31,7 +31,7 @@ private[scalanotation] object ExprRenderer:
   def renderDecl(name: String, expr: Expr, format: TextFormat): String =
     val out = Output()
     out.append("val ")
-    out.append(name)
+    IdentifierSyntax.appendIdentifier(name, out)
     out.append(" = ")
     renderExpr(expr, out, 0)(using format)
     out.result()
@@ -53,7 +53,7 @@ private[scalanotation] object ExprRenderer:
       case Expr.NamedTupleExpr(elements) =>
         renderNamedTuple(out, depth, elements.length) { index =>
           val (name, value) = elements(index)
-          out.append(name)
+          IdentifierSyntax.appendIdentifier(name, out)
           out.append(" = ")
           renderExpr(value, out, depth + 1)
         }

@@ -3,6 +3,7 @@ package scalanotation
 import scalanotation.internal.CommonTypeClassCompanion
 import scalanotation.internal.Encode
 import scalanotation.internal.ExprRenderer
+import scalanotation.internal.IdentifierSyntax
 import scalanotation.internal.RawSchema
 
 import scala.deriving.Mirror
@@ -57,11 +58,11 @@ object Writer extends WriterLowPriority, CommonTypeClassCompanion[Writer]:
     val out = ExprRenderer.Output()
     if packageName.nonEmpty then
       out.append("package ")
-      out.append(packageName)
+      IdentifierSyntax.appendQualifiedIdentifier(packageName, out)
       if format.pretty then out.newlineAndIndent(0)(using format)
       else out.append("; ")
     out.append("val ")
-    out.append(name)
+    IdentifierSyntax.appendIdentifier(name, out)
     out.append(" = ")
     Encode.renderText(writer.schema, value, out, 0)(using format)
     out.result()

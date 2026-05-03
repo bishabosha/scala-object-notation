@@ -80,6 +80,7 @@ private[scalanotation] final class Tokenizer(input: String):
       case '.'                         => advance(); Token.Dot(start)
       case ','                         => advance(); Token.Comma(start)
       case ';'                         => advance(); Token.Semicolon(start)
+      case '`'                         => scanQuotedIdentifier(start)
       case '"'                         => scanString(start)
       case '\''                        => scanChar(start)
       case ch if isIdentifierStart(ch) => scanIdentifier(start)
@@ -90,6 +91,8 @@ private[scalanotation] final class Tokenizer(input: String):
   private def scanIdentifier(start: DecodeError.Span): Token =
     val builder = new StringBuilder
     while !isAtEnd && isIdentifierPart(currentChar()) do builder += advance()
+    if builder.nonEmpty && builder.charAt(builder.length - 1) == '_' then
+      while !isAtEnd && isOperatorPart(currentChar()) do builder += advance()
     builder.result() match
       case KW_package                                        => Token.PackageKw(start)
       case KW_val                                            => Token.ValKw(start)
@@ -101,6 +104,40 @@ private[scalanotation] final class Tokenizer(input: String):
         keyword(name, start)
       case name =>
         Token.Identifier(nameCached(name), start)
+
+  private def scanQuotedIdentifier(start: DecodeError.Span): Token =
+    advance()
+    val builder = new StringBuilder
+    while !isAtEnd && currentChar() != '`' do
+      currentChar() match
+        case '\n' | '\r' =>
+          fail("Quoted identifier cannot contain a raw newline", start)
+        case '\\' =>
+          advance()
+          if isAtEnd then fail("Unterminated quoted identifier", start)
+          builder += scanEscape(start)
+        case _ =>
+          builder += advance()
+    if isAtEnd then fail("Unterminated quoted identifier", start)
+    advance()
+    Token.Identifier(nameCached(builder.result()), start)
+
+  private def scanEscape(start: DecodeError.Span): Char =
+    if currentChar() == 'u' then scanUnicodeEscape(start)
+    else decodeEscape(advance(), start)
+
+  private def scanUnicodeEscape(start: DecodeError.Span): Char =
+    while !isAtEnd && currentChar() == 'u' do advance()
+    var value = 0
+    var count = 0
+    while count < 4 do
+      if isAtEnd then fail("Incomplete unicode escape sequence", start)
+      val digit = Character.digit(currentChar(), 16)
+      if digit < 0 then fail(s"Invalid unicode escape digit '${currentChar()}'", start)
+      value = (value << 4) | digit
+      advance()
+      count += 1
+    value.toChar
 
   private def scanNumber(start: DecodeError.Span): Token =
     if currentChar() == '0' && (
@@ -351,17 +388,14 @@ private[scalanotation] final class Tokenizer(input: String):
 
   private def currentSpan(): DecodeError.Span = DecodeError.Span(index, line, column)
 
-  private def isIdentifierStart(ch: Char): Boolean = ch.isLetter || ch == '_'
+  private def isIdentifierStart(ch: Char): Boolean =
+    IdentifierSyntax.isIdentifierStart(ch)
 
   private def isIdentifierPart(ch: Char): Boolean =
-    ch.isLetterOrDigit || ch == '_'
+    IdentifierSyntax.isIdentifierPart(ch)
 
   private def isOperatorPart(ch: Char): Boolean =
-    ch match
-      case '~' | '!' | '@' | '#' | '%' | '^' | '*' | '+' | '-' | '<' | '>' | '?' | ':' | '=' | '&' |
-          '|' | '\\' | '/' =>
-        true
-      case _ => false
+    IdentifierSyntax.isOperatorPart(ch)
 
   private def parseIntLiteral(
       digits: String,
