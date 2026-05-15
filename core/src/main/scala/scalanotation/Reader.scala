@@ -67,6 +67,10 @@ object Reader extends ReaderLowPriority, CommonTypeClassCompanion[Reader]:
 
     protected def allowSkippedNullableFields: Boolean = true
 
+  object configured:
+    inline def derived[T](using mirror: Mirror.Of[T], config: Configured[T]): Reader[T] =
+      fromSchema(Configured.applyToSchema(Reader.derived[T].schema, config))
+
   private[scalanotation] trait ReaderBuilders[RejectAllOptionalProducts <: Boolean]
       extends CommonBuilders[RejectAllOptionalProducts, "Reader"]:
     type FieldRepr      = RawSchema.Field

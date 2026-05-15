@@ -62,6 +62,10 @@ object ReadWriter extends CommonTypeClassCompanion[ReadWriter]:
 
     protected def allowSkippedNullableFields: Boolean = true
 
+  object configured:
+    inline def derived[T](using mirror: Mirror.Of[T], config: Configured[T]): ReadWriter[T] =
+      fromSchema(Configured.applyToSchema(ReadWriter.derived[T].schema, config))
+
   private[scalanotation] trait ReadWriterBuilders[RejectAllOptionalProducts <: Boolean]
       extends CommonBuilders[RejectAllOptionalProducts, "ReadWriter"]:
     type FieldRepr      = RawSchema.Field

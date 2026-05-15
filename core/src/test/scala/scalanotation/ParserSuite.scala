@@ -1544,6 +1544,121 @@ class ParserSuite extends FunSuite:
     )
     assertEquals(decoded, Result.Ok(value))
 
+  test("configured ReadWriter derives discriminator field sum schemas"):
+    enum Mode:
+      case Fast
+      case Scheduled(at: LocalDate, retries: Int)
+
+    given ReadWriter[LocalDate] =
+      summon[ReadWriter[String]].bimapResult { raw =>
+        Result.catchException({ case _: DateTimeParseException =>
+          DecodeError.Custom(s"Invalid ISO date '$raw'")
+        }) {
+          LocalDate.parse(raw)
+        }
+      }(_.toString)
+
+    given Configured[Mode] = Configured.discriminator("type")
+    given ReadWriter[Mode] = ReadWriter.configured.derived
+
+    val scheduled: Mode = Mode.Scheduled(LocalDate.parse("2026-03-15"), 2)
+    val fast: Mode      = Mode.Fast
+
+    assertEquals(
+      Writers.write(scheduled),
+      """(`type` = "Scheduled", at = "2026-03-15", retries = 2)"""
+    )
+    assertEquals(Writers.write(fast), """(`type` = "Fast")""")
+    assertEquals(
+      Readers.readAs[Mode]("""(`type` = "Scheduled", at = "2026-03-15", retries = 2)"""),
+      Result.Ok(scheduled)
+    )
+    assertEquals(Readers.readAs[Mode]("""(`type` = "Fast")"""), Result.Ok(fast))
+    assertEquals(
+      Expr
+        .NamedTupleExpr(
+          IndexedSeq(
+            "type"    -> Expr.StringConstant("Scheduled"),
+            "at"      -> Expr.StringConstant("2026-03-15"),
+            "retries" -> Expr.IntConstant(2)
+          )
+        )
+        .decodeAs[Mode],
+      Result.Ok(scheduled)
+    )
+
+  test("configured discriminator sum decoder requires the discriminator field first"):
+    enum Command:
+      case Copy(from: String, to: String)
+
+    given Configured[Command] = Configured.discriminator("kind")
+    given Reader[Command]     = Reader.configured.derived
+
+    Readers.readAs[Command]("""(from = "a", kind = "Copy", to = "b")""") match
+      case Result.Err(error) =>
+        assertEquals(error.rootCause, DecodeError.FieldOrderMismatch("kind", "from"))
+      case Result.Ok(value) => fail(s"Expected a decode failure, got $value")
+
+  test("configured ReadWriter with no discriminator uses the standard sum schema"):
+    enum Mode:
+      case Fast
+      case Scheduled(at: String)
+
+    given Configured[Mode] = Configured.default
+    given ReadWriter[Mode] = ReadWriter.configured.derived
+
+    val value: Mode = Mode.Scheduled("soon")
+    val rendered    = Writers.write(value)
+
+    assertEquals(rendered, """(Scheduled = (at = "soon"))""")
+    assertEquals(Readers.readAs[Mode](rendered), Result.Ok(value))
+
+  test("configured skippable products allow skipped nullable fields"):
+    final case class User(name: String, nickname: Option[String])
+
+    given Configured[User] = Configured.skippable
+    given Reader[User]     = Reader.configured.derived
+
+    assertEquals(
+      Readers.readAs[User]("""(name = "Ada")"""),
+      Result.Ok(User("Ada", None))
+    )
+
+  test("configured skippable discriminator sum cases may contain only optional fields"):
+    enum Event:
+      case Ping(id: Option[Int], label: Option[String])
+
+    given Configured[Event] = Configured.discriminator("type", skippable = true)
+    given Reader[Event]     = Reader.configured.derived
+
+    assertEquals(
+      Readers.readAs[Event]("""(`type` = "Ping")"""),
+      Result.Ok(Event.Ping(None, None))
+    )
+    assertEquals(
+      Readers.readAs[Event]("""(`type` = "Ping", id = 1)"""),
+      Result.Ok(Event.Ping(Some(1), None))
+    )
+
+  test("configured discriminator requires a sum type"):
+    val errors = typeCheckErrors(
+      "final case class Data(x: Int)\nscalanotation.Configured.discriminator[Data](\"type\")"
+    )
+
+    assert(clue(errors).nonEmpty)
+    assert(errors.exists(_.message.contains("Mirror.SumOf")))
+
+  test("configured skippable products still require one non-optional field"):
+    val errors = typeCheckErrors(
+      "final case class Data(x: Option[Int], y: Option[String])\nscalanotation.Configured.skippable[Data]"
+    )
+
+    assert(errors.nonEmpty)
+    assert(
+      clue(errors.head.message)
+        .contains("Configured skippable derivation for a product with only Option fields")
+    )
+
   test("case class read-writer derivation allows all optional fields by default"):
     final case class Data(x: Option[Int], y: Option[String]) derives ReadWriter
 

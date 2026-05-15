@@ -19,9 +19,15 @@ private[scalanotation] enum RawSchema:
       write: RawSchema.NamedTupleWrite | Null = null,
       allowSkippedNullableFields: Boolean = false
   )
+  case PartialNamedTuple(base: RawSchema, alreadySeenField: String)
   case Sum(
       cases: IArray[RawSchema.SumCase],
       write: RawSchema.SumWrite | Null = null
+  )
+  case DiscriminatorSum(
+      cases: IArray[RawSchema.SumCase],
+      write: RawSchema.SumWrite | Null,
+      discriminatorField: String
   )
   case Vector(
       element: RawSchema,
@@ -94,10 +100,18 @@ private[scalanotation] enum RawSchema:
         val fields = namedTuple.fields
         if fields.isEmpty then "AnyNamedTuple"
         else fields.map(f => s"${f.name}: ...").mkString("(", ", ", ")")
+      case partial: RawSchema.PartialNamedTuple =>
+        partial.base.describeSelf
       case sum: RawSchema.Sum =>
         val cases = sum.cases
         if cases.isEmpty then "AnyNamedTuple"
         else cases.iterator.map(k => s"(${k.name}: ...)").mkString(" | ")
+      case sum: RawSchema.DiscriminatorSum =>
+        val cases = sum.cases
+        if cases.isEmpty then "AnyNamedTuple"
+        else
+          val field = sum.discriminatorField
+          cases.iterator.map(k => s"""($field: "${k.name}", ...)""").mkString(" | ")
       case _: RawSchema.Vector      => "Vector[...]"
       case _: RawSchema.Dict        => "AnyNamedTuple"
       case RawSchema.AnyExpr        => "Any"
