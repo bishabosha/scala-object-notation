@@ -77,6 +77,10 @@ object Writer extends WriterLowPriority, CommonTypeClassCompanion[Writer]:
   def forNull[T]: Writer[T] =
     summon[Writer[Null]].contramap(_ => null)
 
+  object configured:
+    inline def derived[T](using mirror: Mirror.Of[T], config: Configured[T]): Writer[T] =
+      fromSchema(Configured.applyToSchema(Writer.derived[T].schema, config))
+
   override object Builders extends CommonBuilders[false, "Writer"]:
     val thisBuilder: this.type = this
     override type ThisBuilder = thisBuilder.type

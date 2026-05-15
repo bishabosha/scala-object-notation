@@ -26,10 +26,19 @@ private[scalanotation] object Encode:
           fieldExprs += ((field.name, writeExpr(field.schema, access.fieldValue(value, index))))
           index += 1
         Expr.NamedTupleExpr(fieldExprs.result())
+      case RawSchema.PartialNamedTuple(base, _) =>
+        writeExpr(base, value)
       case sum: RawSchema.Sum =>
         if sum.write == null then missingWriteCapability(schema)
         val sumCase = sum.cases(sum.write.nn.caseIndex(value))
         Expr.NamedTupleExpr(IndexedSeq(sumCase.name -> writeExpr(sumCase.schema, value)))
+      case sum: RawSchema.DiscriminatorSum =>
+        if sum.write == null then missingWriteCapability(schema)
+        val sumCase = sum.cases(sum.write.nn.caseIndex(value))
+        Expr.NamedTupleExpr(
+          (sum.discriminatorField -> Expr.StringConstant(sumCase.name)) +:
+            writeDiscriminatorPayload(sumCase.schema, value)
+        )
       case vector: RawSchema.Vector =>
         if vector.write == null then missingWriteCapability(schema)
         Expr.VectorExpr(
@@ -84,6 +93,8 @@ private[scalanotation] object Encode:
         out.append(" = ")
         renderText(field.schema, write.fieldValue(value, index), out, depth + 1)
       }
+    case RawSchema.PartialNamedTuple(base, _) =>
+      renderText(base, value, out, depth)
     case sum: RawSchema.Sum =>
       val write = sum.write
       if write == null then missingWriteCapability(schema)
@@ -93,6 +104,9 @@ private[scalanotation] object Encode:
         out.append(" = ")
         renderText(sumCase.schema, value, out, depth + 1)
       }
+    case sum: RawSchema.DiscriminatorSum =>
+      if sum.write == null then missingWriteCapability(schema)
+      ExprRenderer.renderExpr(writeExpr(sum, value), out, depth)
     case vector: RawSchema.Vector =>
       val write = vector.write
       if write == null then missingWriteCapability(schema)
@@ -132,3 +146,29 @@ private[scalanotation] object Encode:
       out.append(value.asInstanceOf[Boolean].toString)
     case RawSchema.Null =>
       out.append("null")
+
+  private def writeDiscriminatorPayload(schema: RawSchema, value: Any): IndexedSeq[
+    (name: String, value: Expr)
+  ] =
+    schema match
+      case RawSchema.PartialNamedTuple(base, _) =>
+        writeDiscriminatorPayload(base, value)
+      case mapped: RawSchema.Mapped =>
+        writeDiscriminatorPayload(mapped.base, mapped.mapping.mapInput(value))
+      case namedTuple: RawSchema.NamedTuple =>
+        if namedTuple.write == null then missingWriteCapability(namedTuple)
+        val access     = namedTuple.write.nn
+        val fields     = namedTuple.fields
+        val fieldExprs = IArray.newBuilder[(name: String, value: Expr)]
+        var index      = 0
+        while index < fields.length do
+          val field = fields(index)
+          fieldExprs += ((field.name, writeExpr(field.schema, access.fieldValue(value, index))))
+          index += 1
+        fieldExprs.result().toIndexedSeq
+      case RawSchema.Null =>
+        IndexedSeq.empty
+      case other =>
+        throw IllegalStateException(
+          s"discriminator sum case must be a named tuple, but found ${other.describeSelf}"
+        )

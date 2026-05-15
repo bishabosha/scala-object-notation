@@ -289,6 +289,85 @@ Case objects and empty products follow the same nullary representation:
 (Foo = null)
 ```
 
+### Configured Derivation
+
+Use `Reader.configured.derived`, `Writer.configured.derived`, or
+`ReadWriter.configured.derived` when a type should use an explicit `Configured[T]`.
+
+Currently, configuration supports:
+
+- discriminator-field encoding for sum types
+- skippable decoding for product fields
+
+Discriminator-field encoding flattens the selected enum case into the surrounding named tuple.
+The discriminator field is written first and is not preserved in the decoded value:
+
+```scala
+import scalanotation.*
+
+enum Mode:
+  case Fast
+  case Scheduled(at: String, retries: Int)
+
+given Configured[Mode] =
+  Configured.discriminator("type")
+
+given ReadWriter[Mode] =
+  ReadWriter.configured.derived
+```
+
+The encoded form is:
+
+```scala
+// Fast
+(`type` = "Fast")
+
+// Scheduled(at = "2026-03-15", retries = 2)
+(`type` = "Scheduled", at = "2026-03-15", retries = 2)
+```
+
+`Configured.discriminator[T]` is only available for sum types.
+
+Configured derivation can also be skippable:
+
+```scala
+case class User(name: String, nickname: Option[String])
+
+given Configured[User] =
+  Configured.skippable
+
+given Reader[User] =
+  Reader.configured.derived
+```
+
+That reader accepts:
+
+```scala
+(name = "Ada")
+```
+
+For product types, skippable configured derivation still requires at least one non-`Option` field.
+For discriminator sum types, the discriminator field is enough, so product cases may contain only
+optional fields:
+
+```scala
+enum Event:
+  case Ping(id: Option[Int], label: Option[String])
+
+given Configured[Event] =
+  Configured.discriminator("type", skippable = true)
+
+given Reader[Event] =
+  Reader.configured.derived
+```
+
+This accepts either:
+
+```scala
+(`type` = "Ping")
+(`type` = "Ping", id = 1)
+```
+
 ## Custom Decoding And Encoding
 
 If a config field should still be represented as a simple scalar in text, but map to a richer type
