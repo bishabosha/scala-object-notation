@@ -93,6 +93,56 @@ class ParserSuite extends FunSuite:
     val Expr.NamedTupleExpr(fieldExprs) = parsed.runtimeChecked
     assertEquals(fieldExprs.length, 4)
 
+  test("read tuple literal expression"):
+    val input  = """(1, "two", (ok = true), Vector(3, 4))"""
+    val parsed = Readers.quick.read(input)
+
+    val expected = Expr.TupleExpr(
+      IndexedSeq(
+        Expr.IntConstant(1),
+        Expr.StringConstant("two"),
+        Expr.NamedTupleExpr(IndexedSeq("ok" -> Expr.BooleanConstant(true))),
+        Expr.VectorExpr(IndexedSeq(Expr.IntConstant(3), Expr.IntConstant(4)))
+      )
+    )
+
+    assertEquals(parsed, expected)
+    assertEquals(parsed.render, input)
+
+  test("describe tuple literal expressions with counted slots"):
+    val obtained = Readers.quick.read("""(1, "two", true)""").decodeAs[Int]
+
+    obtained match
+      case Result.Err(error) =>
+        assertEquals(error.rootCause, DecodeError.ExpectedType("Int", "(..., ..., ...)"))
+      case Result.Ok(value) => fail(s"Expected a decode failure, got $value")
+
+  test("reject singleton tuple literal expressions"):
+    val inputs = List("(1)", "(1,)", "((1))")
+
+    inputs.foreach { input =>
+      Readers.readAs[Expr](input) match
+        case Result.Err(error) =>
+          assertEquals(error.rootCause, DecodeError.FieldCountMismatch(2, 1))
+        case Result.Ok(value) => fail(s"Expected a decode failure for $input, got $value")
+    }
+
+  test("reject unit syntax as a tuple literal expression"):
+    val obtained = Readers.readAs[Expr]("()")
+
+    obtained match
+      case Result.Err(error) =>
+        assertEquals(error.rootCause, DecodeError.UnitValueNotAllowed())
+      case Result.Ok(value) => fail(s"Expected a decode failure, got $value")
+
+  test("reject EmptyTuple as an expression"):
+    val obtained = Readers.readAs[Expr]("EmptyTuple")
+
+    obtained match
+      case Result.Err(error) =>
+        assertEquals(error.rootCause, DecodeError.ExpectedExpression("identifier 'EmptyTuple'"))
+      case Result.Ok(value) => fail(s"Expected a decode failure, got $value")
+
   test("decode just expression"):
     type Data = (a: Boolean, b: Boolean, c: Int, d: Float)
     val input  = "(a = true, b = false, c = -12, d = -1.5f)"
@@ -1302,6 +1352,98 @@ class ParserSuite extends FunSuite:
     assertEquals(reparsed, Result.Ok(value))
     assertEquals(rendered, """(x = (label = "abc", ys = Vector(-1, 2, 3)), y = 23, ok = true)""")
 
+  test("tuple typeclass instances round-trip through Expr and text"):
+    type Data = (Int, String, (ok: Boolean), Vector[Long])
+    val value: Data = (1, "two", (ok = true), Vector(3L, 4L))
+
+    summon[Reader[Data]].schema match
+      case tuple: RawSchema.Tuple =>
+        assertEquals(tuple.slots.length, 4)
+        tuple.read match
+          case read: RawSchema.TupleRead.FromReaderBuilder[?, ?] =>
+            assert(read.builder.isInstanceOf[PublicInternal.BuildTuple[?]])
+          case _ =>
+            fail(s"Expected a tuple reader builder, got ${tuple.read}")
+      case other =>
+        fail(s"Expected a tuple reader, got ${other.describeSelf}")
+
+    summon[Writer[Data]].schema match
+      case tuple: RawSchema.Tuple =>
+        assertEquals(tuple.slots.length, 4)
+        assertEquals(tuple.write, RawSchema.TupleWrite.productLike)
+      case other =>
+        fail(s"Expected a tuple writer, got ${other.describeSelf}")
+
+    val expr         = Writers.writeExpr(value)
+    val expectedExpr = Expr.TupleExpr(
+      IndexedSeq(
+        Expr.IntConstant(1),
+        Expr.StringConstant("two"),
+        Expr.NamedTupleExpr(IndexedSeq("ok" -> Expr.BooleanConstant(true))),
+        Expr.VectorExpr(IndexedSeq(Expr.LongConstant(3L), Expr.LongConstant(4L)))
+      )
+    )
+    val rendered = Writers.write(value)
+
+    assertEquals(expr, expectedExpr)
+    assertEquals(expr.decodeAs[Data], Result.Ok(value))
+    assertEquals(rendered, """(1, "two", (ok = true), Vector(3L, 4L))""")
+    assertEquals(Readers.readAs[Data](rendered), Result.Ok(value))
+    assertEquals(summon[ReadWriter[Data]].schema.describeSelf, "(..., ..., ..., ...)")
+
+  test("mapped tuple ReadWriter round-trips through Expr and text"):
+    final case class Pair(count: Int, label: String)
+
+    given ReadWriter[Pair] =
+      summon[ReadWriter[(Int, String)]].bimapResult { case (count, label) =>
+        Result.Ok(Pair(count, label))
+      }(pair => (pair.count, pair.label))
+
+    val value    = Pair(7, "seven")
+    val expr     = Writers.writeExpr(value)
+    val rendered = Writers.write(value)
+
+    assertEquals(
+      expr,
+      Expr.TupleExpr(IndexedSeq(Expr.IntConstant(7), Expr.StringConstant("seven")))
+    )
+    assertEquals(expr.decodeAs[Pair], Result.Ok(value))
+    assertEquals(rendered, """(7, "seven")""")
+    assertEquals(Readers.readAs[Pair](rendered), Result.Ok(value))
+
+  test("reject tuple decodes with one expected or parsed slot"):
+    Readers.readAs[(Int, String)]("(1)") match
+      case Result.Err(error) =>
+        assertEquals(error.rootCause, DecodeError.FieldCountMismatch(2, 1))
+      case Result.Ok(value) => fail(s"Expected a decode failure, got $value")
+
+    val singletonReader = Reader.fromSchema[Int *: EmptyTuple](
+      RawSchema.Tuple(
+        IArray(RawSchema.Int),
+        RawSchema.TupleRead.FromReaderBuilder(PublicInternal.BuildTuple[Int *: EmptyTuple]),
+        write = null
+      )
+    )
+
+    Readers.readAs[Int *: EmptyTuple]("(1)")(using singletonReader) match
+      case Result.Err(error) =>
+        assertEquals(error.rootCause, DecodeError.FieldCountMismatch(2, 1))
+      case Result.Ok(value) => fail(s"Expected a decode failure, got $value")
+
+    Readers.readAs[Int *: EmptyTuple]("(1, 2)")(using singletonReader) match
+      case Result.Err(error) =>
+        assertEquals(error.rootCause, DecodeError.FieldCountMismatch(2, 1))
+      case Result.Ok(value) => fail(s"Expected a decode failure, got $value")
+
+  test("no tuple reader is derived when a slot lacks evidence"):
+    val errors = typeCheckErrors(
+      "class Box\nsummon[scalanotation.Reader[(Int, String, Box)]]"
+    )
+
+    assert(errors.nonEmpty)
+    assert(clue(errors.head.message).contains("[2]"))
+    assert(clue(errors.head.message).contains("Box"))
+
   test("write derived case classes and enums"):
     final case class Metadata(created: LocalDate, tags: Vector[String]) derives Reader, Writer
     enum Mode derives Reader, Writer:
@@ -1721,6 +1863,21 @@ class ParserSuite extends FunSuite:
       typeCheckErrors("summon[scalanotation.Reader[Vector[Any]]]")
     assert(errors.nonEmpty)
 
+  test("no decoder is derived for EmptyTuple"):
+    val errors = typeCheckErrors("summon[scalanotation.Reader[EmptyTuple]]")
+
+    assert(errors.nonEmpty)
+    assert(clue(errors.head.message).contains("EmptyTuple"))
+
+  test("no tuple typeclass instances are derived for singleton tuples"):
+    val readerErrors     = typeCheckErrors("summon[scalanotation.Reader[Int *: EmptyTuple]]")
+    val writerErrors     = typeCheckErrors("summon[scalanotation.Writer[Int *: EmptyTuple]]")
+    val readWriterErrors = typeCheckErrors("summon[scalanotation.ReadWriter[Int *: EmptyTuple]]")
+
+    assert(readerErrors.nonEmpty)
+    assert(writerErrors.nonEmpty)
+    assert(readWriterErrors.nonEmpty)
+
   test("no decoder is derived for nested Option"):
     val errors = typeCheckErrors(
       "type Data = (x: Option[Option[Int]])\nsummon[scalanotation.Reader[Data]]"
@@ -1922,6 +2079,19 @@ class ParserSuite extends FunSuite:
     assertEquals(
       summon[Reader[Vector[(x: String, y: Int)]]].schema.describeSelf,
       "Vector[...]"
+    )
+    // Tuple schema
+    assertEquals(
+      RawSchema.Tuple(IArray(RawSchema.Int)).describeSelf,
+      "... *: EmptyTuple"
+    )
+    assertEquals(
+      summon[Reader[(Int, String)]].schema.describeSelf,
+      "(..., ...)"
+    )
+    assertEquals(
+      summon[Reader[(Int, (Boolean, String), Long)]].schema.describeSelf,
+      "(..., ..., ...)"
     )
     // Option schema
     assertEquals(

@@ -114,6 +114,7 @@ tree-shaped and you want Scala’s nested named tuple types to mirror the file e
 ```scala
 enum Expr:
   case NamedTupleExpr(elements: IndexedSeq[(name: String, value: Expr)])
+  case TupleExpr(elements: IndexedSeq[Expr])
   case VectorExpr(elements: IndexedSeq[Expr])
   case StringConstant(value: String)
   case CharConstant(value: Char)
@@ -129,6 +130,9 @@ it can also be directly decoded to from text:
 ```scala
 val decoded = Readers.readAs[scalanotation.Expr]("(ok = true, retries = 3)")
 assert(decoded == NamedTupleExpr(Vector("ok" -> BooleanConstant(true), ...)))
+
+val tuple = Readers.readAs[scalanotation.Expr]("""(1, "two", Vector(3))""")
+assert(tuple == TupleExpr(Vector(IntConstant(1), StringConstant("two"), ...)))
 ```
 
 ## Moving From Structural Config To Domain Types

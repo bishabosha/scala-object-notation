@@ -28,6 +28,11 @@ object Reader extends ReaderLowPriority, CommonTypeClassCompanion[Reader]:
     def add(repr: Repr, elem: Elem): Repr
     def finish(repr: Repr): A
 
+  trait TupleBuilder[Repr, A]:
+    def init(size: Int): Repr
+    def add(repr: Repr, index: Int, elem: Any): Repr
+    def finish(repr: Repr): A
+
   trait DictBuilder[Elem, Repr, A]:
     def init(): Repr
     def add(repr: Repr, key: String, elem: Elem): Repr
@@ -97,6 +102,15 @@ object Reader extends ReaderLowPriority, CommonTypeClassCompanion[Reader]:
           RawSchema.NamedTupleRead.from(
             PublicInternal.buildNamedTuple.asInstanceOf[Array[AnyRef] => T]
           ),
+          write = null
+        )
+      )
+
+    private[scalanotation] def tupleTypeClass[T <: Tuple](slots: List[RawSchema]): Reader[T] =
+      fromSchema[T](
+        RawSchema.Tuple(
+          IArray.from(slots),
+          RawSchema.TupleRead.FromReaderBuilder(PublicInternal.BuildTuple[T]),
           write = null
         )
       )

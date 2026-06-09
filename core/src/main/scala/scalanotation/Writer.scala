@@ -111,6 +111,15 @@ object Writer extends WriterLowPriority, CommonTypeClassCompanion[Writer]:
         )
       )
 
+    private[scalanotation] def tupleTypeClass[T <: Tuple](slots: List[RawSchema]): Writer[T] =
+      fromSchema[T](
+        RawSchema.Tuple(
+          IArray.from(slots),
+          read = null,
+          RawSchema.TupleWrite.productLike
+        )
+      )
+
     private[scalanotation] def productTypeClass[T](fields: List[FieldRepr])(
         using mirror: Mirror.ProductOf[T]
     ): Writer[T] =

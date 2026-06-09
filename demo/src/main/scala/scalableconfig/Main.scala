@@ -83,6 +83,8 @@ object Main:
         Obj.from(fields)
       case Expr.VectorExpr(elements) =>
         Arr.from(elements.map(exprToJson(_, preserveNums)))
+      case Expr.TupleExpr(elements) =>
+        Arr.from(elements.map(exprToJson(_, preserveNums)))
       case Expr.StringConstant(value) => Str(value)
       case Expr.CharConstant(value)   => Str(value.toString)
       case Expr.IntConstant(value)    => Num(value.toDouble)
@@ -106,6 +108,9 @@ object Main:
         }
         Node.MappingNode(ListMap.from(fields))
       case Expr.VectorExpr(elements) =>
+        val values = elements.map(exprToYamlNode(_))
+        Node.SequenceNode(values*)
+      case Expr.TupleExpr(elements) =>
         val values = elements.map(exprToYamlNode(_))
         Node.SequenceNode(values*)
       case Expr.StringConstant(value)  => Node.ScalarNode(value)

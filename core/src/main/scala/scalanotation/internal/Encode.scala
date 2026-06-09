@@ -26,6 +26,13 @@ private[scalanotation] object Encode:
           fieldExprs += ((field.name, writeExpr(field.schema, access.fieldValue(value, index))))
           index += 1
         Expr.NamedTupleExpr(fieldExprs.result())
+      case tuple: RawSchema.Tuple =>
+        if tuple.write == null then missingWriteCapability(schema)
+        val access = tuple.write.nn
+        val slots  = tuple.slots
+        Expr.TupleExpr(
+          slots.indices.map(index => writeExpr(slots(index), access.elementValue(value, index)))
+        )
       case RawSchema.PartialNamedTuple(base, _) =>
         writeExpr(base, value)
       case sum: RawSchema.Sum =>
@@ -92,6 +99,13 @@ private[scalanotation] object Encode:
         IdentifierSyntax.appendIdentifier(field.name, out)
         out.append(" = ")
         renderText(field.schema, write.fieldValue(value, index), out, depth + 1)
+      }
+    case tuple: RawSchema.Tuple =>
+      val write = tuple.write
+      if write == null then missingWriteCapability(schema)
+      val slots = tuple.slots
+      ExprRenderer.renderTuple(out, depth, write.size(value)) { index =>
+        renderText(slots(index), write.elementValue(value, index), out, depth + 1)
       }
     case RawSchema.PartialNamedTuple(base, _) =>
       renderText(base, value, out, depth)
