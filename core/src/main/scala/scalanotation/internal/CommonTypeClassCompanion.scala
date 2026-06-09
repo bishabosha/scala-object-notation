@@ -248,7 +248,7 @@ private[scalanotation] trait CommonTypeClassCompanion[TC[_]]:
             )
         }
 
-      given TupleAtPath: [Path <: String, T <: (? *: ? *: Tuple)]
+      given TupleAtPath: [Path <: String, T <: Tuple]
         => (slots: TupleSlotsAtPath[Path, T])
         => AtPath[Path, T] =
         liftAtPath[Path, T](tupleTypeClass[T](tupleSlotSchemas(slots)))
@@ -390,7 +390,7 @@ private[scalanotation] trait CommonTypeClassCompanion[TC[_]]:
     => TC[Col[String, T]] =
     atPath.typeclass
 
-  given TupleSchema: [T <: (? *: ? *: Tuple)]
+  given TupleSchema: [T <: Tuple]
     => (atPath: Builders.AtPath["", T])
     => TC[T] =
     atPath.typeclass

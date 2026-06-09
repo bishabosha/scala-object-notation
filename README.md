@@ -131,7 +131,7 @@ it can also be directly decoded to from text:
 val decoded = Readers.readAs[scalanotation.Expr]("(ok = true, retries = 3)")
 assert(decoded == NamedTupleExpr(Vector("ok" -> BooleanConstant(true), ...)))
 
-val tuple = Readers.readAs[scalanotation.Expr]("""(1, "two", Vector(3))""")
+val tuple = Readers.readAs[scalanotation.Expr]("""1 *: "two" *: Vector(3) *: EmptyTuple""")
 assert(tuple == TupleExpr(Vector(IntConstant(1), StringConstant("two"), ...)))
 ```
 

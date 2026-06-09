@@ -105,7 +105,7 @@ private[scalanotation] object Encode:
       if write == null then missingWriteCapability(schema)
       val slots = tuple.slots
       ExprRenderer.renderTuple(out, depth, write.size(value)) { index =>
-        renderText(slots(index), write.elementValue(value, index), out, depth + 1)
+        renderTupleElement(slots(index), write.elementValue(value, index), out, depth + 1)
       }
     case RawSchema.PartialNamedTuple(base, _) =>
       renderText(base, value, out, depth)
@@ -186,3 +186,21 @@ private[scalanotation] object Encode:
         throw IllegalStateException(
           s"discriminator sum case must be a named tuple, but found ${other.describeSelf}"
         )
+
+  private def renderTupleElement(
+      schema: RawSchema,
+      value: Any,
+      out: ExprRenderer.Output,
+      depth: Int
+  )(using format: TextFormat): Unit =
+    if isTupleLike(schema) then
+      out.append('(')
+      renderText(schema, value, out, depth)
+      out.append(')')
+    else renderText(schema, value, out, depth)
+
+  private def isTupleLike(schema: RawSchema): Boolean =
+    schema match
+      case _: RawSchema.Tuple        => true
+      case RawSchema.Mapped(base, _) => isTupleLike(base)
+      case _                         => false

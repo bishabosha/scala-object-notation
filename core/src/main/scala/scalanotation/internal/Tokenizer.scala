@@ -12,6 +12,7 @@ private[scalanotation] enum Token:
   case TrueKw(span: DecodeError.Span)
   case FalseKw(span: DecodeError.Span)
   case NullKw(span: DecodeError.Span)
+  case EmptyTupleId(span: DecodeError.Span)
   case Keyword(raw: String, span: DecodeError.Span)
   case Identifier(name: String, span: DecodeError.Span)
   case IntLit(raw: String, value: Int, span: DecodeError.Span)
@@ -24,6 +25,7 @@ private[scalanotation] enum Token:
   case Dot(span: DecodeError.Span)
   case Plus(span: DecodeError.Span)
   case Minus(span: DecodeError.Span)
+  case StarColon(span: DecodeError.Span)
   case Comma(span: DecodeError.Span)
   case Semicolon(span: DecodeError.Span)
   case LParen(span: DecodeError.Span)
@@ -100,6 +102,7 @@ private[scalanotation] final class Tokenizer(input: String):
       case KW_false                                          => Token.FalseKw(start)
       case KW_null                                           => Token.NullKw(start)
       case KW_Vector                                         => Token.VectorId(start)
+      case KW_EmptyTuple                                     => Token.EmptyTupleId(start)
       case name if reservedIdentifierKeywords.contains(name) =>
         keyword(name, start)
       case name =>
@@ -153,9 +156,10 @@ private[scalanotation] final class Tokenizer(input: String):
     val builder = new StringBuilder
     while !isAtEnd && isOperatorPart(currentChar()) do builder += advance()
     builder.result() match
-      case "=" => Token.Equals(start)
-      case "+" => Token.Plus(start)
-      case "-" => Token.Minus(start)
+      case "="  => Token.Equals(start)
+      case "+"  => Token.Plus(start)
+      case "-"  => Token.Minus(start)
+      case "*:" => Token.StarColon(start)
       case KW_colon | KW_leftArrow | KW_arrow | KW_subtype | KW_supertype | KW_hash | KW_at |
           KW_tlArrow | KW_ctxArrow =>
         keyword(builder.result(), start)
@@ -455,21 +459,22 @@ private[scalanotation] final class Tokenizer(input: String):
     throw ParseException(message, span)
 
 private[scalanotation] object Tokenizer:
-  private val KW_val       = "val"
-  private val KW_package   = "package"
-  private val KW_true      = "true"
-  private val KW_false     = "false"
-  private val KW_null      = "null"
-  private val KW_Vector    = "Vector"
-  private val KW_colon     = ":"
-  private val KW_leftArrow = "<-"
-  private val KW_arrow     = "=>"
-  private val KW_subtype   = "<:"
-  private val KW_supertype = ">:"
-  private val KW_hash      = "#"
-  private val KW_at        = "@"
-  private val KW_tlArrow   = "=>>"
-  private val KW_ctxArrow  = "?=>"
+  private val KW_val        = "val"
+  private val KW_package    = "package"
+  private val KW_true       = "true"
+  private val KW_false      = "false"
+  private val KW_null       = "null"
+  private val KW_Vector     = "Vector"
+  private val KW_EmptyTuple = "EmptyTuple"
+  private val KW_colon      = ":"
+  private val KW_leftArrow  = "<-"
+  private val KW_arrow      = "=>"
+  private val KW_subtype    = "<:"
+  private val KW_supertype  = ">:"
+  private val KW_hash       = "#"
+  private val KW_at         = "@"
+  private val KW_tlArrow    = "=>>"
+  private val KW_ctxArrow   = "?=>"
 
   private val reservedIdentifierKeywords: Set[String] =
     Set(

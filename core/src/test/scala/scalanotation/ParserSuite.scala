@@ -25,12 +25,14 @@ class ParserSuite extends FunSuite:
       case Token.TrueKw(_)           => "true"
       case Token.FalseKw(_)          => "false"
       case Token.NullKw(_)           => "null"
+      case Token.EmptyTupleId(_)     => "EmptyTuple"
       case Token.Keyword(raw, _)     => raw
       case Token.Identifier(name, _) => s"<Identifier:$name>"
       case Token.Equals(_)           => "="
       case Token.Dot(_)              => "."
       case Token.Plus(_)             => "+"
       case Token.Minus(_)            => "-"
+      case Token.StarColon(_)        => "*:"
       case Token.Comma(_)            => ","
       case Token.Semicolon(_)        => ";"
       case Token.LParen(_)           => "("
@@ -109,6 +111,16 @@ class ParserSuite extends FunSuite:
     assertEquals(parsed, expected)
     assertEquals(parsed.render, input)
 
+  test("read tuple cons literal expression"):
+    val input  = """1 *: "abc" *: EmptyTuple"""
+    val parsed = Readers.quick.read(input)
+
+    assertEquals(
+      parsed,
+      Expr.TupleExpr(IndexedSeq(Expr.IntConstant(1), Expr.StringConstant("abc")))
+    )
+    assertEquals(parsed.render, """(1, "abc")""")
+
   test("describe tuple literal expressions with counted slots"):
     val obtained = Readers.quick.read("""(1, "two", true)""").decodeAs[Int]
 
@@ -117,8 +129,25 @@ class ParserSuite extends FunSuite:
         assertEquals(error.rootCause, DecodeError.ExpectedType("Int", "(..., ..., ...)"))
       case Result.Ok(value) => fail(s"Expected a decode failure, got $value")
 
-  test("reject singleton tuple literal expressions"):
-    val inputs = List("(1)", "(1,)", "((1))")
+  test("parentheses group expressions"):
+    assertEquals(Readers.quick.read("(1)"), Expr.IntConstant(1))
+    assertEquals(Readers.quick.read("((1))"), Expr.IntConstant(1))
+    assertEquals(
+      Readers.quick.read("""("foo" + "bar") *: EmptyTuple"""),
+      Expr.TupleExpr(IndexedSeq(Expr.StringConstant("foobar")))
+    )
+    assertEquals(
+      Readers.quick.read("""(1 *: EmptyTuple) *: "abc" *: EmptyTuple"""),
+      Expr.TupleExpr(
+        IndexedSeq(
+          Expr.TupleExpr(IndexedSeq(Expr.IntConstant(1))),
+          Expr.StringConstant("abc")
+        )
+      )
+    )
+
+  test("reject singleton comma tuple literal expressions"):
+    val inputs = List("(1,)")
 
     inputs.foreach { input =>
       Readers.readAs[Expr](input) match
@@ -135,13 +164,10 @@ class ParserSuite extends FunSuite:
         assertEquals(error.rootCause, DecodeError.UnitValueNotAllowed())
       case Result.Ok(value) => fail(s"Expected a decode failure, got $value")
 
-  test("reject EmptyTuple as an expression"):
+  test("read EmptyTuple as an expression"):
     val obtained = Readers.readAs[Expr]("EmptyTuple")
 
-    obtained match
-      case Result.Err(error) =>
-        assertEquals(error.rootCause, DecodeError.ExpectedExpression("identifier 'EmptyTuple'"))
-      case Result.Ok(value) => fail(s"Expected a decode failure, got $value")
+    assertEquals(obtained, Result.Ok(Expr.TupleExpr(IndexedSeq.empty)))
 
   test("decode just expression"):
     type Data = (a: Boolean, b: Boolean, c: Int, d: Float)
@@ -421,6 +447,7 @@ class ParserSuite extends FunSuite:
       tokenLabels(symbolicIdentifiers.mkString(" ")),
       symbolicIdentifiers.map(name => s"<Identifier:$name>") :+ "eof"
     )
+    assertEquals(tokenLabels("*: EmptyTuple"), List("*:", "EmptyTuple", "eof"))
 
   test("treat Scala soft keywords as identifiers"):
     val softKeywords = List(
@@ -1411,10 +1438,89 @@ class ParserSuite extends FunSuite:
     assertEquals(rendered, """(7, "seven")""")
     assertEquals(Readers.readAs[Pair](rendered), Result.Ok(value))
 
-  test("reject tuple decodes with one expected or parsed slot"):
+  test("tuple typeclass instances support arities above Tuple22"):
+    type Data =
+      (
+          Int,
+          Int,
+          Int,
+          Int,
+          Int,
+          Int,
+          Int,
+          Int,
+          Int,
+          Int,
+          Int,
+          Int,
+          Int,
+          Int,
+          Int,
+          Int,
+          Int,
+          Int,
+          Int,
+          Int,
+          Int,
+          Int,
+          Int
+      )
+    val value: Data =
+      (
+        1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23
+      )
+    val rendered = Writers.write(value)
+
+    summon[Reader[Data]].schema match
+      case tuple: RawSchema.Tuple =>
+        assertEquals(tuple.slots.length, 23)
+      case other =>
+        fail(s"Expected a tuple reader, got ${other.describeSelf}")
+
+    assertEquals(
+      Writers.writeExpr(value),
+      Expr.TupleExpr((1 to 23).map(Expr.IntConstant.apply).toIndexedSeq)
+    )
+    assertEquals(
+      rendered,
+      "(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23)"
+    )
+    assertEquals(Readers.readAs[Data](rendered), Result.Ok(value))
+
+  test("tuple decodes support EmptyTuple and cons syntax"):
+    assertEquals(Readers.readAs[EmptyTuple]("EmptyTuple"), Result.Ok(EmptyTuple))
+    assertEquals(Writers.write(EmptyTuple), "EmptyTuple")
+
+    val singleton: Int *: EmptyTuple = 1 *: EmptyTuple
+    assertEquals(
+      Readers.readAs[Int *: EmptyTuple]("1 *: EmptyTuple"),
+      Result.Ok(singleton)
+    )
+    assertEquals(Writers.write(singleton), "1 *: EmptyTuple")
+    assertEquals(
+      Writers.write(Expr.TupleExpr(IndexedSeq(Expr.TupleExpr(IndexedSeq(Expr.IntConstant(1)))))),
+      "(1 *: EmptyTuple) *: EmptyTuple"
+    )
+    assertEquals(
+      Writers.write((1 *: EmptyTuple) *: EmptyTuple),
+      "(1 *: EmptyTuple) *: EmptyTuple"
+    )
+
+    assertEquals(
+      Readers.readAs[(String, Int)]("""("foo" + "bar") *: 7 *: EmptyTuple"""),
+      Result.Ok(("foobar", 7))
+    )
+    assertEquals(
+      Readers.readAs[(Int *: EmptyTuple, String)](
+        """(1 *: EmptyTuple) *: "abc" *: EmptyTuple"""
+      ),
+      Result.Ok((1 *: EmptyTuple, "abc"))
+    )
+
+  test("parenthesized single values are not tuple decodes"):
     Readers.readAs[(Int, String)]("(1)") match
       case Result.Err(error) =>
-        assertEquals(error.rootCause, DecodeError.FieldCountMismatch(2, 1))
+        assertEquals(error.rootCause, DecodeError.ExpectedType("(..., ...)", "(1: Int)"))
       case Result.Ok(value) => fail(s"Expected a decode failure, got $value")
 
     val singletonReader = Reader.fromSchema[Int *: EmptyTuple](
@@ -1427,12 +1533,12 @@ class ParserSuite extends FunSuite:
 
     Readers.readAs[Int *: EmptyTuple]("(1)")(using singletonReader) match
       case Result.Err(error) =>
-        assertEquals(error.rootCause, DecodeError.FieldCountMismatch(2, 1))
+        assertEquals(error.rootCause, DecodeError.ExpectedType("... *: EmptyTuple", "(1: Int)"))
       case Result.Ok(value) => fail(s"Expected a decode failure, got $value")
 
     Readers.readAs[Int *: EmptyTuple]("(1, 2)")(using singletonReader) match
       case Result.Err(error) =>
-        assertEquals(error.rootCause, DecodeError.FieldCountMismatch(2, 1))
+        assertEquals(error.rootCause, DecodeError.FieldCountMismatch(1, 2))
       case Result.Ok(value) => fail(s"Expected a decode failure, got $value")
 
   test("no tuple reader is derived when a slot lacks evidence"):
@@ -1863,20 +1969,14 @@ class ParserSuite extends FunSuite:
       typeCheckErrors("summon[scalanotation.Reader[Vector[Any]]]")
     assert(errors.nonEmpty)
 
-  test("no decoder is derived for EmptyTuple"):
-    val errors = typeCheckErrors("summon[scalanotation.Reader[EmptyTuple]]")
+  test("tuple typeclass instances are derived for EmptyTuple and singleton tuples"):
+    assertEquals(summon[Reader[EmptyTuple]].schema.describeSelf, "EmptyTuple")
+    assertEquals(summon[Writer[EmptyTuple]].schema.describeSelf, "EmptyTuple")
+    assertEquals(summon[ReadWriter[EmptyTuple]].schema.describeSelf, "EmptyTuple")
 
-    assert(errors.nonEmpty)
-    assert(clue(errors.head.message).contains("EmptyTuple"))
-
-  test("no tuple typeclass instances are derived for singleton tuples"):
-    val readerErrors     = typeCheckErrors("summon[scalanotation.Reader[Int *: EmptyTuple]]")
-    val writerErrors     = typeCheckErrors("summon[scalanotation.Writer[Int *: EmptyTuple]]")
-    val readWriterErrors = typeCheckErrors("summon[scalanotation.ReadWriter[Int *: EmptyTuple]]")
-
-    assert(readerErrors.nonEmpty)
-    assert(writerErrors.nonEmpty)
-    assert(readWriterErrors.nonEmpty)
+    assertEquals(summon[Reader[Int *: EmptyTuple]].schema.describeSelf, "... *: EmptyTuple")
+    assertEquals(summon[Writer[Int *: EmptyTuple]].schema.describeSelf, "... *: EmptyTuple")
+    assertEquals(summon[ReadWriter[Int *: EmptyTuple]].schema.describeSelf, "... *: EmptyTuple")
 
   test("no decoder is derived for nested Option"):
     val errors = typeCheckErrors(
