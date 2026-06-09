@@ -99,7 +99,9 @@ object ReadWriter extends CommonTypeClassCompanion[ReadWriter]:
         )
       )
 
-    private[scalanotation] def tupleTypeClass[T <: Tuple](slots: List[RawSchema]): ReadWriter[T] =
+    override private[scalanotation] def tupleTypeClass[T <: Tuple](
+        slots: List[RawSchema]
+    ): ReadWriter[T] =
       fromSchema[T](
         RawSchema.Tuple(
           IArray.from(slots),

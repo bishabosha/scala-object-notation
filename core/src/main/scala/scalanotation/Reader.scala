@@ -106,7 +106,9 @@ object Reader extends ReaderLowPriority, CommonTypeClassCompanion[Reader]:
         )
       )
 
-    private[scalanotation] def tupleTypeClass[T <: Tuple](slots: List[RawSchema]): Reader[T] =
+    override private[scalanotation] def tupleTypeClass[T <: Tuple](
+        slots: List[RawSchema]
+    ): Reader[T] =
       fromSchema[T](
         RawSchema.Tuple(
           IArray.from(slots),

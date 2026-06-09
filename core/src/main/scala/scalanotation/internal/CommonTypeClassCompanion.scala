@@ -87,7 +87,8 @@ private[scalanotation] trait CommonTypeClassCompanion[TC[_]]:
 
     private[scalanotation] def namedTupleTypeClass[T](fields: List[FieldRepr]): TC[T]
 
-    private[scalanotation] def tupleTypeClass[T <: Tuple](slots: List[RawSchema]): TC[T]
+    private[scalanotation] def tupleTypeClass[T <: Tuple](slots: List[RawSchema]): TC[T] =
+      fromSchema[T](RawSchema.Tuple(IArray.from(slots), read = null, write = null))
 
     private[scalanotation] def productTypeClass[T](fields: List[FieldRepr])(
         using mirror: Mirror.ProductOf[T]
