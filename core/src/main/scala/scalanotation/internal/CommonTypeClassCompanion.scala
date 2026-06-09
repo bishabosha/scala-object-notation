@@ -87,6 +87,8 @@ private[scalanotation] trait CommonTypeClassCompanion[TC[_]]:
 
     private[scalanotation] def namedTupleTypeClass[T](fields: List[FieldRepr]): TC[T]
 
+    private[scalanotation] def tupleTypeClass[T <: Tuple](slots: List[RawSchema]): TC[T]
+
     private[scalanotation] def productTypeClass[T](fields: List[FieldRepr])(
         using mirror: Mirror.ProductOf[T]
     ): TC[T]
@@ -215,6 +217,12 @@ private[scalanotation] trait CommonTypeClassCompanion[TC[_]]:
 
     opaque type AtPath[Path <: String, T] = TC[T] | List[FieldRepr]
 
+    opaque type TupleSlotsAtPath[Path <: String, Values <: Tuple] = List[RawSchema]
+
+    private def tupleSlotSchemas[Path <: String, Values <: Tuple](
+        slots: TupleSlotsAtPath[Path, Values]
+    ): List[RawSchema] = slots
+
     private[scalanotation] final def liftAtPath[Path <: String, T](
         typeclass: TC[T]
     ): AtPath[Path, T] =
@@ -240,6 +248,11 @@ private[scalanotation] trait CommonTypeClassCompanion[TC[_]]:
             )
         }
 
+      given TupleAtPath: [Path <: String, T <: Tuple]
+        => (slots: TupleSlotsAtPath[Path, T])
+        => AtPath[Path, T] =
+        liftAtPath[Path, T](tupleTypeClass[T](tupleSlotSchemas(slots)))
+
       given NamedTupleCons: [Path <: String, N <: String, V, Ns <: Tuple, Vs <: Tuple]
         => (vn: ValueOf[N], ap: AtPath[Path + "." + N, V], rest: AtPath[Path, NamedTuple[Ns, Vs]])
         => AtPath[Path, NamedTuple[N *: Ns, V *: Vs]] =
@@ -253,6 +266,39 @@ private[scalanotation] trait CommonTypeClassCompanion[TC[_]]:
 
       given NamedTupleEmpty: [Path <: String] => AtPath[Path, NamedTuple.Empty] =
         Nil
+
+    object TupleSlotsAtPath:
+      import compiletime.ops.string.+
+      import AtPath.typeclass
+
+      extension [Path <: String, Values <: Tuple](slots: TupleSlotsAtPath[Path, Values])
+        def schemas: List[RawSchema] = slots
+
+      opaque type Indexed[Path <: String, Index <: Int, Values <: Tuple] = List[RawSchema]
+
+      object Indexed:
+        extension [Path <: String, Index <: Int, Values <: Tuple](
+            slots: Indexed[Path, Index, Values]
+        ) def schemas: List[RawSchema] = slots
+
+        given Empty: [Path <: String, Index <: Int] => Indexed[Path, Index, EmptyTuple] =
+          Nil
+
+        given Cons: [Path <: String, Index <: Int, Head, Tail <: Tuple]
+          => (
+              head: AtPath[
+                Path + "[" + compiletime.ops.int.ToString[Index] + "]",
+                Head
+              ]
+        )
+          => (tail: Indexed[Path, compiletime.ops.int.+[Index, 1], Tail])
+          => Indexed[Path, Index, Head *: Tail] =
+          schemaOf(head.typeclass) :: tail.schemas
+
+      given FromIndexed: [Path <: String, Values <: Tuple]
+        => (indexed: Indexed[Path, 0, Values])
+        => TupleSlotsAtPath[Path, Values] =
+        indexed.schemas
 
   trait CommonBuilders[
       RejectAllOptionalProducts <: Boolean,
@@ -342,6 +388,11 @@ private[scalanotation] trait CommonTypeClassCompanion[TC[_]]:
   given MapSchema: [Col[X, Y] <: scala.collection.Map[X, Y], T]
     => (atPath: Builders.AtPath["", Col[String, T]])
     => TC[Col[String, T]] =
+    atPath.typeclass
+
+  given TupleSchema: [T <: Tuple]
+    => (atPath: Builders.AtPath["", T])
+    => TC[T] =
     atPath.typeclass
 
   given NamedTupleSchema: [NT <: NamedTuple.AnyNamedTuple]

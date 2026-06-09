@@ -99,6 +99,15 @@ object ReadWriter extends CommonTypeClassCompanion[ReadWriter]:
         )
       )
 
+    private[scalanotation] def tupleTypeClass[T <: Tuple](slots: List[RawSchema]): ReadWriter[T] =
+      fromSchema[T](
+        RawSchema.Tuple(
+          IArray.from(slots),
+          RawSchema.TupleRead.FromReaderBuilder(PublicInternal.BuildTuple[T]),
+          RawSchema.TupleWrite.productLike
+        )
+      )
+
     private[scalanotation] def productTypeClass[T](fields: List[FieldRepr])(
         using mirror: Mirror.ProductOf[T]
     ): ReadWriter[T] =

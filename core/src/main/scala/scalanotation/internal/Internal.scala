@@ -107,6 +107,17 @@ private[scalanotation] object PublicInternal {
     val asTuple = Tuple.fromIArray(IArray.unsafeFromArray(values))
     NamedTuple.build()(asTuple)
 
+  class BuildTuple[A <: Tuple] extends Reader.TupleBuilder[Array[AnyRef], A]:
+    def init(size: Int): Array[AnyRef] =
+      new Array[AnyRef](size)
+
+    def add(repr: Array[AnyRef], index: Int, elem: Any): Array[AnyRef] =
+      repr(index) = elem.asInstanceOf[AnyRef]
+      repr
+
+    def finish(repr: Array[AnyRef]): A =
+      Tuple.fromIArray(IArray.unsafeFromArray(repr)).asInstanceOf[A]
+
   class BuildVector[Elem]
       extends Reader.VectorBuilder[Elem, mutable.Builder[Elem, Vector[Elem]], Vector[Elem]]:
     def init(): mutable.Builder[Elem, Vector[Elem]] = Vector.newBuilder[Elem]

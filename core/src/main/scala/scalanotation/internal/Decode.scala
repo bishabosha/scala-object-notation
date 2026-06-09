@@ -56,6 +56,12 @@ private[scalanotation] class ExprDecoder extends Internal.PoolHolder:
   def decodeInto[A](reader: Reader[A], expr: Expr): Result[A, DecodeError] =
     decodeBase(reader.schema, expr).asInstanceOf[Result[A, DecodeError]]
 
+  private[scalanotation] def decodeRaw(
+      schema: RawSchema,
+      expr: Expr
+  ): Result[Any, DecodeError] =
+    decodeBase(schema, expr)
+
   private def decodeBase(
       schema: RawSchema,
       expr: Expr
@@ -65,6 +71,8 @@ private[scalanotation] class ExprDecoder extends Internal.PoolHolder:
         mapped.mapping.mapResult(decodeBase(mapped.base, expr))
       case sc: RawSchema.NamedTuple =>
         decodeNamedTuple(sc, expr)
+      case sc: RawSchema.Tuple =>
+        decodeTuple(sc, expr)
       case RawSchema.PartialNamedTuple(base, alreadySeenField) =>
         decodePartialNamedTuple(base, alreadySeenField, expr)
       case sc: RawSchema.Sum =>
@@ -142,6 +150,29 @@ private[scalanotation] class ExprDecoder extends Internal.PoolHolder:
           values = read.add(values, value)
           index += 1
         read.finish(values)
+      case other =>
+        raise(DecodeError.ExpectedType(schema.describeSelf, describe(other)))
+
+  private def decodeTuple(
+      schema: RawSchema.Tuple,
+      expr: Expr
+  ): Result[Any, DecodeError] = Result:
+    expr match
+      case Expr.TupleExpr(elements) =>
+        val read = schema.read
+        if read == null then missingReadCapability(schema)
+        val slots = schema.slots
+        if elements.length != slots.length then
+          raise(DecodeError.FieldCountMismatch(slots.length, elements.length))
+        var state = read.init(slots.length)
+        var index = 0
+        while index < slots.length do
+          val value = decodeBase(slots(index), elements(index))
+            .mapErr(_.atPath(s"[$index]"))
+            .ok
+          state = read.add(state, index, value)
+          index += 1
+        read.finish(state)
       case other =>
         raise(DecodeError.ExpectedType(schema.describeSelf, describe(other)))
 
@@ -418,6 +449,7 @@ private[scalanotation] object TokenDecoder:
       case Token.TrueKw(_)            => "'true'"
       case Token.FalseKw(_)           => "'false'"
       case Token.NullKw(_)            => "'null'"
+      case Token.EmptyTupleId(_)      => "'EmptyTuple'"
       case Token.Keyword(raw, _)      => s"'$raw'"
       case Token.Identifier(name, _)  => s"identifier '$name'"
       case Token.IntLit(raw, _, _)    => s"integer literal '$raw'"
@@ -430,6 +462,7 @@ private[scalanotation] object TokenDecoder:
       case Token.Dot(_)               => "'.'"
       case Token.Plus(_)              => "'+'"
       case Token.Minus(_)             => "'-'"
+      case Token.StarColon(_)         => "'*:'"
       case Token.Comma(_)             => "','"
       case Token.Semicolon(_)         => "';'"
       case Token.LParen(_)            => "'('"
@@ -438,7 +471,9 @@ private[scalanotation] object TokenDecoder:
 
   private[scalanotation] def describe(expr: Expr): String =
     expr match
-      case Expr.VectorExpr(_)              => "Vector(...)"
+      case Expr.VectorExpr(_)       => "Vector(...)"
+      case Expr.TupleExpr(elements) =>
+        RawSchema.describeTupleSlots(elements.length)
       case Expr.NamedTupleExpr(fieldExprs) =>
         if fieldExprs.isEmpty then "NamedTuple.Empty" else s"(${fieldExprs.head.name} = ...)"
       case Expr.StringConstant(value)  => s"""("$value": String)"""
@@ -467,6 +502,21 @@ private object NamedTupleParseResult {
     result.fieldName = fieldName
     result.closingSpan = closingSpan
     result
+}
+
+private class TupleParseResult() {
+  var elementCount: Int             = uninitialized
+  var closingSpan: DecodeError.Span = uninitialized
+}
+
+private object TupleParseResult extends TupleParseResult {
+  def push(
+      elementCount: Int,
+      closingSpan: DecodeError.Span
+  ): this.type =
+    this.elementCount = elementCount
+    this.closingSpan = closingSpan
+    this
 }
 
 private final class TokenDecoder(@constructorOnly tokens: List[Token])
@@ -542,6 +592,8 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
         mapped.mapping.mapResult(decodeBase(mapped.base))
       case sc: RawSchema.NamedTuple =>
         decodeNamedTuple(sc)
+      case sc: RawSchema.Tuple =>
+        decodeTuple(sc)
       case RawSchema.PartialNamedTuple(base, alreadySeenField) =>
         decodePartialNamedTuple(base, alreadySeenField)
       case sc: RawSchema.Sum =>
@@ -648,6 +700,12 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
       read.build(values)
     }
   }
+
+  private def decodeTuple(schema: RawSchema.Tuple): Result[Any, DecodeError] =
+    Result {
+      val expr = exprVisitor.inferExpr().ok
+      ExprDecoder().decodeRaw(schema, expr).ok
+    }
 
   private def decodeSum(schema: RawSchema.Sum): Result[Any, DecodeError] =
     Result {
@@ -859,6 +917,8 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
   private object exprVisitor:
     private val AnyNamedTupleSchema: RawSchema.NamedTuple =
       RawSchema.NamedTuple(IArray.empty[RawSchema.Field], read = null, write = null)
+    private val AnyTupleSchema: RawSchema.Tuple =
+      RawSchema.Tuple(IArray.empty[RawSchema], read = null, write = null)
     private val AnyVectorSchema: RawSchema.Vector =
       RawSchema.Vector(
         RawSchema.AnyExpr,
@@ -867,9 +927,47 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
       )
 
     def inferExpr(): Result[Expr, DecodeError] =
+      onStringConcat()
+
+    private def onStringConcat(): Result[Expr, DecodeError] = Result {
+      val first = onTupleCons().ok
       currentToken() match
-        case Token.LParen(_)                    => onNamedTuple(AnyNamedTupleSchema)
+        case Token.Plus(_) =>
+          val builder = new StringBuilder
+          first match
+            case Expr.StringConstant(value) => builder ++= value
+            case other                      =>
+              raise(DecodeError.ExpectedType(RawSchema.String.describeSelf, describe(other)))
+          while currentToken().isInstanceOf[Token.Plus] do
+            advance()
+            onTupleCons().ok match
+              case Expr.StringConstant(value) => builder ++= value
+              case other                      =>
+                raise(DecodeError.ExpectedType(RawSchema.String.describeSelf, describe(other)))
+          Expr.StringConstant(builder.result())
+        case _ =>
+          first
+    }
+
+    private def onTupleCons(): Result[Expr, DecodeError] = Result {
+      val head = onPrimary().ok
+      currentToken() match
+        case Token.StarColon(_) =>
+          advance()
+          onTupleCons().ok match
+            case Expr.TupleExpr(elements) =>
+              Expr.TupleExpr(head +: elements)
+            case other =>
+              raise(DecodeError.ExpectedType("Tuple", describe(other)))
+        case _ =>
+          head
+    }
+
+    private def onPrimary(): Result[Expr, DecodeError] =
+      currentToken() match
+        case Token.LParen(_)                    => onParenthesized()
         case Token.VectorId(_)                  => onVector(AnyVectorSchema)
+        case Token.EmptyTupleId(_)              => onEmptyTuple()
         case Token.StringLit(_, _, _)           => onString()
         case Token.CharLit(_, _, _)             => onChar()
         case Token.IntLit(_, _, _)              => onInt()
@@ -889,12 +987,79 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
         case other =>
           Result.Err(DecodeError.ExpectedExpression(describe(other)).atToken(other.span))
 
+    def onParenthesized(): Result[Expr, DecodeError] = Result {
+      currentToken() match
+        case Token.LParen(_) => advance()
+        case other           =>
+          raise(DecodeError.ExpectedExpression(describe(other)).atToken(other.span))
+
+      currentToken() match
+        case rparen @ Token.RParen(_) =>
+          raise(DecodeError.UnitValueNotAllowed().atToken(rparen.span))
+        case _ => ()
+
+      if peekToken().isInstanceOf[Token.Equals] then onNamedTupleAfterOpen(AnyNamedTupleSchema).ok
+      else
+        val first = inferExpr().ok
+        currentToken() match
+          case Token.Comma(_) =>
+            onTupleAfterGroupedHead(first).ok
+          case Token.RParen(_) =>
+            advance()
+            first
+          case other =>
+            raise(DecodeError.ExpectedRParen(describe(other)).atToken(other.span))
+    }
+
+    def onTupleAfterGroupedHead(first: Expr): Result[Expr, DecodeError] = Result {
+      val elements = IArray.newBuilder[Expr]
+      elements += first
+      var count = 1
+      var done  = false
+      while !done do
+        currentToken() match
+          case Token.Comma(_) =>
+            advance()
+            currentToken() match
+              case Token.RParen(_) =>
+                if count == 1 then
+                  raise(DecodeError.FieldCountMismatch(2, 1).atToken(currentToken().span))
+                done = true
+              case _ =>
+                elements += inferExpr().ok
+                count += 1
+          case Token.RParen(_) =>
+            done = true
+          case other =>
+            raise(DecodeError.ExpectedRParen(describe(other)).atToken(other.span))
+
+      currentToken() match
+        case Token.RParen(_) =>
+          advance()
+        case other =>
+          raise(DecodeError.ExpectedRParen(describe(other)).atToken(other.span))
+
+      if count == 1 then raise(DecodeError.FieldCountMismatch(2, 1))
+      Expr.TupleExpr(elements.result())
+    }
+
     def onNamedTuple(schema: RawSchema.NamedTuple): Result[Expr, DecodeError] =
+      Result {
+        currentToken() match
+          case Token.LParen(_) => advance()
+          case other           =>
+            raise(
+              DecodeError.ExpectedType(schema.describeSelf, describe(other)).atToken(other.span)
+            )
+        onNamedTupleAfterOpen(schema).ok
+      }
+
+    def onNamedTupleAfterOpen(schema: RawSchema.NamedTuple): Result[Expr, DecodeError] =
       namesPool.withBorrowed { seenNames =>
         Result {
           val fieldExprs = IArray.newBuilder[(name: String, value: Expr)]
           val parsed     =
-            parseNamedTupleStructure(schema, allowEmpty = false) { (name, nameSpan, _) =>
+            parseNamedTupleStructureAfterOpen(schema, allowEmpty = false) { (name, nameSpan, _) =>
               if seenNames.alreadySeen(name) then
                 raise(DecodeError.DuplicateField(name).atPath(s".${name}").atToken(nameSpan))
               val elem = inferExpr().mapErr(_.atPath(s".${name}")).ok
@@ -906,6 +1071,16 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
           Expr.NamedTupleExpr(fieldExprs.result())
         }
       }
+
+    def onTupleAfterOpen(schema: RawSchema.Tuple): Result[Expr, DecodeError] = Result {
+      val elements = IArray.newBuilder[Expr]
+      val parsed   = parseTupleStructureAfterOpen(schema) { _ =>
+        elements += inferExpr().ok
+      }
+      if parsed.elementCount == 1 then
+        raise(DecodeError.FieldCountMismatch(2, 1).atToken(parsed.closingSpan))
+      Expr.TupleExpr(elements.result())
+    }
 
     def onVector(schema: RawSchema.Vector): Result[Expr, DecodeError] = Result {
       val elements = IArray.newBuilder[Expr]
@@ -930,6 +1105,14 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
     def onBoolean(): Result[Expr, DecodeError] = decodeBoolean(Expr.BooleanConstant.apply)
 
     def onNull(): Result[Expr, DecodeError] = decodeNull(_ => Expr.NullConstant)
+
+    def onEmptyTuple(): Result[Expr, DecodeError] = Result:
+      currentToken() match
+        case Token.EmptyTupleId(_) =>
+          advance()
+          Expr.TupleExpr(IndexedSeq.empty)
+        case other =>
+          raise(DecodeError.ExpectedExpression(describe(other)).atToken(other.span))
 
   private[scalanotation] def decodeAnyExpr(): Result[Expr, DecodeError] =
     exprVisitor.inferExpr()
@@ -957,8 +1140,10 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
       val (actualName, nameSpan) = currentToken() match
         case Token.Identifier(actualName, nameSpan) => (actualName, nameSpan)
         case Token.VectorId(nameSpan)               => ("Vector", nameSpan)
+        case Token.EmptyTupleId(nameSpan)           => ("EmptyTuple", nameSpan)
         case Token.Plus(nameSpan)                   => ("+", nameSpan)
         case Token.Minus(nameSpan)                  => ("-", nameSpan)
+        case Token.StarColon(nameSpan)              => ("*:", nameSpan)
         case other                                  =>
           raise(DecodeError.ExpectedFieldName(describe(other)).atToken(other.span))
       advance()
@@ -981,6 +1166,15 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
       case other =>
         raise(DecodeError.ExpectedType(schema.describeSelf, describe(other)).atToken(other.span))
 
+    parseNamedTupleStructureAfterOpen(schema, allowEmpty)(consumeFieldValue)
+  }
+
+  private inline def parseNamedTupleStructureAfterOpen(
+      schema: RawSchema,
+      allowEmpty: Boolean
+  )(
+      inline consumeFieldValue: Resulting[(String, DecodeError.Span, Int) => Unit, DecodeError]
+  ): Resulting[NamedTupleParseResult, DecodeError] = { lbl ?=>
     val parsed: NamedTupleParseResult =
       parsePartialNamedTupleStructureInner(schema)(consumeFieldValue) match
         case parsed: NamedTupleParseResult => parsed
@@ -1049,6 +1243,48 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
         }
       }
     }
+
+  private inline def parseTupleStructure(schema: RawSchema.Tuple)(
+      inline consumeElementValue: Resulting[Int => Unit, DecodeError]
+  ): Resulting[TupleParseResult, DecodeError] = {
+    currentToken() match
+      case Token.LParen(_) =>
+        advance()
+      case other =>
+        raise(DecodeError.ExpectedType(schema.describeSelf, describe(other)).atToken(other.span))
+
+    parseTupleStructureAfterOpen(schema)(consumeElementValue)
+  }
+
+  private inline def parseTupleStructureAfterOpen(schema: RawSchema)(
+      inline consumeElementValue: Resulting[Int => Unit, DecodeError]
+  ): Resulting[TupleParseResult, DecodeError] = {
+    import Internal.loop
+
+    currentToken() match
+      case rparen @ Token.RParen(_) =>
+        advance()
+        TupleParseResult.push(0, rparen.span)
+      case _ =>
+        var elementIndex         = 0
+        val rparen: Token.RParen = loop {
+          consumeElementValue(elementIndex)
+          elementIndex += 1
+
+          currentToken() match
+            case Token.Comma(_) =>
+              advance()
+              currentToken() match
+                case rparen @ Token.RParen(_) => loop.break(rparen)
+                case _                        => ()
+            case rparen @ Token.RParen(_) =>
+              loop.break(rparen)
+            case other =>
+              raise(DecodeError.ExpectedRParen(describe(other)).atToken(other.span))
+        }
+        advance()
+        TupleParseResult.push(elementIndex, rparen.span)
+  }
 
   private inline def parseVectorStructure(schema: RawSchema)(
       inline consumeElementValue: Resulting[Int => Unit, DecodeError]
@@ -1247,12 +1483,18 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
       case Token.VectorId(_) =>
         advance()
         "Vector"
+      case Token.EmptyTupleId(_) =>
+        advance()
+        "EmptyTuple"
       case Token.Plus(_) =>
         advance()
         "+"
       case Token.Minus(_) =>
         advance()
         "-"
+      case Token.StarColon(_) =>
+        advance()
+        "*:"
       case other =>
         raise(DecodeError.ExpectedIdentifier(describe(other)).atToken(other.span))
 

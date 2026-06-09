@@ -57,6 +57,10 @@ private[scalanotation] object ExprRenderer:
           out.append(" = ")
           renderExpr(value, out, depth + 1)
         }
+      case Expr.TupleExpr(elements) =>
+        renderTuple(out, depth, elements.length) { index =>
+          renderTupleElement(elements(index), out, depth + 1)
+        }
       case Expr.VectorExpr(elements) =>
         renderVector(out, depth, elements.length) { index =>
           renderExpr(elements(index), out, depth + 1)
@@ -86,6 +90,44 @@ private[scalanotation] object ExprRenderer:
       renderField: Int => Unit
   )(using format: TextFormat): Unit =
     renderComposite(out, depth, size, open = "(", close = ")")(renderField)
+
+  private[scalanotation] def renderTuple(
+      out: Output,
+      depth: Int,
+      size: Int
+  )(
+      renderValue: Int => Unit
+  )(using format: TextFormat): Unit =
+    if size == 0 then out.append("EmptyTuple")
+    else if size == 1 then renderSingletonTuple(out, depth)(renderValue)
+    else renderComposite(out, depth, size, open = "(", close = ")")(renderValue)
+
+  private def renderSingletonTuple(
+      out: Output,
+      depth: Int
+  )(
+      renderValue: Int => Unit
+  )(using format: TextFormat): Unit =
+    if !format.pretty then
+      renderValue(0)
+      out.append(" *: EmptyTuple")
+    else
+      renderValue(0)
+      out.newlineAndIndent(depth)
+      out.append("*: EmptyTuple")
+
+  private def renderTupleElement(
+      expr: Expr,
+      out: Output,
+      depth: Int
+  )(using format: TextFormat): Unit =
+    expr match
+      case Expr.TupleExpr(_) =>
+        out.append('(')
+        renderExpr(expr, out, depth)
+        out.append(')')
+      case _ =>
+        renderExpr(expr, out, depth)
 
   private[scalanotation] def renderVector(
       out: Output,

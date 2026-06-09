@@ -7,6 +7,7 @@ import scalanotation.internal.ExprRenderer
 
 enum Expr:
   case NamedTupleExpr private[scalanotation] (elements: IndexedSeq[(name: String, value: Expr)])
+  case TupleExpr private[scalanotation] (elements: IndexedSeq[Expr])
   case VectorExpr private[scalanotation] (elements: IndexedSeq[Expr])
   case StringConstant private[scalanotation] (value: String)
   case CharConstant private[scalanotation] (value: Char)

@@ -19,6 +19,11 @@ private[scalanotation] enum RawSchema:
       write: RawSchema.NamedTupleWrite | Null = null,
       allowSkippedNullableFields: Boolean = false
   )
+  case Tuple(
+      slots: IArray[RawSchema],
+      read: RawSchema.TupleRead | Null = null,
+      write: RawSchema.TupleWrite | Null = null
+  )
   case PartialNamedTuple(base: RawSchema, alreadySeenField: String)
   case Sum(
       cases: IArray[RawSchema.SumCase],
@@ -102,6 +107,8 @@ private[scalanotation] enum RawSchema:
         else fields.map(f => s"${f.name}: ...").mkString("(", ", ", ")")
       case partial: RawSchema.PartialNamedTuple =>
         partial.base.describeSelf
+      case tuple: RawSchema.Tuple =>
+        RawSchema.describeTupleSlots(tuple.slots.length)
       case sum: RawSchema.Sum =>
         val cases = sum.cases
         if cases.isEmpty then "AnyNamedTuple"
@@ -133,6 +140,12 @@ private[scalanotation] enum RawSchema:
 private[scalanotation] object RawSchema:
   type ResultMap = Any => Result[Any, DecodeError]
   type InputMap  = Any => Any
+
+  def describeTupleSlots(size: Int): String =
+    size match
+      case 0 => "EmptyTuple"
+      case 1 => "... *: EmptyTuple"
+      case _ => Iterator.fill(size)("...").mkString("(", ", ", ")")
 
   final case class SchemaMapping(
       resultMap: ResultMap | Null = null,
@@ -192,6 +205,37 @@ private[scalanotation] object RawSchema:
 
     val singleton: NamedTupleWrite = new:
       def fieldValue(value: Any, index: Int): Any = ()
+
+  trait TupleRead:
+    type State
+    def init(size: Int): State
+    def add(state: State, index: Int, elem: Any): State
+    def finish(state: State): Any
+
+  object TupleRead:
+    final case class FromReaderBuilder[Repr, A](
+        builder: Reader.TupleBuilder[Repr, A]
+    ) extends TupleRead:
+      type State = Repr
+
+      def init(size: Int): State = builder.init(size)
+
+      def add(state: State, index: Int, elem: Any): State =
+        builder.add(state, index, elem)
+
+      def finish(state: State): Any = builder.finish(state)
+
+  trait TupleWrite:
+    def size(value: Any): Int
+    def elementValue(value: Any, index: Int): Any
+
+  object TupleWrite:
+    val productLike: TupleWrite = new:
+      def size(value: Any): Int =
+        value.asInstanceOf[Product].productArity
+
+      def elementValue(value: Any, index: Int): Any =
+        value.asInstanceOf[Product].productElement(index)
 
   trait SumWrite:
     def caseIndex(value: Any): Int
