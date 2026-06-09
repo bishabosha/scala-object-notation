@@ -111,7 +111,9 @@ object Writer extends WriterLowPriority, CommonTypeClassCompanion[Writer]:
         )
       )
 
-    private[scalanotation] def tupleTypeClass[T <: Tuple](slots: List[RawSchema]): Writer[T] =
+    override private[scalanotation] def tupleTypeClass[T <: Tuple](
+        slots: List[RawSchema]
+    ): Writer[T] =
       fromSchema[T](
         RawSchema.Tuple(
           IArray.from(slots),
