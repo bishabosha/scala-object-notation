@@ -79,14 +79,20 @@ class ExpressionSyntaxSuite extends ScalanotationSuite:
     assertEquals(parsed.render, input)
 
   test("read tuple cons literal expression"):
-    val input  = """1 *: "abc" *: EmptyTuple"""
+    val input  = """1 *: "abc" *: EmptyTuple *: EmptyTuple"""
     val parsed = Readers.quick.read(input)
 
     assertEquals(
       parsed,
-      Expr.TupleExpr(IndexedSeq(Expr.IntConstant(1), Expr.StringConstant("abc")))
+      Expr.TupleExpr(
+        IndexedSeq(
+          Expr.IntConstant(1),
+          Expr.StringConstant("abc"),
+          Expr.TupleExpr(IndexedSeq.empty)
+        )
+      )
     )
-    assertEquals(parsed.render, """(1, "abc")""")
+    assertEquals(parsed.render, """(1, "abc", EmptyTuple)""")
 
   test("describe tuple literal expressions with counted slots"):
     val obtained = Readers.quick.read("""(1, "two", true)""").decodeAs[Int]

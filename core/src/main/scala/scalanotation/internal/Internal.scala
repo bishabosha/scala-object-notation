@@ -87,6 +87,9 @@ private[internal] object Internal {
         case t :: _ => t
         case _      => default.Default
 
+    protected def currentAndRest: List[T] =
+      curr :: rest
+
     protected def advance(): Unit =
       rest match
         case curr1 :: rest1 =>

@@ -143,6 +143,14 @@ class TupleSuite extends ScalanotationSuite:
       Result.Ok(("foobar", 7))
     )
     assertEquals(
+      Readers.readAs[(String, Int)]("""("foo" + "bar", 7)"""),
+      Result.Ok(("foobar", 7))
+    )
+    Readers.readAs[String *: EmptyTuple](""""foo" + "bar" *: EmptyTuple""") match
+      case Result.Err(error) =>
+        assertEquals(error.rootCause, DecodeError.ExpectedType("'*:'", "'+'"))
+      case Result.Ok(value) => fail(s"Expected a decode failure, got $value")
+    assertEquals(
       Readers.readAs[(Int *: EmptyTuple, String)](
         """(1 *: EmptyTuple) *: "abc" *: EmptyTuple"""
       ),
@@ -152,7 +160,10 @@ class TupleSuite extends ScalanotationSuite:
   test("parenthesized single values are not tuple decodes"):
     Readers.readAs[(Int, String)]("(1)") match
       case Result.Err(error) =>
-        assertEquals(error.rootCause, DecodeError.ExpectedType("(..., ...)", "(1: Int)"))
+        assertEquals(
+          error.rootCause,
+          DecodeError.ExpectedType("(..., ...)", "(...)")
+        )
       case Result.Ok(value) => fail(s"Expected a decode failure, got $value")
 
     val singletonReader = Reader.fromSchema[Int *: EmptyTuple](
@@ -165,7 +176,10 @@ class TupleSuite extends ScalanotationSuite:
 
     Readers.readAs[Int *: EmptyTuple]("(1)")(using singletonReader) match
       case Result.Err(error) =>
-        assertEquals(error.rootCause, DecodeError.ExpectedType("... *: EmptyTuple", "(1: Int)"))
+        assertEquals(
+          error.rootCause,
+          DecodeError.ExpectedType("... *: EmptyTuple", "(...)")
+        )
       case Result.Ok(value) => fail(s"Expected a decode failure, got $value")
 
     Readers.readAs[Int *: EmptyTuple]("(1, 2)")(using singletonReader) match
