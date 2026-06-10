@@ -122,7 +122,7 @@ private[scalanotation] object ExprRenderer:
       depth: Int
   )(using format: TextFormat): Unit =
     expr match
-      case Expr.TupleExpr(_) =>
+      case Expr.TupleExpr(elems) if elems.nonEmpty =>
         out.append('(')
         renderExpr(expr, out, depth)
         out.append(')')
