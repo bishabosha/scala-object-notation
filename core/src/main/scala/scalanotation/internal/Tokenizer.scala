@@ -69,6 +69,12 @@ private[scalanotation] enum Token:
 
   def span: DecodeError.Span
 
+private[scalanotation] object Token:
+  lazy val Empty: Token = Token.Eof(DecodeError.Span(0, 0, 0))
+
+  given DefaultToken: PublicInternal.HasDefault[Token]:
+    val Default: Token = Token.Empty
+
 private[scalanotation] final class TokenizeException(val message: String, val offset: Int)
     extends Exception
     with scala.util.control.NoStackTrace
@@ -77,10 +83,42 @@ private[scalanotation] final class TokenizeException(val message: String, val of
   * buffering (see [[TokenStream]]); the scanner itself holds no token history, so memory use is
   * bounded regardless of input size.
   */
-private[scalanotation] final class Tokenizer(input: String, startIndex: Int = 0):
+private[scalanotation] final class Tokenizer(input: String):
   import Tokenizer.*
 
-  private var index = startIndex
+  private var index = 0
+
+  /** Tokenize the rest of the input into boxed [[Token]]s — kept for binary compatibility with the
+    * eager tokenizer, and used for tests and debugging; the decode path streams tokens through
+    * [[TokenStream]] without materializing them.
+    */
+  def tokenize(debug: Boolean): Result[List[Token], DecodeError] =
+    Result.catchException({ case e: TokenizeException =>
+      DecodeError.TokenFormat(e.message).atToken(spanAt(input, e.offset))
+    }):
+      val tokens = List.newBuilder[Token]
+      var done   = false
+      while !done do
+        scanNext()
+        val token = materialize(input, this)
+        tokens += token
+        if debug then Console.err.println(token)
+        done = kind == TokenKind.Eof
+      tokens.result()
+
+  @deprecated("Kept for binary compatibility; will be removed in a future version", "0.3.6")
+  private class ParseException(val message: String, val span: DecodeError.Span)
+      extends Exception
+      with scala.util.control.NoStackTrace:
+    // retained only for binary compatibility with the eager tokenizer
+    // reference the outer scanner so the constructor keeps its original outer-pointer parameter
+    def offset: Int = ParseException.this.span.offset.max(Tokenizer.this.start)
+
+  @deprecated("Kept for binary compatibility; will be removed in a future version", "0.3.6")
+  private inline def __Token: Token.type =
+    // retained only for binary compatibility with the eager tokenizer
+    // (regenerates the `inline$Token` accessor)
+    Token
 
   // slots describing the most recently scanned token — unboxed in the happy path
   private[internal] var kind: Int          = TokenKind.Eof
@@ -539,19 +577,13 @@ private[scalanotation] object Tokenizer:
     * streams tokens through [[TokenStream]] without materializing them.
     */
   def tokenize(input: String, debug: Boolean): Result[List[Token], DecodeError] =
-    Result.catchException({ case e: TokenizeException =>
-      DecodeError.TokenFormat(e.message).atToken(spanAt(input, e.offset))
-    }):
-      val tokens  = List.newBuilder[Token]
-      val scanner = Tokenizer(input)
-      var done    = false
-      while !done do
-        scanner.scanNext()
-        val token = materialize(input, scanner)
-        tokens += token
-        if debug then Console.err.println(token)
-        done = scanner.kind == TokenKind.Eof
-      tokens.result()
+    Tokenizer(input).tokenize(debug)
+
+  /** A scanner positioned at `offset` — used for non-buffering scout scans. */
+  private[internal] def startingAt(input: String, offset: Int): Tokenizer =
+    val scanner = Tokenizer(input)
+    scanner.index = offset
+    scanner
 
 /** A bounded buffer over a streaming [[Tokenizer]]: at most two tokens (the current token plus a
   * single lookahead) are buffered at any time, held in vectorized slots — parallel arrays with an
@@ -630,7 +662,7 @@ private[scalanotation] abstract class TokenStream(input: String, debug: Boolean)
   /** A fresh scanner positioned at the current token, for bounded-memory lookahead scans beyond the
     * single buffered token. The main stream is unaffected.
     */
-  protected def scoutFromCurrent(): Tokenizer = Tokenizer(input, currentOffset())
+  protected def scoutFromCurrent(): Tokenizer = Tokenizer.startingAt(input, currentOffset())
 
   private def describeSlot(slot: Int): String =
     def raw = input.substring(starts(slot), ends(slot))

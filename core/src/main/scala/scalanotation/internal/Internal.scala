@@ -1,6 +1,7 @@
 package scalanotation.internal
 
 import scala.NamedTuple.AnyNamedTuple
+import scala.annotation.constructorOnly
 import scala.annotation.publicInBinary
 import scala.collection.mutable
 import scala.compiletime.uninitialized
@@ -68,6 +69,37 @@ private[internal] object Internal {
   private[internal] abstract class PoolHolder:
     // TODO: should think how this could scale to making a global shared object.
     private[internal] val namesPool = LocalPool[JumboNameSet]()
+
+  /** Retained only for binary compatibility — superseded by the bounded, slot-based
+    * [[scalanotation.internal.TokenStream]].
+    */
+  @deprecated("superseded by scalanotation.internal.TokenStream", "0.4.0")
+  private[internal] open class TokenStream[T: PublicInternal.HasDefault as default](
+      @constructorOnly tokens: List[T]
+  ) extends PoolHolder {
+    private var curr: T       = uninitialized
+    private var rest: List[T] = tokens
+    advance() // initialize curr and rest
+
+    protected def currentToken(): T = curr
+
+    protected def peekToken(): T =
+      rest match
+        case t :: _ => t
+        case _      => default.Default
+
+    protected def currentAndRest: List[T] =
+      curr :: rest
+
+    protected def advance(): Unit =
+      rest match
+        case curr1 :: rest1 =>
+          curr = curr1
+          rest = rest1
+        case _ =>
+          curr = default.Default
+          rest = Nil
+  }
 }
 
 @publicInBinary

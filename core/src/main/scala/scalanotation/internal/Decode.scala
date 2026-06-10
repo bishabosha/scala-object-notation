@@ -1314,6 +1314,23 @@ private final class TokenDecoder(input: String, debug: Boolean) extends TokenStr
   // reusable (per-decoder) buffer for named-tuple parse results — no allocation in the happy path
   private val namedTupleParseResult = new NamedTupleParseResult()
 
+  @deprecated("Kept for binary compatibility; will be removed in a future version", "0.3.6")
+  private class NamedTupleParseResultBuf() {
+    // retained only for binary compatibility — superseded by NamedTupleParseResult above
+    var fieldCount: Int               = uninitialized
+    var fieldName: String | Null      = uninitialized
+    var closingSpan: DecodeError.Span = uninitialized
+  }
+
+  @deprecated("Kept for binary compatibility; will be removed in a future version", "0.3.6")
+  private object NamedTupleParseResultBuf extends NamedTupleParseResultBuf() {
+    def push(fieldCount: Int, fieldName: String | Null, closingSpan: DecodeError.Span): this.type =
+      this.fieldCount = fieldCount
+      this.fieldName = fieldName
+      this.closingSpan = closingSpan
+      this
+  }
+
   private inline def eval[T](inline op: T): T =
     def exprToEval(): T = op
     exprToEval()
