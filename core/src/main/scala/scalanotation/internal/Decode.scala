@@ -277,7 +277,7 @@ private[scalanotation] class ExprDecoder extends Internal.PoolHolder:
           val sumCase   = schema.cases.iterator.find(_.name == caseName) match
             case Some(c) => c
             case _       => raise(DecodeError.UnexpectedField(caseName).atPath(s".$caseName"))
-          decodeBase(sumCase.schema, value).mapErr(_.atPath(s".$caseName")).ok
+          Result.eval.break(decodeBase(sumCase.schema, value).mapErr(_.atPath(s".$caseName")))
         case other =>
           raise(DecodeError.ExpectedType(schema.describeSelf, describe(other)))
 
@@ -302,7 +302,7 @@ private[scalanotation] class ExprDecoder extends Internal.PoolHolder:
           val sumCase = schema.cases.iterator.find(_.name == caseName) match
             case Some(c) => c
             case _ => raise(DecodeError.UnexpectedField(caseName).atPath(s".$discriminatorField"))
-          decodeBase(sumCase.schema, expr).ok
+          Result.eval.break(decodeBase(sumCase.schema, expr))
       case other =>
         Result.Err(expectedType(schema, other))
 
@@ -905,10 +905,10 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
     schema match
       case RawSchema.Mapped(base, mapping) =>
         mapping.mapResult(decodeTupleElement(base, allowStringConcat))
-      case RawSchema.Option(inner) =>
+      case opt @ RawSchema.Option(inner) =>
         currentToken() match
           case Token.NullKw(_) =>
-            decodeOption(RawSchema.Option(inner))
+            decodeOption(opt)
           case _ =>
             decodeTupleElement(inner, allowStringConcat).map(Some(_))
       case RawSchema.String if !allowStringConcat =>
@@ -929,11 +929,11 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
           raise(DecodeError.UnitValueNotAllowed().atToken(rparen.span))
         case _ => ()
 
-      val value = decodeTupleElement(schema, allowStringConcat = true).ok
+      val bufValue = decodeTupleElement(schema, allowStringConcat = true)
       currentToken() match
         case Token.RParen(_) =>
           advance()
-          value
+          Result.eval.break(bufValue)
         case other =>
           raise(DecodeError.ExpectedRParen(describe(other)).atToken(other.span))
     }
@@ -1043,7 +1043,7 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
         case other           =>
           raise(DecodeError.ExpectedRParen(describe(other)).atToken(other.span))
 
-      decodeBase(sumCase.schema).ok
+      Result.eval.break(decodeBase(sumCase.schema))
     }
 
   private def decodePartialNamedTuple(
@@ -1315,7 +1315,7 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
         case Token.LParen(_) => advance()
         case other           =>
           raise(DecodeError.ExpectedType(schema.describeSelf, describe(other)).atToken(other.span))
-      onNamedTupleAfterOpen(schema).ok
+      Result.eval.break(onNamedTupleAfterOpen(schema))
     }
 
     def onNamedTupleAfterOpen(schema: RawSchema.NamedTuple): Result[Expr, DecodeError] =
@@ -1392,7 +1392,7 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
 
   private def parseNamedFieldStart(): Result[(String, DecodeError.Span), DecodeError] =
     Result:
-      val (actualName, nameSpan) = currentToken() match
+      val pair = currentToken() match
         case Token.Identifier(actualName, nameSpan) => (actualName, nameSpan)
         case Token.VectorId(nameSpan)               => ("Vector", nameSpan)
         case Token.EmptyTupleId(nameSpan)           => ("EmptyTuple", nameSpan)
@@ -1405,7 +1405,7 @@ private final class TokenDecoder(@constructorOnly tokens: List[Token])
       currentToken() match
         case Token.Equals(_) =>
           advance()
-          (actualName, nameSpan)
+          pair
         case other =>
           raise(DecodeError.ExpectedEquals(describe(other)).atToken(other.span))
 
