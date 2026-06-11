@@ -83,10 +83,19 @@ private[scalanotation] final class TokenizeException(val message: String, val of
   * buffering (see [[TokenStream]]); the scanner itself holds no token history, so memory use is
   * bounded regardless of input size.
   */
-private[scalanotation] final class Tokenizer(input: String):
+private[scalanotation] final class Tokenizer(private var input: String):
   import Tokenizer.*
 
   private var index = 0
+
+  /** Repositions this scanner at the start of a new input, for reuse from a pool. The name cache is
+    * kept: interned names stay useful across inputs.
+    */
+  private[internal] def reset(newInput: String): Unit =
+    input = newInput
+    index = 0
+    kind = TokenKind.Eof
+    str = null
 
   /** Tokenize the rest of the input into boxed [[Token]]s — kept for binary compatibility with the
     * eager tokenizer, and used for tests and debugging; the decode path streams tokens through
@@ -591,8 +600,10 @@ private[scalanotation] object Tokenizer:
   * [[DecodeError.Span]]s are only materialized when constructing a [[DecodeError]] (or for debug
   * output).
   */
-private[scalanotation] abstract class TokenStream(input: String, debug: Boolean)
-    extends Internal.PoolHolder {
+private[scalanotation] abstract class TokenStream(
+    private var input: String,
+    private var debug: Boolean
+) extends Internal.PoolHolder {
   private val scanner = Tokenizer(input)
 
   // vectorized slots: indices 0 and 1 hold the at-most-two buffered tokens
@@ -607,6 +618,17 @@ private[scalanotation] abstract class TokenStream(input: String, debug: Boolean)
   private var buffered = false // does slot (cur ^ 1) hold the single-token lookahead?
 
   scanIntoSlot(cur) // initialize the current token
+
+  /** Re-aims this stream at the start of a new input, for reuse from a pool. */
+  protected def resetStream(newInput: String, newDebug: Boolean): Unit =
+    input = newInput
+    debug = newDebug
+    scanner.reset(newInput)
+    strs(0) = null // release references to the previous input's strings
+    strs(1) = null
+    cur = 0
+    buffered = false
+    scanIntoSlot(cur)
 
   private def scanIntoSlot(slot: Int): Unit =
     scanner.scanNext()

@@ -456,32 +456,59 @@ private[scalanotation] class ExprDecoder extends Internal.PoolHolder, PushSlots:
 
 private[scalanotation] object TokenDecoder:
 
+  /** The sole implementation of the opaque [[scalanotation.BatchContext]]: a wrapper over a pool of
+    * decoder instances. The pooled contexts amortize decoder construction, which dominates the
+    * fixed cost of small decodes; a reentrant decode (e.g. from a user-supplied schema mapping)
+    * borrows a second instance instead of corrupting the active one.
+    */
+  private[scalanotation] final class PoolHolder(val pool: Internal.Pool[TokenDecoder])
+
+  private given Internal.Alloc[TokenDecoder]:
+    def alloc(): TokenDecoder            = TokenDecoder("", debug = false)
+    def prepare(t: TokenDecoder): t.type = t // re-aimed by reset(input, debug) after borrowing
+
+  private[scalanotation] val gcContext: PoolHolder =
+    PoolHolder(Internal.GCPool[TokenDecoder]())
+
+  private[scalanotation] def localContext(): PoolHolder =
+    PoolHolder(Internal.LocalPool[TokenDecoder]())
+
+  private[scalanotation] def sharedContext(capacityHint: Int): PoolHolder =
+    PoolHolder(Internal.SharedPool[TokenDecoder](capacityHint))
+
+  private inline def withPooled[A](ctx: PoolHolder, input: String, debug: Boolean)(
+      inline use: TokenDecoder => A
+  ): A =
+    ctx.pool.withBorrowed { decoder =>
+      use(decoder.reset(input, debug))
+    }
+
   private[scalanotation] def decode[T](
       input: String,
       debugTokens: Boolean,
       rootName: String,
       packageName: String,
       decoder: Reader[T]
-  ): Result[T, DecodeError] =
+  )(using ctx: PoolHolder): Result[T, DecodeError] =
     catchingTokenErrors(input):
-      TokenDecoder(input, debugTokens).decodeRoot(decoder, rootName, packageName)
+      withPooled(ctx, input, debugTokens)(_.decodeRoot(decoder, rootName, packageName))
 
   private[scalanotation] def decodeAnyRoot[T](
       input: String,
       debugTokens: Boolean,
       packageName: String,
       decoder: Reader[T]
-  ): Result[Expr.SourceFile[T], DecodeError] =
+  )(using ctx: PoolHolder): Result[Expr.SourceFile[T], DecodeError] =
     catchingTokenErrors(input):
-      TokenDecoder(input, debugTokens).decodeAnyRoot(decoder, packageName)
+      withPooled(ctx, input, debugTokens)(_.decodeAnyRoot(decoder, packageName))
 
   private[scalanotation] def decodeExpression[T](
       input: String,
       debugTokens: Boolean,
       decoder: Reader[T]
-  ): Result[T, DecodeError] =
+  )(using ctx: PoolHolder): Result[T, DecodeError] =
     catchingTokenErrors(input):
-      TokenDecoder(input, debugTokens).decodeExpression(decoder)
+      withPooled(ctx, input, debugTokens)(_.decodeExpression(decoder))
 
   /** tokens are scanned lazily while decoding, so malformed input can surface anywhere in the
     * decode as a [[TokenizeException]] — converted to a [[DecodeError]] here.
@@ -559,6 +586,14 @@ private final class TokenDecoder(input: String, debug: Boolean)
     val res = r
     if res.isOk then anySlot = value
     res
+
+  /** Clears decode state and re-aims at a new input, for reuse via [[TokenDecoder.withPooled]]. */
+  def reset(input: String, debug: Boolean): this.type =
+    resetStream(input, debug)
+    anySlot = null
+    stringSlot = ""
+    namedTupleParseResult.fieldName = null
+    this
 
   private def expectedTypeAtCurrent(schema: RawSchema): DecodeError =
     DecodeError.ExpectedType(schema.describeSelf, describeCurrent()).atToken(currentSpan())

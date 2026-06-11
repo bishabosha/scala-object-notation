@@ -28,6 +28,48 @@ private[internal] object Internal {
       try f(t)
       finally release(t)
 
+  /** A pool that never stores anything: borrow always allocates a fresh instance and release is a
+    * no-op, leaving reclamation to the GC. Used where pooling must not introduce shared mutable
+    * state between calls.
+    */
+  final class GCPool[T <: AnyRef: Alloc as factory] extends Pool[T]:
+    def borrow(): T         = factory.alloc()
+    def release(t: T): Unit = ()
+
+  /** A lock-free, fixed-capacity pool that can be shared between threads — including virtual
+    * threads, where a ThreadLocal cache would never be reused. Borrow and release probe the slot
+    * array with CAS starting from a per-thread index, so an uncontended borrow/release pair is one
+    * volatile read plus one CAS each. An empty pool allocates a fresh instance; a full pool drops
+    * the released instance for the GC. The CAS pair also safely publishes the pooled instance's
+    * state between threads.
+    */
+  final class SharedPool[T <: AnyRef: Alloc as factory](capacityHint: Int) extends Pool[T]:
+    val capacity: Int = Integer.highestOneBit(math.max(capacityHint, 2))
+    private val mask  = capacity - 1
+    private val slots = java.util.concurrent.atomic.AtomicReferenceArray[T](capacity)
+
+    private def probeStart: Int =
+      System.identityHashCode(Thread.currentThread()) & mask
+
+    def borrow(): T =
+      var i = probeStart
+      var n = 0
+      while n < capacity do
+        val t = slots.get(i)
+        if t != null && slots.compareAndSet(i, t, null.asInstanceOf[T]) then
+          return factory.prepare(t)
+        i = (i + 1) & mask
+        n += 1
+      factory.alloc()
+
+    def release(t: T): Unit =
+      var i = probeStart
+      var n = 0
+      while n < capacity do
+        if slots.get(i) == null && slots.compareAndSet(i, null.asInstanceOf[T], t) then return
+        i = (i + 1) & mask
+        n += 1
+
   class JumboNameSet:
     val underlying: mutable.HashSet[String] = mutable.HashSet.empty[String]
   object JumboNameSet:

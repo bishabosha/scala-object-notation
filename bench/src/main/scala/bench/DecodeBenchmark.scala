@@ -2,6 +2,7 @@ package bench
 
 import org.openjdk.jmh.annotations.*
 import java.util.concurrent.TimeUnit
+import scalanotation.Reader
 import scalanotation.Readers
 
 @State(Scope.Thread)
@@ -56,6 +57,14 @@ class DecodeBenchmark:
   private val declVecInput2x =
     s"val data = (label = \"bench\", nums = Vector(${(1 to 40).mkString(", ")}))"
 
+  // readers are derived once and reused, so the benchmarks measure decoding rather than
+  // re-deriving the schema graph on every call
+  private given flatReader: Reader[Flat]         = summon[Reader[Flat]]
+  private given flat2xReader: Reader[Flat2x]     = summon[Reader[Flat2x]]
+  private given nestedReader: Reader[Nested]     = summon[Reader[Nested]]
+  private given nested2xReader: Reader[Nested2x] = summon[Reader[Nested2x]]
+  private given withVecReader: Reader[WithVec]   = summon[Reader[WithVec]]
+
   @Benchmark def flat: Any   = Readers.readAs[Flat](flatInput)
   @Benchmark def flat2x: Any = Readers.readAs[Flat2x](flatInput2x)
 
@@ -65,8 +74,12 @@ class DecodeBenchmark:
   @Benchmark def withVec: Any   = Readers.readAs[WithVec](vecInput)
   @Benchmark def withVec2x: Any = Readers.readAs[WithVec](vecInput2x)
 
-  @Benchmark def declFlat: Any   = Readers.readDeclAs[Flat](declFlatInput, rootName = "data")
-  @Benchmark def declFlat2x: Any = Readers.readDeclAs[Flat2x](declFlatInput2x, rootName = "data")
+  @Benchmark def declFlat: Any =
+    Readers.readDeclAs[Flat](declFlatInput, rootName = "data")
+  @Benchmark def declFlat2x: Any =
+    Readers.readDeclAs[Flat2x](declFlatInput2x, rootName = "data")
 
-  @Benchmark def declWithVec: Any   = Readers.readDeclAs[WithVec](declVecInput, rootName = "data")
-  @Benchmark def declWithVec2x: Any = Readers.readDeclAs[WithVec](declVecInput2x, rootName = "data")
+  @Benchmark def declWithVec: Any =
+    Readers.readDeclAs[WithVec](declVecInput, rootName = "data")
+  @Benchmark def declWithVec2x: Any =
+    Readers.readDeclAs[WithVec](declVecInput2x, rootName = "data")
