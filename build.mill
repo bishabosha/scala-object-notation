@@ -1,7 +1,8 @@
 //| mvnDeps: [
 //|   "com.github.lolgab::mill-mima::0.2.1",
 //|   "ch.epfl.scala::tasty-mima:1.4.1",
-//|   "ch.epfl.scala::tasty-query:1.8.0"
+//|   "ch.epfl.scala::tasty-query:1.8.0",
+//|   "com.lihaoyi::mill-contrib-jmh:1.1.2"
 //| ]
 package build
 
@@ -16,6 +17,7 @@ import mill.scalalib.*
 import mill.scalajslib.*
 import mill.scalajslib.api.*
 import mill.scalanativelib.*
+import mill.contrib.jmh.JmhModule
 
 object Versions:
   val scala       = "3.8.3"
@@ -128,3 +130,14 @@ object demo extends ScalaObjectNotationModule:
   )
 
   def mainClass = Some("scalableconfig.Main")
+
+object bench extends Cross[BenchModule]("HEAD", "0.3.5")
+trait BenchModule extends Cross.Module[String], ScalaObjectNotationModule, JmhModule:
+  def jmhCoreVersion = "1.37"
+  override def moduleDeps =
+    if crossValue == "HEAD" then Seq(core) else Seq.empty
+  override def mvnDeps = super.mvnDeps() ++ (
+    if crossValue == "HEAD" then Seq.empty
+    else Seq(mvn"io.github.bishabosha::scala-object-notation::${crossValue}")
+  )
+  def runJmhMem(args: String*) = runJmh(("-prof" +: "gc" +: args.toSeq)*)
