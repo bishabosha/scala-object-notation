@@ -2,10 +2,7 @@ package scalanotation
 
 import scala.NamedTuple
 import steps.result.Result
-import steps.result.Result.eval.{ok, raise, break}
 
-import scala.collection.mutable
-import scalanotation.internal.Tokenizer
 import scalanotation.internal.TokenDecoder
 
 object Readers:
@@ -30,18 +27,14 @@ object Readers:
       input: String,
       debugTokens: Boolean = false
   ): Result[T, DecodeError] =
-    Result:
-      val tokens = Tokenizer.tokenize(input, debugTokens).ok
-      break(TokenDecoder.decodeExpression(tokens, reader))
+    TokenDecoder.decodeExpression(input, debugTokens, reader)
 
   def readDeclsAs[T: Reader as reader](
       input: String,
       debugTokens: Boolean = false,
       packageName: String = ""
   ): Result[Expr.SourceFile[T], DecodeError] =
-    Result:
-      val tokens = Tokenizer.tokenize(input, debugTokens).ok
-      break(TokenDecoder.decodeAnyRoot(tokens, packageName, reader))
+    TokenDecoder.decodeAnyRoot(input, debugTokens, packageName, reader)
 
   def readDeclAs[T: Reader as reader](
       input: String,
@@ -49,6 +42,4 @@ object Readers:
       debugTokens: Boolean = false,
       packageName: String = ""
   ): Result[T, DecodeError] =
-    Result:
-      val tokens = Tokenizer.tokenize(input, debugTokens).ok
-      break(TokenDecoder.decode(tokens, rootName, packageName, reader))
+    TokenDecoder.decode(input, debugTokens, rootName, packageName, reader)

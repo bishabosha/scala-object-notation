@@ -70,9 +70,10 @@ private[internal] object Internal {
     // TODO: should think how this could scale to making a global shared object.
     private[internal] val namesPool = LocalPool[JumboNameSet]()
 
-  /** a small abstraction around token iteration - but perhaps we would change to a fused char
-    * reader with tokenizer.
+  /** Retained only for binary compatibility — superseded by the bounded, slot-based
+    * [[scalanotation.internal.TokenStream]].
     */
+  @deprecated("superseded by scalanotation.internal.TokenStream", "0.4.0")
   private[internal] open class TokenStream[T: PublicInternal.HasDefault as default](
       @constructorOnly tokens: List[T]
   ) extends PoolHolder {
