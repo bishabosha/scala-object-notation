@@ -73,10 +73,15 @@ class PrimitiveDecodingSuite extends ScalanotationSuite:
 
   test("decode integer literals at the representable bounds"):
     assertEquals(Readers.readAs[Int]("2_147_483_647"), Result.Ok(Int.MaxValue))
-    assertEquals(Readers.readAs[Int]("-2_147_483_647"), Result.Ok(-Int.MaxValue))
+    assertEquals(Readers.readAs[Int]("-2_147_483_648"), Result.Ok(Int.MinValue))
     assertEquals(Readers.readAs[Int]("0x7FFF_FFFF"), Result.Ok(Int.MaxValue))
+    assertEquals(Readers.readAs[Int]("-0x8000_0000"), Result.Ok(Int.MinValue))
     assertEquals(Readers.readAs[Long]("9_223_372_036_854_775_807L"), Result.Ok(Long.MaxValue))
+    assertEquals(Readers.readAs[Long]("-9_223_372_036_854_775_808L"), Result.Ok(Long.MinValue))
     assertEquals(Readers.readAs[Long]("0x7FFF_FFFF_FFFF_FFFFL"), Result.Ok(Long.MaxValue))
+    assertEquals(Readers.readAs[Long]("-0x8000_0000_0000_0000L"), Result.Ok(Long.MinValue))
+    assertEquals(Readers.readAs[Double]("-2_147_483_648"), Result.Ok(Int.MinValue.toDouble))
+    assertEquals(Readers.readAs[Float]("-2_147_483_648"), Result.Ok(Int.MinValue.toFloat))
 
   test("reject integer literals that overflow their type"):
     def assertTokenFormat[T: Reader](input: String, expected: String): Unit =
@@ -85,11 +90,32 @@ class PrimitiveDecodingSuite extends ScalanotationSuite:
         case Result.Ok(value)  => fail(s"Expected a decode failure, got $value")
 
     assertTokenFormat[Int]("2147483648", "Invalid Int literal '2147483648'")
+    assertTokenFormat[Int]("-2147483649", "Invalid Int literal '2147483649'")
     assertTokenFormat[Int]("0x8000_0000", "Invalid Int literal '0x8000_0000'")
+    assertTokenFormat[Int]("-0x8000_0001", "Invalid Int literal '0x8000_0001'")
     assertTokenFormat[Long](
       "9223372036854775808L",
       "Invalid Long literal '9223372036854775808L'"
     )
+    assertTokenFormat[Long](
+      "-9223372036854775809L",
+      "Invalid Long literal '9223372036854775809L'"
+    )
+
+  test("round-trip the extreme values of every numeric type"):
+    def assertRoundTrip[T: {Reader, Writer}](value: T): Unit =
+      assertEquals(Readers.readAs[T](Writers.write(value)), Result.Ok(value))
+
+    assertRoundTrip(Int.MinValue)
+    assertRoundTrip(Int.MaxValue)
+    assertRoundTrip(Long.MinValue)
+    assertRoundTrip(Long.MaxValue)
+    assertRoundTrip(Float.MinValue)
+    assertRoundTrip(Float.MaxValue)
+    assertRoundTrip(java.lang.Float.MIN_VALUE) // smallest positive subnormal
+    assertRoundTrip(Double.MinValue)
+    assertRoundTrip(Double.MaxValue)
+    assertRoundTrip(java.lang.Double.MIN_VALUE)
 
   test("reject numeric literal promotions that would lose precision"):
     val floatErr         = Readers.readAs[Float]("16_777_217")

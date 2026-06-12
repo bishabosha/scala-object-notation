@@ -255,9 +255,9 @@ private[scalanotation] final class Tokenizer(private var input: String):
       if marker == 'x' || marker == 'X' then 16
       else 2
 
-    // the digits are parsed in place from the input slice: track offsets, nothing is allocated
-    val digitsStart = index
-    var sawDigit    = false
+    // only the shape is validated here; the value is interpreted at consumption
+    // ([[Tokenizer.intValueAt]]/[[Tokenizer.longValueAt]]), once the sign is known
+    var sawDigit = false
     while !isAtEnd && isDigitForBase(currentChar(), base) do
       advance()
       sawDigit = true
@@ -275,16 +275,9 @@ private[scalanotation] final class Tokenizer(private var input: String):
     if !isAtEnd && currentChar().isLetterOrDigit && currentChar() != 'l' && currentChar() != 'L'
     then fail(s"Invalid digit '${currentChar()}' for base-$base literal")
 
-    val digitsEnd = index
-    val isLong    = !isAtEnd && (currentChar() == 'l' || currentChar() == 'L')
+    val isLong = !isAtEnd && (currentChar() == 'l' || currentChar() == 'L')
     if isLong then advance()
-
-    if isLong then
-      kind = TokenKind.LongLit
-      num = parseLongFrom(digitsStart, digitsEnd, base)
-    else
-      kind = TokenKind.IntLit
-      num = parseIntFrom(digitsStart, digitsEnd, base).toLong
+    kind = if isLong then TokenKind.LongLit else TokenKind.IntLit
 
   private def scanDecimalNumber(): Unit =
     // the digits are a slice of the input: track offsets, no per-token builder
@@ -322,9 +315,11 @@ private[scalanotation] final class Tokenizer(private var input: String):
           case ch @ ('l' | 'L' | 'f' | 'F' | 'd' | 'D') => advance(); ch
           case _                                        => '\u0000'
 
-    // Int and Long parse in place from the input slice; only Float and Double materialize the
-    // digits, because parseFloat/parseDouble have no offset-range form on any platform. The
-    // separator flag is a parameter: capturing the var would lift it into a heap-allocated Ref.
+    // Int and Long are interpreted at consumption (when the sign is known) directly from the
+    // input slice; only Float and Double materialize the digits here, because their parse and
+    // rounding are sign-symmetric and parseFloat/parseDouble have no offset-range form on any
+    // platform. The separator flag is a parameter: capturing the var would lift it into a
+    // heap-allocated Ref.
     def normalizedDigits(sawSeparator: Boolean): String =
       val digits = input.substring(start, digitsEnd)
       if sawSeparator then digits.replace("_", "") else digits
@@ -334,7 +329,6 @@ private[scalanotation] final class Tokenizer(private var input: String):
         if hasDot || hasExponent then
           fail("Long literals cannot contain a decimal point or exponent")
         kind = TokenKind.LongLit
-        num = parseLongFrom(start, digitsEnd)
       case 'f' | 'F' =>
         kind = TokenKind.FloatLit
         dbl = parseFloatLiteral(normalizedDigits(sawSeparator)).toDouble
@@ -346,7 +340,6 @@ private[scalanotation] final class Tokenizer(private var input: String):
         dbl = parseDoubleLiteral(normalizedDigits(sawSeparator))
       case _ =>
         kind = TokenKind.IntLit
-        num = parseIntFrom(start, digitsEnd).toLong
 
   private def scanString(): Unit =
     advance()
@@ -458,30 +451,6 @@ private[scalanotation] final class Tokenizer(private var input: String):
   private def isOperatorPart(ch: Char): Boolean =
     IdentifierSyntax.isOperatorPart(ch)
 
-  /** Parses an unsigned integer literal directly from the input slice, skipping '_' separators —
-    * unlike `Integer.parseInt`, no intermediate string is allocated. The scanner has already
-    * validated every char in the slice; the overflow guard divides before multiplying, so the
-    * accumulator can never wrap.
-    */
-  private def parseIntegerFrom(from: Int, until: Int, base: Int, limit: Long, name: String): Long =
-    var value = 0L
-    var i     = from
-    while i < until do
-      val ch = input.charAt(i)
-      if ch != '_' then
-        val digit = Character.digit(ch, base)
-        if digit < 0 || value > (limit - digit) / base then
-          fail(s"Invalid $name literal '$rawText'")
-        value = value * base + digit
-      i += 1
-    value
-
-  private def parseIntFrom(from: Int, until: Int, base: Int = 10): Int =
-    parseIntegerFrom(from, until, base, Int.MaxValue, "Int").toInt
-
-  private def parseLongFrom(from: Int, until: Int, base: Int = 10): Long =
-    parseIntegerFrom(from, until, base, Long.MaxValue, "Long")
-
   private def parseFloatLiteral(digits: String): Float =
     try
       val value = java.lang.Float.parseFloat(digits)
@@ -571,6 +540,59 @@ private[scalanotation] object Tokenizer:
       "yield"
     )
 
+  /** Interprets an `IntLit` token's value in place from its input slice. The scanner validates only
+    * the shape: the sign lives in a separate token, so the range check has to happen here, at
+    * consumption, where the sign is known — otherwise `Int.MinValue` would be rejected, since its
+    * magnitude overflows a positive Int.
+    */
+  private[internal] def intValueAt(input: String, start: Int, end: Int, negative: Boolean): Int =
+    val limit   = if negative then Int.MinValue.toLong else -Int.MaxValue.toLong
+    val negated = negatedValueAt(input, start, end, limit, "Int")
+    (if negative then negated else -negated).toInt
+
+  /** interprets a `LongLit` token's value in place from its input slice — see [[intValueAt]] */
+  private[internal] def longValueAt(input: String, start: Int, end: Int, negative: Boolean): Long =
+    val limit   = if negative then Long.MinValue else -Long.MaxValue
+    val negated = negatedValueAt(input, start, end, limit, "Long")
+    if negative then negated else -negated
+
+  /** Accumulates the literal's magnitude negatively (mirroring `java.lang.Long.parseLong`), so
+    * `MinValue`'s magnitude — one more than `MaxValue`'s — stays representable. Skips '_'
+    * separators, the `0x`/`0b` prefix and the `l`/`L` suffix; no intermediate string is allocated.
+    * The scanner has already validated every char in the slice.
+    */
+  private def negatedValueAt(
+      input: String,
+      start: Int,
+      end: Int,
+      limit: Long,
+      name: String
+  ): Long =
+    def invalid(): Nothing =
+      throw TokenizeException(s"Invalid $name literal '${input.substring(start, end)}'", start)
+
+    var from = start
+    var base = 10
+    if end - start > 2 && input.charAt(start) == '0' then
+      input.charAt(start + 1) match
+        case 'x' | 'X' => base = 16; from = start + 2
+        case 'b' | 'B' => base = 2; from = start + 2
+        case _         => ()
+
+    val multmin = limit / base
+    var result  = 0L
+    var i       = from
+    while i < end do
+      val ch = input.charAt(i)
+      if ch != '_' && ch != 'l' && ch != 'L' then
+        val digit = Character.digit(ch, base)
+        if digit < 0 || result < multmin then invalid()
+        result = result * base
+        if result < limit + digit then invalid()
+        result = result - digit
+      i += 1
+    result
+
   /** Materialize line/column information for an offset — error/debug path only. */
   def spanAt(input: String, offset: Int): DecodeError.Span =
     var line   = 1
@@ -599,22 +621,26 @@ private[scalanotation] object Tokenizer:
       case TokenKind.EmptyTupleId => Token.EmptyTupleId(span)
       case TokenKind.Keyword      => Token.Keyword(scanner.str.nn, span)
       case TokenKind.Identifier   => Token.Identifier(scanner.str.nn, span)
-      case TokenKind.IntLit       => Token.IntLit(raw, scanner.num.toInt, span)
-      case TokenKind.LongLit      => Token.LongLit(raw, scanner.num, span)
-      case TokenKind.FloatLit     => Token.FloatLit(raw, scanner.dbl.toFloat, span)
-      case TokenKind.DoubleLit    => Token.DoubleLit(raw, scanner.dbl, span)
-      case TokenKind.StringLit    => Token.StringLit(raw, scanner.str.nn, span)
-      case TokenKind.CharLit      => Token.CharLit(raw, scanner.num.toChar, span)
-      case TokenKind.Equals       => Token.Equals(span)
-      case TokenKind.Dot          => Token.Dot(span)
-      case TokenKind.Plus         => Token.Plus(span)
-      case TokenKind.Minus        => Token.Minus(span)
-      case TokenKind.StarColon    => Token.StarColon(span)
-      case TokenKind.Comma        => Token.Comma(span)
-      case TokenKind.Semicolon    => Token.Semicolon(span)
-      case TokenKind.LParen       => Token.LParen(span)
-      case TokenKind.RParen       => Token.RParen(span)
-      case _                      => Token.Eof(span)
+      // no sign context here: the boxed token carries the positive interpretation, and a literal
+      // only valid with a leading '-' (MinValue's magnitude) is rejected like any other overflow
+      case TokenKind.IntLit =>
+        Token.IntLit(raw, intValueAt(input, scanner.start, scanner.end, negative = false), span)
+      case TokenKind.LongLit =>
+        Token.LongLit(raw, longValueAt(input, scanner.start, scanner.end, negative = false), span)
+      case TokenKind.FloatLit  => Token.FloatLit(raw, scanner.dbl.toFloat, span)
+      case TokenKind.DoubleLit => Token.DoubleLit(raw, scanner.dbl, span)
+      case TokenKind.StringLit => Token.StringLit(raw, scanner.str.nn, span)
+      case TokenKind.CharLit   => Token.CharLit(raw, scanner.num.toChar, span)
+      case TokenKind.Equals    => Token.Equals(span)
+      case TokenKind.Dot       => Token.Dot(span)
+      case TokenKind.Plus      => Token.Plus(span)
+      case TokenKind.Minus     => Token.Minus(span)
+      case TokenKind.StarColon => Token.StarColon(span)
+      case TokenKind.Comma     => Token.Comma(span)
+      case TokenKind.Semicolon => Token.Semicolon(span)
+      case TokenKind.LParen    => Token.LParen(span)
+      case TokenKind.RParen    => Token.RParen(span)
+      case _                   => Token.Eof(span)
 
   /** Tokenize the whole input into boxed [[Token]]s — for tests and debugging only; the decode path
     * streams tokens through [[TokenStream]] without materializing them.
@@ -692,14 +718,20 @@ private[scalanotation] abstract class TokenStream(
       buffered = false
     else if kinds(cur) != TokenKind.Eof then scanIntoSlot(cur)
 
-  // payload accessors — happy path, unboxed where primitive
+  // payload accessors — happy path, unboxed where primitive. Int and Long take the sign decoded
+  // from the preceding token: the value is interpreted here, in place from the input slice, so
+  // MinValue (whose magnitude overflows the positive range) parses once the sign is known.
   protected def currentName(): String        = strs(cur).nn
   protected def currentStringValue(): String = strs(cur).nn
-  protected def currentIntValue(): Int       = nums(cur).toInt
-  protected def currentLongValue(): Long     = nums(cur)
   protected def currentCharValue(): Char     = nums(cur).toChar
   protected def currentFloatValue(): Float   = dbls(cur).toFloat
   protected def currentDoubleValue(): Double = dbls(cur)
+
+  protected def currentIntValue(negative: Boolean): Int =
+    Tokenizer.intValueAt(input, starts(cur), ends(cur), negative)
+
+  protected def currentLongValue(negative: Boolean): Long =
+    Tokenizer.longValueAt(input, starts(cur), ends(cur), negative)
 
   // error-path materialization
   protected def spanAt(offset: Int): DecodeError.Span = Tokenizer.spanAt(input, offset)

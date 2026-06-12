@@ -1360,20 +1360,24 @@ private final class TokenDecoder(input: String, debug: Boolean)
                     else
                       val expectedField = fields(fiLocal)
                       if actualName != expectedField.name then
-                        actualFieldErr(DecodeError.FieldOrderMismatch(expectedField.name, actualName))
+                        actualFieldErr(
+                          DecodeError.FieldOrderMismatch(expectedField.name, actualName)
+                        )
                       else expectedField
                   }
-                else if parsedFieldIndex >= fields.length then eval {
-                  actualFieldErr(
-                    DecodeError.FieldCountMismatch(fields.length, parsedFieldIndex + 1)
-                  )
-                }
-                else eval {
-                  val expectedField = fields(parsedFieldIndex)
-                  if actualName != expectedField.name then
-                    actualFieldErr(DecodeError.FieldOrderMismatch(expectedField.name, actualName))
-                  else expectedField
-                }
+                else if parsedFieldIndex >= fields.length then
+                  eval {
+                    actualFieldErr(
+                      DecodeError.FieldCountMismatch(fields.length, parsedFieldIndex + 1)
+                    )
+                  }
+                else
+                  eval {
+                    val expectedField = fields(parsedFieldIndex)
+                    if actualName != expectedField.name then
+                      actualFieldErr(DecodeError.FieldOrderMismatch(expectedField.name, actualName))
+                    else expectedField
+                  }
               }
               validated match
                 case expectedField: Field =>
@@ -1830,53 +1834,47 @@ private final class TokenDecoder(input: String, debug: Boolean)
 
   private[scalanotation] def decodeInt(): Result[Unit, DecodeError] = Result.task:
     decodeSigned[Int](
-      literal = () =>
+      literal = negative =>
         currentKind() match
-          case TokenKind.IntLit => currentIntValue()
+          case TokenKind.IntLit => currentIntValue(negative)
           case _                => raise(expectedTypeAtCurrent(RawSchema.Int)),
-      negator = -1,
-      one = 1,
-      prod = _ * _,
       store = v => intSlot = v
     )
 
   private[scalanotation] def decodeLong(): Result[Unit, DecodeError] = Result.task:
     decodeSigned[Long](
-      literal = () =>
+      literal = negative =>
         currentKind() match
-          case TokenKind.LongLit => currentLongValue()
-          case TokenKind.IntLit  => currentIntValue().toLong
+          case TokenKind.LongLit => currentLongValue(negative)
+          case TokenKind.IntLit  => currentIntValue(negative).toLong
           case _                 => raise(expectedTypeAtCurrent(RawSchema.Long)),
-      negator = -1L,
-      one = 1L,
-      prod = _ * _,
       store = v => longSlot = v
     )
 
   private[scalanotation] def decodeFloat(): Result[Unit, DecodeError] = Result.task:
     decodeSigned[Float](
-      literal = () =>
+      literal = negative =>
         currentKind() match
-          case TokenKind.FloatLit => currentFloatValue()
-          case TokenKind.IntLit if NumericPromotions.isExactFloat(currentIntValue()) =>
-            currentIntValue().toFloat
+          case TokenKind.FloatLit =>
+            val magnitude = currentFloatValue()
+            if negative then -magnitude else magnitude
+          case TokenKind.IntLit =>
+            val value = currentIntValue(negative)
+            if NumericPromotions.isExactFloat(value) then value.toFloat
+            else raise(expectedTypeAtCurrent(RawSchema.Float))
           case _ => raise(expectedTypeAtCurrent(RawSchema.Float)),
-      negator = -1.0f,
-      one = 1.0f,
-      prod = _ * _,
       store = v => floatSlot = v
     )
 
   private[scalanotation] def decodeDouble(): Result[Unit, DecodeError] = Result.task:
     decodeSigned[Double](
-      literal = () =>
+      literal = negative =>
         currentKind() match
-          case TokenKind.DoubleLit => currentDoubleValue()
-          case TokenKind.IntLit    => currentIntValue().toDouble
-          case _                   => raise(expectedTypeAtCurrent(RawSchema.Double)),
-      negator = -1.0d,
-      one = 1.0d,
-      prod = _ * _,
+          case TokenKind.DoubleLit =>
+            val magnitude = currentDoubleValue()
+            if negative then -magnitude else magnitude
+          case TokenKind.IntLit => currentIntValue(negative).toDouble
+          case _                => raise(expectedTypeAtCurrent(RawSchema.Double)),
       store = v => doubleSlot = v
     )
 
@@ -1896,23 +1894,23 @@ private final class TokenDecoder(input: String, debug: Boolean)
     if currentKind() == TokenKind.NullKw then advance()
     else raise(expectedTypeAtCurrent(RawSchema.Null))
 
-  // all parameters are inline so the lambda literals beta-reduce away: `prod` would otherwise be
-  // a Function2, which is not specialized for Float and boxes both operands on every float decode
+  // The sign is passed into `literal` rather than multiplied in afterwards, so integer literals
+  // are range-checked with the sign known — `-2147483648` is valid although its magnitude
+  // overflows a positive Int. Parameters are inline so the lambda literals beta-reduce away
+  // instead of going through Function1, which is not specialized for Float and would box on
+  // every float decode.
   private inline def decodeSigned[N](
-      inline literal: () => N,
-      inline negator: N,
-      inline one: N,
-      inline prod: (N, N) => N,
+      inline literal: Boolean => N,
       inline store: N => Unit
   ): Unit =
-    val sign =
+    val negative =
       if currentKind() == TokenKind.Minus then
         advance()
-        negator
-      else one
-    val value = literal()
+        true
+      else false
+    val value = literal(negative)
     advance()
-    store(prod(sign, value))
+    store(value)
 
   private def expectVal(): Result[Unit, DecodeError] = Result.task:
     if currentKind() == TokenKind.ValKw then advance()
