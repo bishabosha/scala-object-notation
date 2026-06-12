@@ -476,9 +476,9 @@ private[scalanotation] class ExprDecoder extends Internal.PoolHolder, PushSlots:
           val fieldExpr = fieldExprs(0)
           val caseName  = fieldExpr.name
           val value     = fieldExpr.value
-          val sumCase   = schema.cases.iterator.find(_.name == caseName) match
-            case Some(c) => c
-            case _       => raise(DecodeError.UnexpectedField(caseName).atPath(s".$caseName"))
+          val sumCase   = RawSchema.findCase(schema.cases, caseName) match
+            case null => raise(DecodeError.UnexpectedField(caseName).atPath(s".$caseName"))
+            case c    => c
           checkOrRaise(decodeBase(sumCase.schema, value))(_.atPath(s".$caseName"))
         case other =>
           raise(DecodeError.ExpectedType(schema.describeSelf, describe(other)))
@@ -501,9 +501,10 @@ private[scalanotation] class ExprDecoder extends Internal.PoolHolder, PushSlots:
             _.atPath(s".$discriminatorField")
           )
           val caseName = stringSlot
-          val sumCase  = schema.cases.iterator.find(_.name == caseName) match
-            case Some(c) => c
-            case _ => raise(DecodeError.UnexpectedField(caseName).atPath(s".$discriminatorField"))
+          val sumCase  = RawSchema.findCase(schema.cases, caseName) match
+            case null =>
+              raise(DecodeError.UnexpectedField(caseName).atPath(s".$discriminatorField"))
+            case c => c
           decodeBase(sumCase.schema, expr).check
       case other =>
         Result.Err(expectedType(schema, other))
@@ -985,7 +986,9 @@ private final class TokenDecoder(input: String, debug: Boolean)
       state: read.State
   ): Result[Unit, DecodeError] =
     Result.task:
-      val (hasComma, hasStarColon) = parenthesizedTupleSeparators()
+      val separators   = parenthesizedTupleSeparators()
+      val hasComma     = (separators & SeparatorComma) != 0
+      val hasStarColon = (separators & SeparatorStarColon) != 0
       advanceTupleOpen(schema).check
       currentKind() match
         case TokenKind.RParen =>
@@ -1189,17 +1192,21 @@ private final class TokenDecoder(input: String, debug: Boolean)
       case RawSchema.AnyExpr              => true
       case _                              => false
 
+  // bit flags of parenthesizedTupleSeparators — packed into an Int so no tuple is boxed per decode
+  private final val SeparatorComma     = 1
+  private final val SeparatorStarColon = 2
+
   /** Scans ahead (without buffering) from the current '(' to its matching ')' to discover which
-    * separators the parenthesized tuple uses. Uses a scout scanner so the bounded token buffer of
-    * the stream is preserved; no tokens are materialized.
+    * separators the parenthesized tuple uses, returned as a bitmask of [[SeparatorComma]] and
+    * [[SeparatorStarColon]]. Uses a scout scanner so the bounded token buffer of the stream is
+    * preserved; no tokens are materialized.
     */
-  private def parenthesizedTupleSeparators(): (hasComma: Boolean, hasStarColon: Boolean) =
-    var depth        = 0
-    var sawOpen      = false
-    var done         = false
-    var hasComma     = false
-    var hasStarColon = false
-    val scout        = scoutFromCurrent()
+  private def parenthesizedTupleSeparators(): Int =
+    var depth      = 0
+    var sawOpen    = false
+    var done       = false
+    var separators = 0
+    val scout      = scoutFromCurrent()
     while !done do
       scout.scanNext()
       scout.kind match
@@ -1210,13 +1217,13 @@ private final class TokenDecoder(input: String, debug: Boolean)
           depth -= 1
           if depth == 0 then done = true
         case TokenKind.Comma if depth == 1 =>
-          hasComma = true
+          separators |= SeparatorComma
         case TokenKind.StarColon if depth == 1 =>
-          hasStarColon = true
+          separators |= SeparatorStarColon
         case TokenKind.Eof =>
           done = true
         case _ => ()
-    (hasComma, hasStarColon)
+    separators
 
   private def decodeSum(schema: RawSchema.Sum): Result[Unit, DecodeError] =
     Result.task {
@@ -1230,15 +1237,15 @@ private final class TokenDecoder(input: String, debug: Boolean)
                 .atToken(spanAt(nameOffset))
             )
           else
-            val sumCase = schema.cases.iterator.find(_.name == actualName) match
-              case Some(c) => c
-              case _       =>
+            val sumCase = RawSchema.findCase(schema.cases, actualName) match
+              case null =>
                 raise(
                   DecodeError
                     .UnexpectedField(actualName)
                     .atPath(s".${actualName}")
                     .atToken(spanAt(nameOffset))
                 )
+              case c => c
             checkOrRaise(decodeBase(sumCase.schema))(_.atPath(s".${actualName}"))
       }
       if parsed.fieldCount != 1 then
@@ -1274,15 +1281,15 @@ private final class TokenDecoder(input: String, debug: Boolean)
 
       checkOrRaise(decodeString())(_.atPath(s".$actualName"))
       val caseName = stringSlot
-      val sumCase  = schema.cases.iterator.find(_.name == caseName) match
-        case Some(c) => c
-        case _       =>
+      val sumCase  = RawSchema.findCase(schema.cases, caseName) match
+        case null =>
           raise(
             DecodeError
               .UnexpectedField(caseName)
               .atPath(s".$actualName")
               .atToken(spanAt(nameOffset))
           )
+        case c => c
 
       currentKind() match
         case TokenKind.Comma  => advance()
@@ -1885,11 +1892,13 @@ private final class TokenDecoder(input: String, debug: Boolean)
     if currentKind() == TokenKind.NullKw then advance()
     else raise(expectedTypeAtCurrent(RawSchema.Null))
 
+  // all parameters are inline so the lambda literals beta-reduce away: `prod` would otherwise be
+  // a Function2, which is not specialized for Float and boxes both operands on every float decode
   private inline def decodeSigned[N](
       inline literal: () => N,
-      negator: N,
-      one: N,
-      prod: (N, N) => N,
+      inline negator: N,
+      inline one: N,
+      inline prod: (N, N) => N,
       inline store: N => Unit
   ): Unit =
     val sign =
@@ -1928,7 +1937,7 @@ private final class TokenDecoder(input: String, debug: Boolean)
       val builder = new StringBuilder(stringSlot)
       while currentKind() == TokenKind.Dot do
         advance()
-        builder += '.'
+        builder.append('.')
         expectIdentifier().check
         builder ++= stringSlot
       stringSlot = builder.result()

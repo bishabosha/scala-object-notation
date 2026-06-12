@@ -168,11 +168,11 @@ private[scalanotation] final class Tokenizer(private var input: String):
   private def rawText: String = input.substring(start, index)
 
   private def scanIdentifier(): Unit =
-    val builder = new StringBuilder
-    while !isAtEnd && isIdentifierPart(currentChar()) do builder += advance()
-    if builder.nonEmpty && builder.charAt(builder.length - 1) == '_' then
-      while !isAtEnd && isOperatorPart(currentChar()) do builder += advance()
-    builder.result() match
+    // the identifier is a slice of the input: track offsets, no per-token builder
+    while !isAtEnd && isIdentifierPart(currentChar()) do advance()
+    if index > start && input.charAt(index - 1) == '_' then
+      while !isAtEnd && isOperatorPart(currentChar()) do advance()
+    input.substring(start, index) match
       case KW_package                                        => kind = TokenKind.PackageKw
       case KW_val                                            => kind = TokenKind.ValKw
       case KW_true                                           => kind = TokenKind.TrueKw
@@ -197,9 +197,9 @@ private[scalanotation] final class Tokenizer(private var input: String):
         case '\\' =>
           advance()
           if isAtEnd then fail("Unterminated quoted identifier")
-          builder += scanEscape()
+          builder.append(scanEscape())
         case _ =>
-          builder += advance()
+          builder.append(advance())
     if isAtEnd then fail("Unterminated quoted identifier")
     advance()
     kind = TokenKind.Identifier
@@ -233,9 +233,8 @@ private[scalanotation] final class Tokenizer(private var input: String):
     else scanDecimalNumber()
 
   private def scanOperator(): Unit =
-    val builder = new StringBuilder
-    while !isAtEnd && isOperatorPart(currentChar()) do builder += advance()
-    builder.result() match
+    while !isAtEnd && isOperatorPart(currentChar()) do advance()
+    input.substring(start, index) match
       case "="  => kind = TokenKind.Equals
       case "+"  => kind = TokenKind.Plus
       case "-"  => kind = TokenKind.Minus
@@ -256,18 +255,21 @@ private[scalanotation] final class Tokenizer(private var input: String):
       if marker == 'x' || marker == 'X' then 16
       else 2
 
-    val digits   = new StringBuilder
-    var sawDigit = false
+    // the digits are a slice of the input: track offsets, no per-token builder
+    val digitsStart  = index
+    var sawDigit     = false
+    var sawSeparator = false
     while !isAtEnd && isDigitForBase(currentChar(), base) do
-      digits += advance()
+      advance()
       sawDigit = true
 
     while !isAtEnd && currentChar() == '_' do
-      digits += advance()
+      sawSeparator = true
+      advance()
       if isAtEnd || !isDigitForBase(currentChar(), base) then
         fail(s"Expected a base-$base digit after numeric separator")
       while !isAtEnd && isDigitForBase(currentChar(), base) do
-        digits += advance()
+        advance()
         sawDigit = true
 
     if !sawDigit then fail(s"Expected at least one base-$base digit after numeric prefix")
@@ -275,10 +277,12 @@ private[scalanotation] final class Tokenizer(private var input: String):
     if !isAtEnd && currentChar().isLetterOrDigit && currentChar() != 'l' && currentChar() != 'L'
     then fail(s"Invalid digit '${currentChar()}' for base-$base literal")
 
-    val isLong = !isAtEnd && (currentChar() == 'l' || currentChar() == 'L')
+    val digitsEnd = index
+    val isLong    = !isAtEnd && (currentChar() == 'l' || currentChar() == 'L')
     if isLong then advance()
 
-    val normalizedDigits = digits.result().replace("_", "")
+    val digits           = input.substring(digitsStart, digitsEnd)
+    val normalizedDigits = if sawSeparator then digits.replace("_", "") else digits
 
     if isLong then
       kind = TokenKind.LongLit
@@ -288,66 +292,83 @@ private[scalanotation] final class Tokenizer(private var input: String):
       num = parseIntLiteral(normalizedDigits, base).toLong
 
   private def scanDecimalNumber(): Unit =
-    val builder     = new StringBuilder
-    var hasDot      = false
-    var hasExponent = false
+    // the digits are a slice of the input: track offsets, no per-token builder
+    var hasDot       = false
+    var hasExponent  = false
+    var sawSeparator = false
 
     def takeDigits(): Unit =
-      while !isAtEnd && (currentChar().isDigit || currentChar() == '_') do builder += advance()
+      while !isAtEnd && (currentChar().isDigit || currentChar() == '_') do
+        if currentChar() == '_' then sawSeparator = true
+        advance()
 
     takeDigits()
     if !isAtEnd && currentChar() == '.' && peekIsDigit() then
       hasDot = true
-      builder += advance()
+      advance()
       takeDigits()
 
     if !isAtEnd && (currentChar() == 'e' || currentChar() == 'E') then
       hasExponent = true
-      builder += advance()
-      if !isAtEnd && (currentChar() == '+' || currentChar() == '-') then builder += advance()
+      advance()
+      if !isAtEnd && (currentChar() == '+' || currentChar() == '-') then advance()
       if isAtEnd || !currentChar().isDigit then fail("Exponent requires at least one digit")
       takeDigits()
 
+    val digitsEnd = index
+    // '\u0000' marks "no suffix" — no Option[Char] is allocated per literal
     val suffix =
-      if !isAtEnd && "lLfFdD".contains(currentChar()) then Some(advance())
-      else None
+      if isAtEnd then '\u0000'
+      else
+        currentChar() match
+          case ch @ ('l' | 'L' | 'f' | 'F' | 'd' | 'D') => advance(); ch
+          case _                                        => '\u0000'
 
-    val normalizedDigits = builder.result().replace("_", "")
+    def normalizedDigits =
+      val digits = input.substring(start, digitsEnd)
+      if sawSeparator then digits.replace("_", "") else digits
 
     suffix match
-      case Some('l' | 'L') =>
+      case 'l' | 'L' =>
         if hasDot || hasExponent then
           fail("Long literals cannot contain a decimal point or exponent")
         kind = TokenKind.LongLit
         num = parseLongLiteral(normalizedDigits)
-      case Some('f' | 'F') =>
+      case 'f' | 'F' =>
         kind = TokenKind.FloatLit
         dbl = parseFloatLiteral(normalizedDigits).toDouble
-      case Some('d' | 'D') =>
+      case 'd' | 'D' =>
         kind = TokenKind.DoubleLit
         dbl = parseDoubleLiteral(normalizedDigits)
-      case Some(other) =>
-        fail(s"unrecognised numeric literal suffix '$other'")
-      case None if hasDot || hasExponent =>
+      case _ if hasDot || hasExponent =>
         kind = TokenKind.DoubleLit
         dbl = parseDoubleLiteral(normalizedDigits)
-      case None =>
+      case _ =>
         kind = TokenKind.IntLit
         num = parseIntLiteral(normalizedDigits).toLong
 
   private def scanString(): Unit =
-    val value = new StringBuilder
     advance()
-    while !isAtEnd && currentChar() != '"' do
-      if currentChar() == '\\' then
-        advance()
-        if isAtEnd then fail("Unterminated string literal")
-        value += decodeEscape(advance())
-      else value += advance()
+    // fast path: an escape-free string is a slice of the input, no builder needed
+    val contentStart = index
+    while !isAtEnd && currentChar() != '"' && currentChar() != '\\' do advance()
     if isAtEnd then fail("Unterminated string literal")
-    advance()
-    kind = TokenKind.StringLit
-    str = value.result()
+    if currentChar() == '"' then
+      str = input.substring(contentStart, index)
+      advance()
+      kind = TokenKind.StringLit
+    else
+      val value = new StringBuilder(input.substring(contentStart, index))
+      while !isAtEnd && currentChar() != '"' do
+        if currentChar() == '\\' then
+          advance()
+          if isAtEnd then fail("Unterminated string literal")
+          value.append(decodeEscape(advance()))
+        else value.append(advance())
+      if isAtEnd then fail("Unterminated string literal")
+      advance()
+      kind = TokenKind.StringLit
+      str = value.result()
 
   private def scanChar(): Unit =
     advance()

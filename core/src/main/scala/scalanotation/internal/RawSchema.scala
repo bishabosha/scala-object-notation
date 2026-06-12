@@ -189,6 +189,17 @@ private[scalanotation] object RawSchema:
 
   final case class SumCase(name: String, schema: RawSchema)
 
+  /** linear scan for the case named `name` — unlike `cases.iterator.find`, allocates no iterator,
+    * closure or `Some` on the decode hot path
+    */
+  def findCase(cases: IArray[SumCase], name: String): SumCase | Null =
+    var i = 0
+    while i < cases.length do
+      val sumCase = cases(i)
+      if sumCase.name == name then return sumCase
+      i += 1
+    null
+
   trait NamedTupleRead:
     /** Abstract builder state, consumed and returned by the `add` methods. Implementations that
       * only provide the legacy [[build]] inherit the defaults, where the state is the
