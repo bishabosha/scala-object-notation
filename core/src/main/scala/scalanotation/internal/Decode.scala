@@ -885,7 +885,7 @@ private final class TokenDecoder(input: String, debug: Boolean)
             (actualName, nameOffset, parsedFieldIndex) =>
               def actualFieldErr(err: DecodeError): DecodeError =
                 err.atPath(s".${actualName}").atToken(spanAt(nameOffset))
-              val validated: DecodeError | Field = eval {
+              val validated: DecodeError | Field = {
                 if seenNames.alreadySeen(actualName) then
                   actualFieldErr(DecodeError.DuplicateField(actualName))
                 else if schema.allowSkippedNullableFields then
@@ -1338,7 +1338,7 @@ private final class TokenDecoder(input: String, debug: Boolean)
             (actualName, nameOffset, parsedFieldIndex) =>
               def actualFieldErr(err: DecodeError): DecodeError =
                 err.atPath(s".${actualName}").atToken(spanAt(nameOffset))
-              val validated: DecodeError | Field = eval {
+              val validated: DecodeError | Field = {
                 if seenNames.alreadySeen(actualName) then
                   actualFieldErr(DecodeError.DuplicateField(actualName))
                 else if schema.allowSkippedNullableFields then
@@ -1346,30 +1346,34 @@ private final class TokenDecoder(input: String, debug: Boolean)
                     if fieldIndex < fields.length then fields(fieldIndex) else null
                   state = fillSkippedNullableFields(read)(fields, state, fieldIndex, actualName)
                   fieldIndex = pullSkipFillIndex()
-
-                  if fieldIndex >= fields.length then
-                    if expectedBeforeSkip == null then
-                      actualFieldErr(
-                        DecodeError.FieldCountMismatch(fields.length, parsedFieldIndex + 1)
-                      )
+                  val fiLocal = fieldIndex
+                  eval {
+                    if fiLocal >= fields.length then
+                      if expectedBeforeSkip == null then
+                        actualFieldErr(
+                          DecodeError.FieldCountMismatch(fields.length, parsedFieldIndex + 1)
+                        )
+                      else
+                        actualFieldErr(
+                          DecodeError.FieldOrderMismatch(expectedBeforeSkip.name, actualName)
+                        )
                     else
-                      actualFieldErr(
-                        DecodeError.FieldOrderMismatch(expectedBeforeSkip.name, actualName)
-                      )
-                  else
-                    val expectedField = fields(fieldIndex)
-                    if actualName != expectedField.name then
-                      actualFieldErr(DecodeError.FieldOrderMismatch(expectedField.name, actualName))
-                    else expectedField
-                else if parsedFieldIndex >= fields.length then
+                      val expectedField = fields(fiLocal)
+                      if actualName != expectedField.name then
+                        actualFieldErr(DecodeError.FieldOrderMismatch(expectedField.name, actualName))
+                      else expectedField
+                  }
+                else if parsedFieldIndex >= fields.length then eval {
                   actualFieldErr(
                     DecodeError.FieldCountMismatch(fields.length, parsedFieldIndex + 1)
                   )
-                else
+                }
+                else eval {
                   val expectedField = fields(parsedFieldIndex)
                   if actualName != expectedField.name then
                     actualFieldErr(DecodeError.FieldOrderMismatch(expectedField.name, actualName))
                   else expectedField
+                }
               }
               validated match
                 case expectedField: Field =>
@@ -1734,7 +1738,7 @@ private final class TokenDecoder(input: String, debug: Boolean)
     // to share the logic without breaking the label optimisation, we need to cache the result and
     // then redispatch the break at the call-site. i.e. nested inline calls dont seem to compose
     // well enough to pass along the label. i would like to investigate why.
-    eval {
+    {
       scala.util.boundary {
         import Internal.loop
 

@@ -71,6 +71,26 @@ class PrimitiveDecodingSuite extends ScalanotationSuite:
     assertEquals(value, expected)
     assertEquals(reparsed, Result.Ok(expected))
 
+  test("decode integer literals at the representable bounds"):
+    assertEquals(Readers.readAs[Int]("2_147_483_647"), Result.Ok(Int.MaxValue))
+    assertEquals(Readers.readAs[Int]("-2_147_483_647"), Result.Ok(-Int.MaxValue))
+    assertEquals(Readers.readAs[Int]("0x7FFF_FFFF"), Result.Ok(Int.MaxValue))
+    assertEquals(Readers.readAs[Long]("9_223_372_036_854_775_807L"), Result.Ok(Long.MaxValue))
+    assertEquals(Readers.readAs[Long]("0x7FFF_FFFF_FFFF_FFFFL"), Result.Ok(Long.MaxValue))
+
+  test("reject integer literals that overflow their type"):
+    def assertTokenFormat[T: Reader](input: String, expected: String): Unit =
+      Readers.readAs[T](input) match
+        case Result.Err(error) => assertEquals(error.rootCause, DecodeError.TokenFormat(expected))
+        case Result.Ok(value)  => fail(s"Expected a decode failure, got $value")
+
+    assertTokenFormat[Int]("2147483648", "Invalid Int literal '2147483648'")
+    assertTokenFormat[Int]("0x8000_0000", "Invalid Int literal '0x8000_0000'")
+    assertTokenFormat[Long](
+      "9223372036854775808L",
+      "Invalid Long literal '9223372036854775808L'"
+    )
+
   test("reject numeric literal promotions that would lose precision"):
     val floatErr         = Readers.readAs[Float]("16_777_217")
     val doubleToFloatErr = Readers.readAs[Float]("0.1")

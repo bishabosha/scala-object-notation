@@ -255,16 +255,14 @@ private[scalanotation] final class Tokenizer(private var input: String):
       if marker == 'x' || marker == 'X' then 16
       else 2
 
-    // the digits are a slice of the input: track offsets, no per-token builder
-    val digitsStart  = index
-    var sawDigit     = false
-    var sawSeparator = false
+    // the digits are parsed in place from the input slice: track offsets, nothing is allocated
+    val digitsStart = index
+    var sawDigit    = false
     while !isAtEnd && isDigitForBase(currentChar(), base) do
       advance()
       sawDigit = true
 
     while !isAtEnd && currentChar() == '_' do
-      sawSeparator = true
       advance()
       if isAtEnd || !isDigitForBase(currentChar(), base) then
         fail(s"Expected a base-$base digit after numeric separator")
@@ -281,39 +279,39 @@ private[scalanotation] final class Tokenizer(private var input: String):
     val isLong    = !isAtEnd && (currentChar() == 'l' || currentChar() == 'L')
     if isLong then advance()
 
-    val digits           = input.substring(digitsStart, digitsEnd)
-    val normalizedDigits = if sawSeparator then digits.replace("_", "") else digits
-
     if isLong then
       kind = TokenKind.LongLit
-      num = parseLongLiteral(normalizedDigits, base)
+      num = parseLongFrom(digitsStart, digitsEnd, base)
     else
       kind = TokenKind.IntLit
-      num = parseIntLiteral(normalizedDigits, base).toLong
+      num = parseIntFrom(digitsStart, digitsEnd, base).toLong
 
   private def scanDecimalNumber(): Unit =
     // the digits are a slice of the input: track offsets, no per-token builder
-    var hasDot       = false
-    var hasExponent  = false
-    var sawSeparator = false
+    var hasDot      = false
+    var hasExponent = false
 
-    def takeDigits(): Unit =
+    // reports a seen '_' separator via the result — assigning a captured local var from a local
+    // def would lift the var into a heap-allocated BooleanRef on every scan
+    def takeDigits(): Boolean =
+      var sawSeparator = false
       while !isAtEnd && (currentChar().isDigit || currentChar() == '_') do
         if currentChar() == '_' then sawSeparator = true
         advance()
+      sawSeparator
 
-    takeDigits()
+    var sawSeparator = takeDigits()
     if !isAtEnd && currentChar() == '.' && peekIsDigit() then
       hasDot = true
       advance()
-      takeDigits()
+      if takeDigits() then sawSeparator = true
 
     if !isAtEnd && (currentChar() == 'e' || currentChar() == 'E') then
       hasExponent = true
       advance()
       if !isAtEnd && (currentChar() == '+' || currentChar() == '-') then advance()
       if isAtEnd || !currentChar().isDigit then fail("Exponent requires at least one digit")
-      takeDigits()
+      if takeDigits() then sawSeparator = true
 
     val digitsEnd = index
     // '\u0000' marks "no suffix" — no Option[Char] is allocated per literal
@@ -324,7 +322,10 @@ private[scalanotation] final class Tokenizer(private var input: String):
           case ch @ ('l' | 'L' | 'f' | 'F' | 'd' | 'D') => advance(); ch
           case _                                        => '\u0000'
 
-    def normalizedDigits =
+    // Int and Long parse in place from the input slice; only Float and Double materialize the
+    // digits, because parseFloat/parseDouble have no offset-range form on any platform. The
+    // separator flag is a parameter: capturing the var would lift it into a heap-allocated Ref.
+    def normalizedDigits(sawSeparator: Boolean): String =
       val digits = input.substring(start, digitsEnd)
       if sawSeparator then digits.replace("_", "") else digits
 
@@ -333,19 +334,19 @@ private[scalanotation] final class Tokenizer(private var input: String):
         if hasDot || hasExponent then
           fail("Long literals cannot contain a decimal point or exponent")
         kind = TokenKind.LongLit
-        num = parseLongLiteral(normalizedDigits)
+        num = parseLongFrom(start, digitsEnd)
       case 'f' | 'F' =>
         kind = TokenKind.FloatLit
-        dbl = parseFloatLiteral(normalizedDigits).toDouble
+        dbl = parseFloatLiteral(normalizedDigits(sawSeparator)).toDouble
       case 'd' | 'D' =>
         kind = TokenKind.DoubleLit
-        dbl = parseDoubleLiteral(normalizedDigits)
+        dbl = parseDoubleLiteral(normalizedDigits(sawSeparator))
       case _ if hasDot || hasExponent =>
         kind = TokenKind.DoubleLit
-        dbl = parseDoubleLiteral(normalizedDigits)
+        dbl = parseDoubleLiteral(normalizedDigits(sawSeparator))
       case _ =>
         kind = TokenKind.IntLit
-        num = parseIntLiteral(normalizedDigits).toLong
+        num = parseIntFrom(start, digitsEnd).toLong
 
   private def scanString(): Unit =
     advance()
@@ -457,17 +458,29 @@ private[scalanotation] final class Tokenizer(private var input: String):
   private def isOperatorPart(ch: Char): Boolean =
     IdentifierSyntax.isOperatorPart(ch)
 
-  private def parseIntLiteral(digits: String, base: Int = 10): Int =
-    try Integer.parseInt(digits, base)
-    catch
-      case _: NumberFormatException =>
-        fail(s"Invalid Int literal '$rawText'")
+  /** Parses an unsigned integer literal directly from the input slice, skipping '_' separators —
+    * unlike `Integer.parseInt`, no intermediate string is allocated. The scanner has already
+    * validated every char in the slice; the overflow guard divides before multiplying, so the
+    * accumulator can never wrap.
+    */
+  private def parseIntegerFrom(from: Int, until: Int, base: Int, limit: Long, name: String): Long =
+    var value = 0L
+    var i     = from
+    while i < until do
+      val ch = input.charAt(i)
+      if ch != '_' then
+        val digit = Character.digit(ch, base)
+        if digit < 0 || value > (limit - digit) / base then
+          fail(s"Invalid $name literal '$rawText'")
+        value = value * base + digit
+      i += 1
+    value
 
-  private def parseLongLiteral(digits: String, base: Int = 10): Long =
-    try java.lang.Long.parseLong(digits, base)
-    catch
-      case _: NumberFormatException =>
-        fail(s"Invalid Long literal '$rawText'")
+  private def parseIntFrom(from: Int, until: Int, base: Int = 10): Int =
+    parseIntegerFrom(from, until, base, Int.MaxValue, "Int").toInt
+
+  private def parseLongFrom(from: Int, until: Int, base: Int = 10): Long =
+    parseIntegerFrom(from, until, base, Long.MaxValue, "Long")
 
   private def parseFloatLiteral(digits: String): Float =
     try
