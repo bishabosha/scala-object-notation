@@ -1,13 +1,16 @@
 package scalanotation.internal
 
+import scalanotation.BuilderSlots
 import scalanotation.DecodeError
 import scalanotation.Expr
 import scalanotation.Reader
+import scalanotation.internal.BuilderSlotsPool.given
 import scalanotation.internal.RawSchema.Field
 import steps.result.Result
 import steps.result.Result.eval.check
 import steps.result.Result.eval.raise
 
+import scala.annotation.switch
 import scala.compiletime.uninitialized
 
 import TokenDecoder.describe
@@ -22,15 +25,180 @@ private[scalanotation] object NumericPromotions:
 
 /** Push-model plumbing shared by the decoders: a decode step marks success by returning
   * [[Result.done]] (a shared constant — no [[Result.Ok]] is allocated on the happy path) after
-  * pushing its decoded value into [[anySlot]], which the caller pulls immediately to append to its
-  * builder. A [[Result.Ok]] carrying the final value is only allocated at the boundary where the
-  * result is returned back to the user.
+  * pushing its decoded value into one of the slots and tagging that slot in [[lastSlotKind]].
+  * Composite and reference results go to the Any slot via [[pushRef]]; primitive decoders push into
+  * a typed slot, so no box is allocated for the push. The caller queries [[lastSlotKind]] to pull
+  * from the right slot — forwarding the unboxed value to a typed builder method via
+  * [[addSlot]]/[[storeSlot]], or boxing once at the user-facing boundary via [[pullAny]]. A
+  * [[Result.Ok]] carrying the final value is only allocated at the boundary where the result is
+  * returned back to the user.
   */
 private[scalanotation] sealed trait PushSlots:
-  /** the most recently decoded value; written by the callee, pulled at once by the caller */
-  protected var anySlot: Any = null
+  /** the most recently decoded reference value; written by the callee via [[pushRef]] */
+  private var anySlot: Any = null
 
-  /** applies a [[RawSchema.Mapped]] mapping to the value in [[anySlot]] after a successful push */
+  /** the field index where the most recent [[fillSkippedNullableFields]] stopped */
+  private var skipFillIndex: Int = 0
+
+  /** the [[SlotKind]] of the most recent push: tells the caller which slot is live */
+  protected var lastSlotKind: Int = SlotKind.Ref
+
+  // typed slots for atomic values: an atomic decoder pushes here without boxing, and the caller
+  // pulls the typed value to wrap or append to its builder
+  protected var stringSlot: String   = ""
+  protected var charSlot: Char       = '\u0000'
+  protected var intSlot: Int         = 0
+  protected var longSlot: Long       = 0L
+  protected var floatSlot: Float     = 0.0f
+  protected var doubleSlot: Double   = 0.0d
+  protected var booleanSlot: Boolean = false
+
+  /** pushes a reference (or already-boxed) value, tagging the Any slot as the live one */
+  protected final def pushRef(value: Any): Unit =
+    anySlot = value
+    lastSlotKind = SlotKind.Ref
+
+  protected final def pullSkipFillIndex(): Int =
+    val res = skipFillIndex
+    skipFillIndex = 0
+    res
+
+  /** fills skipped nullable fields with `None` from `startIndex` until the field named
+    * `actualName`, returning the new builder state and leaving the next field index in
+    * [[skipFillIndex]]
+    */
+  protected final def fillSkippedNullableFields(
+      read: RawSchema.NamedTupleRead
+  )(
+      fields: IArray[Field],
+      state0: read.State,
+      startIndex: Int,
+      actualName: String,
+  ): read.State =
+    var index = startIndex
+    var state = state0
+    while index < fields.length
+      && fields(index).name != actualName
+      && TokenDecoder.isNullable(fields(index).schema)
+    do
+      state = read.add(state, index, None)
+      index += 1
+    skipFillIndex = index
+    state
+
+  protected final def pushString(value: String): Unit =
+    stringSlot = value
+    lastSlotKind = SlotKind.String
+
+  protected final def pushChar(value: Char): Unit =
+    charSlot = value
+    lastSlotKind = SlotKind.Char
+
+  protected final def pushInt(value: Int): Unit =
+    intSlot = value
+    lastSlotKind = SlotKind.Int
+
+  protected final def pushLong(value: Long): Unit =
+    longSlot = value
+    lastSlotKind = SlotKind.Long
+
+  protected final def pushFloat(value: Float): Unit =
+    floatSlot = value
+    lastSlotKind = SlotKind.Float
+
+  protected final def pushDouble(value: Double): Unit =
+    doubleSlot = value
+    lastSlotKind = SlotKind.Double
+
+  protected final def pushBoolean(value: Boolean): Unit =
+    booleanSlot = value
+    lastSlotKind = SlotKind.Boolean
+
+  /** pulls the most recent push as a single value, boxing the live typed slot if necessary */
+  protected final def pullAny(): Any =
+    (lastSlotKind: @switch) match
+      case SlotKind.String  => stringSlot
+      case SlotKind.Char    => charSlot
+      case SlotKind.Int     => intSlot
+      case SlotKind.Long    => longSlot
+      case SlotKind.Float   => floatSlot
+      case SlotKind.Double  => doubleSlot
+      case SlotKind.Boolean => booleanSlot
+      case _                => anySlot
+
+  /** clears slot state for reuse via a pool */
+  protected final def resetSlots(): Unit =
+    anySlot = null
+    stringSlot = ""
+    lastSlotKind = SlotKind.Ref
+
+  /** appends the live slot to a vector builder state, unboxed when a typed slot is live */
+  protected final def addSlot(read: RawSchema.VectorRead)(state: read.State): read.State =
+    (lastSlotKind: @switch) match
+      case SlotKind.String  => read.addString(state, stringSlot)
+      case SlotKind.Char    => read.addChar(state, charSlot)
+      case SlotKind.Int     => read.addInt(state, intSlot)
+      case SlotKind.Long    => read.addLong(state, longSlot)
+      case SlotKind.Float   => read.addFloat(state, floatSlot)
+      case SlotKind.Double  => read.addDouble(state, doubleSlot)
+      case SlotKind.Boolean => read.addBoolean(state, booleanSlot)
+      case _                => read.add(state, anySlot)
+
+  /** adds the live slot at `index` of a tuple builder state, unboxed when a typed slot is live */
+  protected final def addSlot(
+      read: RawSchema.TupleRead
+  )(state: read.State, index: Int): read.State =
+    (lastSlotKind: @switch) match
+      case SlotKind.String  => read.addString(state, index, stringSlot)
+      case SlotKind.Char    => read.addChar(state, index, charSlot)
+      case SlotKind.Int     => read.addInt(state, index, intSlot)
+      case SlotKind.Long    => read.addLong(state, index, longSlot)
+      case SlotKind.Float   => read.addFloat(state, index, floatSlot)
+      case SlotKind.Double  => read.addDouble(state, index, doubleSlot)
+      case SlotKind.Boolean => read.addBoolean(state, index, booleanSlot)
+      case _                => read.add(state, index, anySlot)
+
+  /** adds the live slot at `index` of a named-tuple builder state, unboxed when typed */
+  protected final def addSlot(
+      read: RawSchema.NamedTupleRead
+  )(state: read.State, index: Int): read.State =
+    (lastSlotKind: @switch) match
+      case SlotKind.String  => read.addString(state, index, stringSlot)
+      case SlotKind.Char    => read.addChar(state, index, charSlot)
+      case SlotKind.Int     => read.addInt(state, index, intSlot)
+      case SlotKind.Long    => read.addLong(state, index, longSlot)
+      case SlotKind.Float   => read.addFloat(state, index, floatSlot)
+      case SlotKind.Double  => read.addDouble(state, index, doubleSlot)
+      case SlotKind.Boolean => read.addBoolean(state, index, booleanSlot)
+      case _                => read.add(state, index, anySlot)
+
+  /** adds the live slot at `key` of a dict builder state, unboxed when a typed slot is live */
+  protected final def addSlot(
+      read: RawSchema.DictRead
+  )(state: read.State, key: String): read.State =
+    (lastSlotKind: @switch) match
+      case SlotKind.String  => read.addString(state, key, stringSlot)
+      case SlotKind.Char    => read.addChar(state, key, charSlot)
+      case SlotKind.Int     => read.addInt(state, key, intSlot)
+      case SlotKind.Long    => read.addLong(state, key, longSlot)
+      case SlotKind.Float   => read.addFloat(state, key, floatSlot)
+      case SlotKind.Double  => read.addDouble(state, key, doubleSlot)
+      case SlotKind.Boolean => read.addBoolean(state, key, booleanSlot)
+      case _                => read.add(state, key, anySlot)
+
+  /** stores the live slot at `index` of pooled [[BuilderSlots]], unboxed when typed */
+  protected final def storeSlot(slots: BuilderSlots, index: Int): Unit =
+    (lastSlotKind: @switch) match
+      case SlotKind.String  => slots.setString(index, stringSlot)
+      case SlotKind.Char    => slots.setChar(index, charSlot)
+      case SlotKind.Int     => slots.setInt(index, intSlot)
+      case SlotKind.Long    => slots.setLong(index, longSlot)
+      case SlotKind.Float   => slots.setFloat(index, floatSlot)
+      case SlotKind.Double  => slots.setDouble(index, doubleSlot)
+      case SlotKind.Boolean => slots.setBoolean(index, booleanSlot)
+      case _                => slots.setRef(index, anySlot)
+
+  /** applies a [[RawSchema.Mapped]] mapping to the live slot after a successful push */
   protected final def mapSlot(
       mapping: RawSchema.SchemaMapping,
       r: Result[Unit, DecodeError]
@@ -38,8 +206,8 @@ private[scalanotation] sealed trait PushSlots:
     val fn = mapping.resultMap
     if fn == null || r.isErr then r
     else
-      fn(anySlot) match
-        case Result.Ok(value)    => anySlot = value; r
+      fn(pullAny()) match
+        case Result.Ok(value)    => pushRef(value); r
         case err @ Result.Err(_) => err
 
   /** [[Result.eval.check]] with error decoration that allocates only on the error path */
@@ -65,25 +233,10 @@ private[scalanotation] class ExprDecoder extends Internal.PoolHolder, PushSlots:
   private def expectedType(schema: RawSchema, expr: Expr): DecodeError =
     DecodeError.ExpectedType(schema.describeSelf, describeExpr(expr))
 
-  private def fillSkippedNullableFields(
-      fields: IArray[Field],
-      values: Array[AnyRef],
-      startIndex: Int,
-      actualName: String
-  ): Int =
-    var index = startIndex
-    while index < fields.length
-      && fields(index).name != actualName
-      && TokenDecoder.isNullable(fields(index).schema)
-    do
-      values(index) = None.asInstanceOf[AnyRef]
-      index += 1
-    index
-
   def decodeInto[A](reader: Reader[A], expr: Expr): Result[A, DecodeError] =
     Result:
       decodeBase(reader.schema, expr).check
-      anySlot.asInstanceOf[A]
+      pullAny().asInstanceOf[A]
 
   private[scalanotation] def decodeRaw(
       schema: RawSchema,
@@ -91,7 +244,7 @@ private[scalanotation] class ExprDecoder extends Internal.PoolHolder, PushSlots:
   ): Result[Any, DecodeError] =
     Result:
       decodeBase(schema, expr).check
-      anySlot
+      pullAny()
 
   private def decodeBase(
       schema: RawSchema,
@@ -117,70 +270,70 @@ private[scalanotation] class ExprDecoder extends Internal.PoolHolder, PushSlots:
       case sc: RawSchema.Option =>
         expr match
           case Expr.NullConstant =>
-            anySlot = None
+            pushRef(None)
             Result.done
           case other =>
             val r = decodeBase(sc.inner, other)
-            if r.isOk then anySlot = Some(anySlot)
+            if r.isOk then pushRef(Some(pullAny()))
             r
       case RawSchema.AnyExpr =>
-        anySlot = expr
+        pushRef(expr)
         Result.done
       case RawSchema.String =>
         expr match
           case Expr.StringConstant(value) =>
-            anySlot = value
+            pushString(value)
             Result.done
           case other => Result.Err(expectedType(RawSchema.String, other))
       case RawSchema.Char =>
         expr match
           case Expr.CharConstant(value) =>
-            anySlot = value
+            pushChar(value)
             Result.done
           case other => Result.Err(expectedType(RawSchema.Char, other))
       case RawSchema.Int =>
         expr match
           case Expr.IntConstant(value) =>
-            anySlot = value
+            pushInt(value)
             Result.done
           case other => Result.Err(expectedType(RawSchema.Int, other))
       case RawSchema.Long =>
         expr match
           case Expr.LongConstant(value) =>
-            anySlot = value
+            pushLong(value)
             Result.done
           case Expr.IntConstant(value) =>
-            anySlot = value.toLong
+            pushLong(value.toLong)
             Result.done
           case other => Result.Err(expectedType(RawSchema.Long, other))
       case RawSchema.Float =>
         expr match
           case Expr.FloatConstant(value) =>
-            anySlot = value
+            pushFloat(value)
             Result.done
           case Expr.IntConstant(value) if isExactFloat(value) =>
-            anySlot = value.toFloat
+            pushFloat(value.toFloat)
             Result.done
           case other => Result.Err(expectedType(RawSchema.Float, other))
       case RawSchema.Double =>
         expr match
           case Expr.DoubleConstant(value) =>
-            anySlot = value
+            pushDouble(value)
             Result.done
           case Expr.IntConstant(value) =>
-            anySlot = value.toDouble
+            pushDouble(value.toDouble)
             Result.done
           case other => Result.Err(expectedType(RawSchema.Double, other))
       case RawSchema.Boolean =>
         expr match
           case Expr.BooleanConstant(value) =>
-            anySlot = value
+            pushBoolean(value)
             Result.done
           case other => Result.Err(expectedType(RawSchema.Boolean, other))
       case RawSchema.Null =>
         expr match
           case Expr.NullConstant =>
-            anySlot = null
+            pushRef(null)
             Result.done
           case other => Result.Err(expectedType(schema, other))
 
@@ -196,9 +349,9 @@ private[scalanotation] class ExprDecoder extends Internal.PoolHolder, PushSlots:
         var index  = 0
         while index < elements.length do
           checkOrRaise(decodeBase(schema.element, elements(index)))(_.atPath(s"[$index]"))
-          values = read.add(values, anySlot)
+          values = addSlot(read)(values)
           index += 1
-        anySlot = read.finish(values)
+        pushRef(read.finish(values))
       case other =>
         raise(DecodeError.ExpectedType(schema.describeSelf, describe(other)))
 
@@ -208,8 +361,8 @@ private[scalanotation] class ExprDecoder extends Internal.PoolHolder, PushSlots:
   ): Result[Unit, DecodeError] = Result.task:
     expr match
       case Expr.TupleExpr(elements) =>
-        val read = schema.read
-        if read == null then missingReadCapability(schema)
+        if schema.read == null then missingReadCapability(schema)
+        val read  = schema.read.nn
         val slots = schema.slots
         if elements.length != slots.length then
           raise(DecodeError.FieldCountMismatch(slots.length, elements.length))
@@ -217,9 +370,9 @@ private[scalanotation] class ExprDecoder extends Internal.PoolHolder, PushSlots:
         var index = 0
         while index < slots.length do
           checkOrRaise(decodeBase(slots(index), elements(index)))(_.atPath(s"[$index]"))
-          state = read.add(state, index, anySlot)
+          state = addSlot(read)(state, index)
           index += 1
-        anySlot = read.finish(state)
+        pushRef(read.finish(state))
       case other =>
         raise(DecodeError.ExpectedType(schema.describeSelf, describe(other)))
 
@@ -228,13 +381,13 @@ private[scalanotation] class ExprDecoder extends Internal.PoolHolder, PushSlots:
       expr: Expr
   ): Result[Unit, DecodeError] = namesPool.withBorrowed { seenNames =>
     Result.task:
-      val read = schema.read
-      if read == null then missingReadCapability(schema)
+      if schema.read == null then missingReadCapability(schema)
+      val read = schema.read.nn
       schema.isValidNamedTuple(namesPool).check
       expr match
         case Expr.NamedTupleExpr(fieldExprs) =>
           val fields = schema.fields
-          val values = new Array[AnyRef](fields.length)
+          var state  = read.init(fields.length, slots = null)
           if schema.allowSkippedNullableFields then
             if fieldExprs.isEmpty && fields.nonEmpty then raise(DecodeError.UnitValueNotAllowed())
             var fieldExprIndex = 0
@@ -244,7 +397,8 @@ private[scalanotation] class ExprDecoder extends Internal.PoolHolder, PushSlots:
               val fieldName          = fieldExpr.name
               val expectedBeforeSkip =
                 if fieldIndex < fields.length then fields(fieldIndex) else null
-              fieldIndex = fillSkippedNullableFields(fields, values, fieldIndex, fieldName)
+              state = fillSkippedNullableFields(read)(fields, state, fieldIndex, fieldName)
+              fieldIndex = pullSkipFillIndex()
 
               if fieldIndex >= fields.length then
                 if expectedBeforeSkip == null then
@@ -258,11 +412,12 @@ private[scalanotation] class ExprDecoder extends Internal.PoolHolder, PushSlots:
               checkOrRaise(decodeBase(field.schema, fieldExpr.value))(
                 _.atPath(s".${field.name}")
               )
-              values(fieldIndex) = anySlot.asInstanceOf[AnyRef]
+              state = addSlot(read)(state, fieldIndex)
               fieldIndex += 1
               fieldExprIndex += 1
 
-            fieldIndex = fillSkippedNullableFields(fields, values, fieldIndex, "")
+            state = fillSkippedNullableFields(read)(fields, state, fieldIndex, "")
+            fieldIndex = pullSkipFillIndex()
             if fieldIndex != fields.length then
               raise(DecodeError.FieldCountMismatch(fields.length, fieldExprs.length))
           else
@@ -279,10 +434,10 @@ private[scalanotation] class ExprDecoder extends Internal.PoolHolder, PushSlots:
               checkOrRaise(decodeBase(field.schema, fieldExpr.value))(
                 _.atPath(s".${field.name}")
               )
-              values(index) = anySlot.asInstanceOf[AnyRef]
+              state = addSlot(read)(state, index)
               index += 1
 
-          anySlot = read.build(values)
+          pushRef(read.finish(state))
         case other =>
           raise(DecodeError.ExpectedType(schema.describeSelf, describe(other)))
   }
@@ -293,8 +448,8 @@ private[scalanotation] class ExprDecoder extends Internal.PoolHolder, PushSlots:
   ): Result[Unit, DecodeError] = Result.task:
     expr match
       case Expr.NamedTupleExpr(fieldExprs) =>
-        val read = schema.read
-        if read == null then missingReadCapability(schema)
+        if schema.read == null then missingReadCapability(schema)
+        val read  = schema.read.nn
         var index = 0
         var state = read.init()
         while index < fieldExprs.length do
@@ -303,10 +458,10 @@ private[scalanotation] class ExprDecoder extends Internal.PoolHolder, PushSlots:
           checkOrRaise(decodeBase(schema.element, fieldExpr.value))(
             _.atPath(s".${fieldName}")
           )
-          state = read.add(state, fieldName, anySlot)
+          state = addSlot(read)(state, fieldName)
           index += 1
 
-        anySlot = read.finish(state)
+        pushRef(read.finish(state))
       case other =>
         raise(DecodeError.ExpectedType(schema.describeSelf, describe(other)))
 
@@ -345,7 +500,7 @@ private[scalanotation] class ExprDecoder extends Internal.PoolHolder, PushSlots:
           checkOrRaise(decodeBase(RawSchema.String, discriminatorExpr.value))(
             _.atPath(s".$discriminatorField")
           )
-          val caseName = anySlot.asInstanceOf[String]
+          val caseName = stringSlot
           val sumCase  = schema.cases.iterator.find(_.name == caseName) match
             case Some(c) => c
             case _ => raise(DecodeError.UnexpectedField(caseName).atPath(s".$discriminatorField"))
@@ -371,7 +526,7 @@ private[scalanotation] class ExprDecoder extends Internal.PoolHolder, PushSlots:
             Result.task:
               validatePartialNamedTupleStart(fieldExprs, alreadySeenField).check
               val payloadFieldCount = fieldExprs.length - 1
-              if payloadFieldCount == 0 then anySlot = null
+              if payloadFieldCount == 0 then pushRef(null)
               else raise(DecodeError.FieldCountMismatch(0, payloadFieldCount))
           case other =>
             Result.Err(DecodeError.ExpectedType(RawSchema.Null.describeSelf, describeExpr(other)))
@@ -393,14 +548,14 @@ private[scalanotation] class ExprDecoder extends Internal.PoolHolder, PushSlots:
       alreadySeenField: String,
       expr: Expr
   ): Result[Unit, DecodeError] = Result.task:
-    val read = schema.read
-    if read == null then missingReadCapability(schema)
+    if schema.read == null then missingReadCapability(schema)
+    val read = schema.read.nn
     schema.isValidNamedTuple(namesPool).check
     expr match
       case Expr.NamedTupleExpr(fieldExprs) =>
         validatePartialNamedTupleStart(fieldExprs, alreadySeenField).check
         val fields     = schema.fields
-        val values     = new Array[AnyRef](fields.length)
+        var state      = read.init(fields.length, slots = null)
         var fieldIndex = 0
         val offset     = 1
         var index      = offset
@@ -412,7 +567,8 @@ private[scalanotation] class ExprDecoder extends Internal.PoolHolder, PushSlots:
             if schema.allowSkippedNullableFields then
               val expectedBeforeSkip =
                 if fieldIndex < fields.length then fields(fieldIndex) else null
-              fieldIndex = fillSkippedNullableFields(fields, values, fieldIndex, actualName)
+              state = fillSkippedNullableFields(read)(fields, state, fieldIndex, actualName)
+              fieldIndex = pullSkipFillIndex()
 
               if fieldIndex >= fields.length then
                 if expectedBeforeSkip == null then
@@ -436,13 +592,14 @@ private[scalanotation] class ExprDecoder extends Internal.PoolHolder, PushSlots:
               checkOrRaise(decodeBase(expectedField.schema, fieldExpr.value))(
                 _.atPath(s".${expectedField.name}")
               )
-              values(fieldIndex) = anySlot.asInstanceOf[AnyRef]
+              state = addSlot(read)(state, fieldIndex)
               fieldIndex += 1
             case err: DecodeError => raise(err.atPath(s".$actualName"))
           index += 1
 
         if schema.allowSkippedNullableFields then
-          fieldIndex = fillSkippedNullableFields(fields, values, fieldIndex, "")
+          state = fillSkippedNullableFields(read)(fields, state, fieldIndex, "")
+          fieldIndex = pullSkipFillIndex()
 
         val payloadFieldCount = fieldExprs.length - offset
         val decodedFieldCount =
@@ -450,7 +607,7 @@ private[scalanotation] class ExprDecoder extends Internal.PoolHolder, PushSlots:
         if decodedFieldCount != fields.length then
           raise(DecodeError.FieldCountMismatch(fields.length, payloadFieldCount))
 
-        anySlot = read.build(values)
+        pushRef(read.finish(state))
       case other =>
         raise(DecodeError.ExpectedType(schema.describeSelf, describe(other)))
 
@@ -480,7 +637,7 @@ private[scalanotation] object TokenDecoder:
       inline use: TokenDecoder => A
   ): A =
     ctx.pool.withBorrowed { decoder =>
-      use(decoder.reset(input, debug))
+      use(decoder.reset(input, debug).withSlotsPooling(ctx.pool.amortizes))
     }
 
   private[scalanotation] def decode[T](
@@ -566,52 +723,65 @@ private final class TokenDecoder(input: String, debug: Boolean)
 
   type Resulting[+A, +E] = Label[Result.Err[E]] ?=> A
 
-  // typed slots for atomic values: an atomic decoder pushes here without boxing, and the caller
-  // pulls the typed value to wrap or append to its builder
-  private var stringSlot: String   = ""
-  private var charSlot: Char       = uninitialized
-  private var intSlot: Int         = uninitialized
-  private var longSlot: Long       = uninitialized
-  private var floatSlot: Float     = uninitialized
-  private var doubleSlot: Double   = uninitialized
-  private var booleanSlot: Boolean = uninitialized
-
-  /** runs `r`, and on success copies `value` (typically pulled from a typed slot) into the
-    * [[anySlot]] used by composite decoders
-    */
+  /** runs `r`, and on success pushes `value` into the Any slot via [[pushRef]] */
   private inline def pushAny(
       inline r: Result[Unit, DecodeError],
       inline value: Any
   ): Result[Unit, DecodeError] =
     val res = r
-    if res.isOk then anySlot = value
+    if res.isOk then pushRef(value)
+    res
+
+  /** runs `r`, and on success tags `kind` as the live slot — the typed decode step has already
+    * pushed the unboxed value into the matching typed slot, so nothing is repushed or boxed
+    */
+  private inline def tagSlot(
+      inline r: Result[Unit, DecodeError],
+      inline kind: Int
+  ): Result[Unit, DecodeError] =
+    val res = r
+    if res.isOk then lastSlotKind = kind
     res
 
   /** Clears decode state and re-aims at a new input, for reuse via [[TokenDecoder.withPooled]]. */
   def reset(input: String, debug: Boolean): this.type =
     resetStream(input, debug)
-    anySlot = null
-    stringSlot = ""
+    resetSlots()
     namedTupleParseResult.fieldName = null
     this
 
   private def expectedTypeAtCurrent(schema: RawSchema): DecodeError =
     DecodeError.ExpectedType(schema.describeSelf, describeCurrent()).atToken(currentSpan())
 
-  private def fillSkippedNullableFields(
-      fields: IArray[Field],
-      values: Array[AnyRef],
-      startIndex: Int,
-      actualName: String
-  ): Int =
-    var index = startIndex
-    while index < fields.length
-      && fields(index).name != actualName
-      && TokenDecoder.isNullable(fields(index).schema)
-    do
-      values(index) = None.asInstanceOf[AnyRef]
-      index += 1
-    index
+  // pooled builder slots for product-like schemas with a slots factory; borrow/release pairs
+  // nest, so a reentrant decode inside a field value borrows a fresh instance. Lazy: a one-shot
+  // (GC-pooled) decoder skips the slots path and must not pay for the pool either.
+  private lazy val slotsPool = Internal.LocalPool[BuilderSlots]()
+
+  // whether this decoder instance is reused by an amortizing pool: a one-shot (GC-pooled)
+  // decoder skips the builder-slots path, whose buffers would be allocated per decode
+  private var slotsPooling: Boolean = false
+
+  def withSlotsPooling(amortizes: Boolean): this.type =
+    slotsPooling = amortizes
+    this
+
+  private inline def withRead[T, S <: RawSchema, R](
+      schema: S,
+      r: S => R | Null
+  )(inline f: R => T): T =
+    val read = r(schema)
+    if read == null then missingReadCapability(schema)
+    else f(read.nn)
+
+  private inline def withBorrowSlots[T](
+      factory: scalanotation.TypedFactory | Null
+  )(inline f: (BuilderSlots | Null) => T): T =
+    if !slotsPooling || factory == null then f(null)
+    else
+      slotsPool.withBorrowed {
+        f
+      }
 
   def decodeRoot[T](
       schema: Reader[T],
@@ -626,7 +796,7 @@ private final class TokenDecoder(input: String, debug: Boolean)
       if declaredName != rootName then raise(DecodeError.UnexpectedRoot(declaredName))
       expectEquals().check
       decodeBase(schema.schema).check
-      val value = anySlot
+      val value = pullAny()
       expectEof().check
       value.asInstanceOf[T]
 
@@ -641,14 +811,14 @@ private final class TokenDecoder(input: String, debug: Boolean)
       val declaredName = stringSlot
       expectEquals().check
       decodeBase(schema.schema).check
-      val value = anySlot.asInstanceOf[T]
+      val value = pullAny().asInstanceOf[T]
       expectEof().check
       Expr.SourceFile(Map(declaredName -> value))
 
   def decodeExpression[T](schema: Reader[T]): Result[T, DecodeError] =
     Result:
       decodeBase(schema.schema).check
-      val value = anySlot
+      val value = pullAny()
       expectEof().check
       value.asInstanceOf[T]
 
@@ -680,123 +850,134 @@ private final class TokenDecoder(input: String, debug: Boolean)
       case RawSchema.AnyExpr =>
         decodeAnyExpr()
       case RawSchema.String =>
-        pushAny(decodeString(), stringSlot)
+        tagSlot(decodeString(), SlotKind.String)
       case RawSchema.Char =>
-        pushAny(decodeChar(), charSlot)
+        tagSlot(decodeChar(), SlotKind.Char)
       case RawSchema.Int =>
-        pushAny(decodeInt(), intSlot)
+        tagSlot(decodeInt(), SlotKind.Int)
       case RawSchema.Long =>
-        pushAny(decodeLong(), longSlot)
+        tagSlot(decodeLong(), SlotKind.Long)
       case RawSchema.Float =>
-        pushAny(decodeFloat(), floatSlot)
+        tagSlot(decodeFloat(), SlotKind.Float)
       case RawSchema.Double =>
-        pushAny(decodeDouble(), doubleSlot)
+        tagSlot(decodeDouble(), SlotKind.Double)
       case RawSchema.Boolean =>
-        pushAny(decodeBoolean(), booleanSlot)
+        tagSlot(decodeBoolean(), SlotKind.Boolean)
       case RawSchema.Null =>
         pushAny(decodeNull(), null)
 
   private def decodeNamedTuple(
       schema: RawSchema.NamedTuple
   ): Result[Unit, DecodeError] = namesPool.withBorrowed { seenNames =>
-    Result.task {
-      val read = schema.read
-      if read == null then missingReadCapability(schema)
-      schema.isValidNamedTuple(namesPool).check
-      val fields     = schema.fields
-      val values     = new Array[AnyRef](fields.length)
-      var fieldIndex = 0
+    withRead(schema, _.read) { read =>
+      withBorrowSlots(read.slotsFactory) { slots =>
+        Result.task {
+          schema.isValidNamedTuple(namesPool).check
+          val fields = schema.fields
 
-      val allowEmpty =
-        fields.isEmpty // FIXME: must be hoisted to allow inlining parseNamedTupleStructure!
+          var state: read.State = read.init(fields.length, slots)
+          var fieldIndex        = 0
 
-      val parsed = parseNamedTupleStructure(schema, allowEmpty = allowEmpty) {
-        (actualName, nameOffset, parsedFieldIndex) =>
-          def actualFieldErr(err: DecodeError): DecodeError =
-            err.atPath(s".${actualName}").atToken(spanAt(nameOffset))
-          val validated: DecodeError | Field = eval {
-            if seenNames.alreadySeen(actualName) then
-              actualFieldErr(DecodeError.DuplicateField(actualName))
-            else if schema.allowSkippedNullableFields then
-              val expectedBeforeSkip =
-                if fieldIndex < fields.length then fields(fieldIndex) else null
-              fieldIndex = fillSkippedNullableFields(fields, values, fieldIndex, actualName)
+          val allowEmpty =
+            fields.isEmpty // FIXME: must be hoisted to allow inlining parseNamedTupleStructure!
 
-              if fieldIndex >= fields.length then
-                if expectedBeforeSkip == null then
+          val parsed = parseNamedTupleStructure(schema, allowEmpty = allowEmpty) {
+            (actualName, nameOffset, parsedFieldIndex) =>
+              def actualFieldErr(err: DecodeError): DecodeError =
+                err.atPath(s".${actualName}").atToken(spanAt(nameOffset))
+              val validated: DecodeError | Field = eval {
+                if seenNames.alreadySeen(actualName) then
+                  actualFieldErr(DecodeError.DuplicateField(actualName))
+                else if schema.allowSkippedNullableFields then
+                  val expectedBeforeSkip =
+                    if fieldIndex < fields.length then fields(fieldIndex) else null
+                  state = fillSkippedNullableFields(read)(fields, state, fieldIndex, actualName)
+                  fieldIndex = pullSkipFillIndex()
+
+                  if fieldIndex >= fields.length then
+                    if expectedBeforeSkip == null then
+                      actualFieldErr(
+                        DecodeError.FieldCountMismatch(fields.length, parsedFieldIndex + 1)
+                      )
+                    else
+                      actualFieldErr(
+                        DecodeError.FieldOrderMismatch(expectedBeforeSkip.name, actualName)
+                      )
+                  else
+                    val expectedField = fields(fieldIndex)
+                    if actualName != expectedField.name then
+                      actualFieldErr(DecodeError.FieldOrderMismatch(expectedField.name, actualName))
+                    else expectedField
+                else if parsedFieldIndex >= fields.length then
                   actualFieldErr(
                     DecodeError.FieldCountMismatch(fields.length, parsedFieldIndex + 1)
                   )
                 else
-                  actualFieldErr(
-                    DecodeError.FieldOrderMismatch(expectedBeforeSkip.name, actualName)
-                  )
-              else
-                val expectedField = fields(fieldIndex)
-                if actualName != expectedField.name then
-                  actualFieldErr(DecodeError.FieldOrderMismatch(expectedField.name, actualName))
-                else expectedField
-            else if parsedFieldIndex >= fields.length then
-              actualFieldErr(DecodeError.FieldCountMismatch(fields.length, parsedFieldIndex + 1))
-            else
-              val expectedField = fields(parsedFieldIndex)
-              if actualName != expectedField.name then
-                actualFieldErr(DecodeError.FieldOrderMismatch(expectedField.name, actualName))
-              else expectedField
+                  val expectedField = fields(parsedFieldIndex)
+                  if actualName != expectedField.name then
+                    actualFieldErr(DecodeError.FieldOrderMismatch(expectedField.name, actualName))
+                  else expectedField
+              }
+              validated match
+                case expectedField: Field =>
+                  checkOrRaise(decodeBase(expectedField.schema))(actualFieldErr)
+                  state = addSlot(read)(state, fieldIndex)
+                  fieldIndex += 1
+                case err: DecodeError => raise(err)
           }
-          validated match
-            case expectedField: Field =>
-              checkOrRaise(decodeBase(expectedField.schema))(actualFieldErr)
-              values(fieldIndex) = anySlot.asInstanceOf[AnyRef]
-              fieldIndex += 1
-            case err: DecodeError => raise(err)
+
+          if schema.allowSkippedNullableFields && fields.nonEmpty && parsed.fieldCount == 0 then
+            raise(DecodeError.UnitValueNotAllowed().atToken(spanAt(parsed.closingOffset)))
+
+          if schema.allowSkippedNullableFields then
+            state = fillSkippedNullableFields(read)(fields, state, fieldIndex, "")
+            fieldIndex = pullSkipFillIndex()
+
+          val decodedFieldCount =
+            if schema.allowSkippedNullableFields then fieldIndex else parsed.fieldCount
+          if decodedFieldCount != fields.length then
+            def err =
+              var err0 = DecodeError.FieldCountMismatch(fields.length, parsed.fieldCount)
+              if parsed.fieldName != null then err0 = err0.atPath(s".${parsed.fieldName}")
+              err0.atToken(spanAt(parsed.closingOffset))
+            raise(err)
+
+          pushRef(read.finish(state))
+        }
       }
-
-      if schema.allowSkippedNullableFields && fields.nonEmpty && parsed.fieldCount == 0 then
-        raise(DecodeError.UnitValueNotAllowed().atToken(spanAt(parsed.closingOffset)))
-
-      if schema.allowSkippedNullableFields then
-        fieldIndex = fillSkippedNullableFields(fields, values, fieldIndex, "")
-
-      val decodedFieldCount =
-        if schema.allowSkippedNullableFields then fieldIndex else parsed.fieldCount
-      if decodedFieldCount != fields.length then
-        def err =
-          var err0 = DecodeError.FieldCountMismatch(fields.length, parsed.fieldCount)
-          if parsed.fieldName != null then err0 = err0.atPath(s".${parsed.fieldName}")
-          err0.atToken(spanAt(parsed.closingOffset))
-        raise(err)
-
-      anySlot = read.build(values)
     }
   }
 
   private def decodeTuple(schema: RawSchema.Tuple): Result[Unit, DecodeError] =
-    Result.task {
-      val read = schema.read
-      if read == null then missingReadCapability(schema)
-      val slots = schema.slots
-      var state = read.init(slots.length)
-      currentKind() match
-        case TokenKind.EmptyTupleId =>
-          val emptyTupleOffset = currentOffset()
-          advance()
-          if slots.nonEmpty then
-            raise(DecodeError.FieldCountMismatch(slots.length, 0).atToken(spanAt(emptyTupleOffset)))
-        case TokenKind.LParen =>
-          decodeParenthesizedTuple(read)(schema, slots, state).check
-          state = anySlot.asInstanceOf[read.State]
-        case _ =>
-          if slots.isEmpty then
-            raise(DecodeError.ExpectedType(schema.describeSelf, describeCurrent()))
-          decodeTupleSlotValue(slots, index = 0, allowStringConcat = false).check
-          state = read.add(state, 0, anySlot)
-          decodeTupleConsTail(read)(slots, state, startIndex = 1).check
-          state = anySlot.asInstanceOf[read.State]
-      anySlot = read.finish(state)
+    withRead(schema, _.read) { read =>
+      withBorrowSlots(read.slotsFactory) { pooled =>
+        Result.task {
+          val slots             = schema.slots
+          var state: read.State = read.initPooled(slots.length, pooled)
+          currentKind() match
+            case TokenKind.EmptyTupleId =>
+              val emptyTupleOffset = currentOffset()
+              advance()
+              if slots.nonEmpty then
+                raise(
+                  DecodeError.FieldCountMismatch(slots.length, 0).atToken(spanAt(emptyTupleOffset))
+                )
+            case TokenKind.LParen =>
+              decodeParenthesizedTuple(read)(schema, slots, state).check
+              state = pullAny().asInstanceOf[read.State]
+            case _ =>
+              if slots.isEmpty then
+                raise(DecodeError.ExpectedType(schema.describeSelf, describeCurrent()))
+              decodeTupleSlotValue(slots, index = 0, allowStringConcat = false).check
+              state = addSlot(read)(state, 0)
+              decodeTupleConsTail(read)(slots, state, startIndex = 1).check
+              state = pullAny().asInstanceOf[read.State]
+          pushRef(read.finish(state))
+        }
+      }
     }
 
-  /** decodes the tuple tail, leaving the final builder state in [[anySlot]] */
+  /** decodes the tuple tail, leaving the final builder state in the Any slot */
   private def decodeParenthesizedTuple(
       read: RawSchema.TupleRead
   )(
@@ -813,17 +994,17 @@ private final class TokenDecoder(input: String, debug: Boolean)
         case _ =>
           if slots.isEmpty then raise(DecodeError.FieldCountMismatch(0, 1).atToken(currentSpan()))
           decodeTupleSlotValue(slots, index = 0, hasComma || !hasStarColon).check
-          val stateAfterFirst = read.add(state, 0, anySlot)
+          val stateAfterFirst = addSlot(read)(state, 0)
           currentKind() match
             case TokenKind.Comma =>
               decodeTupleCommaTail(read)(slots, stateAfterFirst, startCount = 1).check
             case TokenKind.StarColon =>
               decodeTupleConsTail(read)(slots, stateAfterFirst, startIndex = 1).check
-              val stateAfterTail = anySlot
+              val stateAfterTail = pullAny()
               currentKind() match
                 case TokenKind.RParen =>
                   advanceTupleClose().check
-                  anySlot = stateAfterTail
+                  pushRef(stateAfterTail)
                 case _ =>
                   raise(DecodeError.ExpectedRParen(describeCurrent()).atToken(currentSpan()))
             case TokenKind.RParen =>
@@ -841,7 +1022,7 @@ private final class TokenDecoder(input: String, debug: Boolean)
             case _ =>
               raise(DecodeError.ExpectedRParen(describeCurrent()).atToken(currentSpan()))
 
-  /** decodes the comma-separated tuple tail, leaving the final builder state in [[anySlot]] */
+  /** decodes the comma-separated tuple tail, leaving the final builder state in the Any slot */
   private def decodeTupleCommaTail(
       read: RawSchema.TupleRead
   )(
@@ -872,7 +1053,7 @@ private final class TokenDecoder(input: String, debug: Boolean)
                       .atToken(currentSpan())
                   )
                 decodeTupleSlotValue(slots, count, allowStringConcat = true).check
-                state = read.add(state, count, anySlot)
+                state = addSlot(read)(state, count)
                 count += 1
           case TokenKind.RParen =>
             closingOffset = currentOffset()
@@ -884,9 +1065,9 @@ private final class TokenDecoder(input: String, debug: Boolean)
       if count == 1 then raise(DecodeError.FieldCountMismatch(2, 1).atToken(spanAt(closingOffset)))
       if count != slots.length then
         raise(DecodeError.FieldCountMismatch(slots.length, count).atToken(spanAt(closingOffset)))
-      anySlot = state
+      pushRef(state)
 
-  /** decodes the `*:`-separated tuple tail, leaving the final builder state in [[anySlot]] */
+  /** decodes the `*:`-separated tuple tail, leaving the final builder state in the Any slot */
   private def decodeTupleConsTail(
       read: RawSchema.TupleRead
   )(
@@ -912,9 +1093,9 @@ private final class TokenDecoder(input: String, debug: Boolean)
                   .atToken(currentSpan())
               )
             decodeTupleSlotValue(slots, index, allowStringConcat = false).check
-            state = read.add(state, index, anySlot)
+            state = addSlot(read)(state, index)
             index += 1
-      anySlot = state
+      pushRef(state)
 
   private def decodeTupleSlotValue(
       slots: IArray[RawSchema],
@@ -975,10 +1156,10 @@ private final class TokenDecoder(input: String, debug: Boolean)
         if currentKind() == TokenKind.NullKw then decodeOption(opt)
         else
           val r = decodeTupleElement(inner, allowStringConcat)
-          if r.isOk then anySlot = Some(anySlot)
+          if r.isOk then pushRef(Some(pullAny()))
           r
       case RawSchema.String if !allowStringConcat =>
-        pushAny(decodeStringAtom(), stringSlot)
+        tagSlot(decodeStringAtom(), SlotKind.String)
       case _ if currentKind() == TokenKind.LParen && !canDecodeFromLParen(schema) =>
         decodeGroupedTupleElement(schema)
       case _ =>
@@ -1065,7 +1246,7 @@ private final class TokenDecoder(input: String, debug: Boolean)
         var err = DecodeError.FieldCountMismatch(1, parsed.fieldCount)
         if parsed.fieldName != null then err = err.atPath(s".${parsed.fieldName}")
         raise(err.atToken(spanAt(parsed.closingOffset)))
-      // the decoded case value remains in anySlot
+      // the decoded case value remains in the live slot
     }
 
   private def decodeDiscriminatorSum(
@@ -1131,105 +1312,112 @@ private final class TokenDecoder(input: String, debug: Boolean)
     Result.task:
       if currentKind() == TokenKind.RParen then
         advance()
-        anySlot = null
+        pushRef(null)
       else raise(DecodeError.FieldCountMismatch(0, 1).atToken(currentSpan()))
 
   private def decodePartialNamedTuple(
       schema: RawSchema.NamedTuple,
       alreadySeenField: String
   ): Result[Unit, DecodeError] = namesPool.withBorrowed { seenNames =>
-    Result.task:
-      val read = schema.read
-      if read == null then missingReadCapability(schema)
-      schema.isValidNamedTuple(namesPool).check
-      seenNames.alreadySeen(alreadySeenField)
-      val fields     = schema.fields
-      val values     = new Array[AnyRef](fields.length)
-      var fieldIndex = 0
+    withRead(schema, _.read) { read =>
+      withBorrowSlots(read.slotsFactory) { slots =>
+        Result.task {
+          schema.isValidNamedTuple(namesPool).check
+          seenNames.alreadySeen(alreadySeenField)
+          val fields            = schema.fields
+          var state: read.State = read.init(fields.length, slots)
+          var fieldIndex        = 0
 
-      val parsed = parsePartialNamedTupleStructure(schema) {
-        (actualName, nameOffset, parsedFieldIndex) =>
-          def actualFieldErr(err: DecodeError): DecodeError =
-            err.atPath(s".${actualName}").atToken(spanAt(nameOffset))
-          val validated: DecodeError | Field = eval {
-            if seenNames.alreadySeen(actualName) then
-              actualFieldErr(DecodeError.DuplicateField(actualName))
-            else if schema.allowSkippedNullableFields then
-              val expectedBeforeSkip =
-                if fieldIndex < fields.length then fields(fieldIndex) else null
-              fieldIndex = fillSkippedNullableFields(fields, values, fieldIndex, actualName)
+          val parsed = parsePartialNamedTupleStructure(schema) {
+            (actualName, nameOffset, parsedFieldIndex) =>
+              def actualFieldErr(err: DecodeError): DecodeError =
+                err.atPath(s".${actualName}").atToken(spanAt(nameOffset))
+              val validated: DecodeError | Field = eval {
+                if seenNames.alreadySeen(actualName) then
+                  actualFieldErr(DecodeError.DuplicateField(actualName))
+                else if schema.allowSkippedNullableFields then
+                  val expectedBeforeSkip =
+                    if fieldIndex < fields.length then fields(fieldIndex) else null
+                  state = fillSkippedNullableFields(read)(fields, state, fieldIndex, actualName)
+                  fieldIndex = pullSkipFillIndex()
 
-              if fieldIndex >= fields.length then
-                if expectedBeforeSkip == null then
+                  if fieldIndex >= fields.length then
+                    if expectedBeforeSkip == null then
+                      actualFieldErr(
+                        DecodeError.FieldCountMismatch(fields.length, parsedFieldIndex + 1)
+                      )
+                    else
+                      actualFieldErr(
+                        DecodeError.FieldOrderMismatch(expectedBeforeSkip.name, actualName)
+                      )
+                  else
+                    val expectedField = fields(fieldIndex)
+                    if actualName != expectedField.name then
+                      actualFieldErr(DecodeError.FieldOrderMismatch(expectedField.name, actualName))
+                    else expectedField
+                else if parsedFieldIndex >= fields.length then
                   actualFieldErr(
                     DecodeError.FieldCountMismatch(fields.length, parsedFieldIndex + 1)
                   )
                 else
-                  actualFieldErr(
-                    DecodeError.FieldOrderMismatch(expectedBeforeSkip.name, actualName)
-                  )
-              else
-                val expectedField = fields(fieldIndex)
-                if actualName != expectedField.name then
-                  actualFieldErr(DecodeError.FieldOrderMismatch(expectedField.name, actualName))
-                else expectedField
-            else if parsedFieldIndex >= fields.length then
-              actualFieldErr(DecodeError.FieldCountMismatch(fields.length, parsedFieldIndex + 1))
-            else
-              val expectedField = fields(parsedFieldIndex)
-              if actualName != expectedField.name then
-                actualFieldErr(DecodeError.FieldOrderMismatch(expectedField.name, actualName))
-              else expectedField
+                  val expectedField = fields(parsedFieldIndex)
+                  if actualName != expectedField.name then
+                    actualFieldErr(DecodeError.FieldOrderMismatch(expectedField.name, actualName))
+                  else expectedField
+              }
+              validated match
+                case expectedField: Field =>
+                  checkOrRaise(decodeBase(expectedField.schema))(actualFieldErr)
+                  state = addSlot(read)(state, fieldIndex)
+                  fieldIndex += 1
+                case err: DecodeError => raise(err)
           }
-          validated match
-            case expectedField: Field =>
-              checkOrRaise(decodeBase(expectedField.schema))(actualFieldErr)
-              values(fieldIndex) = anySlot.asInstanceOf[AnyRef]
-              fieldIndex += 1
-            case err: DecodeError => raise(err)
+
+          if schema.allowSkippedNullableFields then
+            state = fillSkippedNullableFields(read)(fields, state, fieldIndex, "")
+            fieldIndex = pullSkipFillIndex()
+
+          val decodedFieldCount =
+            if schema.allowSkippedNullableFields then fieldIndex else parsed.fieldCount
+          if decodedFieldCount != fields.length then
+            var err = DecodeError.FieldCountMismatch(fields.length, parsed.fieldCount)
+            if parsed.fieldName != null then err = err.atPath(s".${parsed.fieldName}")
+            raise(err.atToken(spanAt(parsed.closingOffset)))
+
+          pushRef(read.finish(state))
+        }
       }
-
-      if schema.allowSkippedNullableFields then
-        fieldIndex = fillSkippedNullableFields(fields, values, fieldIndex, "")
-
-      val decodedFieldCount =
-        if schema.allowSkippedNullableFields then fieldIndex else parsed.fieldCount
-      if decodedFieldCount != fields.length then
-        var err = DecodeError.FieldCountMismatch(fields.length, parsed.fieldCount)
-        if parsed.fieldName != null then err = err.atPath(s".${parsed.fieldName}")
-        raise(err.atToken(spanAt(parsed.closingOffset)))
-
-      anySlot = read.build(values)
+    }
   }
 
   private def decodeVector(schema: RawSchema.Vector): Result[Unit, DecodeError] =
     Result.task {
-      val read = schema.read
-      if read == null then missingReadCapability(schema)
+      if schema.read == null then missingReadCapability(schema)
+      val read   = schema.read.nn
       var values = read.init()
       parseVectorStructure(schema) { indexInVector =>
         checkOrRaise(decodeBase(schema.element))(_.atPath(s"[$indexInVector]"))
-        values = read.add(values, anySlot)
+        values = addSlot(read)(values)
       }
-      anySlot = read.finish(values)
+      pushRef(read.finish(values))
     }
 
   private def decodeDict(schema: RawSchema.Dict): Result[Unit, DecodeError] =
     namesPool.withBorrowed { seenNames =>
       Result.task {
-        val read = schema.read
-        if read == null then missingReadCapability(schema)
+        if schema.read == null then missingReadCapability(schema)
+        val read   = schema.read.nn
         var state  = read.init()
         val parsed = parseNamedTupleStructure(schema, allowEmpty = false) { (name, nameOffset, _) =>
           if seenNames.alreadySeen(name) then
             raise(DecodeError.DuplicateField(name).atPath(s".${name}").atToken(spanAt(nameOffset)))
           checkOrRaise(decodeBase(schema.element))(_.atPath(s".${name}"))
-          state = read.add(state, name, anySlot)
+          state = addSlot(read)(state, name)
         }
         val _ = parsed.closingOffset
         val _ = parsed.fieldName
         val _ = parsed.fieldCount
-        anySlot = read.finish(state)
+        pushRef(read.finish(state))
       }
     }
 
@@ -1237,10 +1425,10 @@ private final class TokenDecoder(input: String, debug: Boolean)
     Result.task {
       if currentKind() == TokenKind.NullKw then
         advance()
-        anySlot = None
+        pushRef(None)
       else
         decodeBase(schema.inner).check
-        anySlot = Some(anySlot)
+        pushRef(Some(pullAny()))
     }
 
   private object exprVisitor:
@@ -1257,11 +1445,11 @@ private final class TokenDecoder(input: String, debug: Boolean)
     private val EmptyTupleExpr: Expr =
       Expr.TupleExpr(Vector.empty)
 
-    /** parses an expression, pushing the resulting [[Expr]] into [[anySlot]] */
+    /** parses an expression, pushing the resulting [[Expr]] into the Any slot */
     def inferExpr(): Result[Unit, DecodeError] =
       onStringConcat()
 
-    private def pulledExpr(): Expr = anySlot.asInstanceOf[Expr]
+    private def pulledExpr(): Expr = pullAny().asInstanceOf[Expr]
 
     private def onStringConcat(): Result[Unit, DecodeError] = Result.task {
       onTupleCons().check
@@ -1277,7 +1465,7 @@ private final class TokenDecoder(input: String, debug: Boolean)
             case Expr.StringConstant(value) => builder ++= value
             case other                      =>
               raise(DecodeError.ExpectedType(RawSchema.String.describeSelf, describe(other)))
-        anySlot = Expr.StringConstant(builder.result())
+        pushRef(Expr.StringConstant(builder.result()))
     }
 
     private def onTupleCons(): Result[Unit, DecodeError] = Result.task {
@@ -1288,7 +1476,7 @@ private final class TokenDecoder(input: String, debug: Boolean)
         onTupleCons().check
         pulledExpr() match
           case Expr.TupleExpr(elements) =>
-            anySlot = Expr.TupleExpr(head +: elements)
+            pushRef(Expr.TupleExpr(head +: elements))
           case other =>
             raise(DecodeError.ExpectedType("Tuple", describe(other)))
     }
@@ -1332,7 +1520,7 @@ private final class TokenDecoder(input: String, debug: Boolean)
             onTupleAfterGroupedHead(pulledExpr()).check
           case TokenKind.RParen =>
             advance()
-            // the grouped expression remains in anySlot
+            // the grouped expression remains in the Any slot
           case _ =>
             raise(DecodeError.ExpectedRParen(describeCurrent()).atToken(currentSpan()))
     }
@@ -1364,7 +1552,7 @@ private final class TokenDecoder(input: String, debug: Boolean)
       else raise(DecodeError.ExpectedRParen(describeCurrent()).atToken(currentSpan()))
 
       if count == 1 then raise(DecodeError.FieldCountMismatch(2, 1))
-      anySlot = Expr.TupleExpr(elements.result())
+      pushRef(Expr.TupleExpr(elements.result()))
     }
 
     def onNamedTuple(schema: RawSchema.NamedTuple): Result[Unit, DecodeError] = Result.task {
@@ -1393,7 +1581,7 @@ private final class TokenDecoder(input: String, debug: Boolean)
           val _ = parsed.closingOffset
           val _ = parsed.fieldName
           val _ = parsed.fieldCount
-          anySlot = Expr.NamedTupleExpr(fieldExprs.result())
+          pushRef(Expr.NamedTupleExpr(fieldExprs.result()))
         }
       }
 
@@ -1403,7 +1591,7 @@ private final class TokenDecoder(input: String, debug: Boolean)
         inferExpr().check
         elements += pulledExpr()
       }
-      anySlot = Expr.VectorExpr(elements.result())
+      pushRef(Expr.VectorExpr(elements.result()))
     }
 
     def onString(): Result[Unit, DecodeError] =
@@ -1433,10 +1621,10 @@ private final class TokenDecoder(input: String, debug: Boolean)
     def onEmptyTuple(): Result[Unit, DecodeError] = Result.task:
       if currentKind() == TokenKind.EmptyTupleId then
         advance()
-        anySlot = EmptyTupleExpr
+        pushRef(EmptyTupleExpr)
       else raise(DecodeError.ExpectedExpression(describeCurrent()).atToken(currentSpan()))
 
-  /** parses an expression, pushing the resulting [[Expr]] into [[anySlot]] */
+  /** parses an expression, pushing the resulting [[Expr]] into the Any slot */
   private[scalanotation] def decodeAnyExpr(): Result[Unit, DecodeError] =
     exprVisitor.inferExpr()
 

@@ -20,7 +20,7 @@ class TupleSuite extends ScalanotationSuite:
         assertEquals(tuple.slots.length, 4)
         tuple.read match
           case read: RawSchema.TupleRead.FromReaderBuilder[?, ?] =>
-            assert(read.builder.isInstanceOf[PublicInternal.BuildTuple[?]])
+            assert(read.builder.isInstanceOf[PublicInternal.BuildTupleSlots[?]])
           case _ =>
             fail(s"Expected a tuple reader builder, got ${tuple.read}")
       case other =>

@@ -23,6 +23,10 @@ private[internal] object Internal {
   trait Pool[T]:
     def borrow(): T
     def release(t: T): Unit
+
+    /** whether borrowed instances are reused, so per-instance buffers amortize across calls */
+    def amortizes: Boolean = true
+
     inline def withBorrowed[A](inline f: T => A): A =
       val t = borrow()
       try f(t)
@@ -33,8 +37,9 @@ private[internal] object Internal {
     * state between calls.
     */
   final class GCPool[T <: AnyRef: Alloc as factory] extends Pool[T]:
-    def borrow(): T         = factory.alloc()
-    def release(t: T): Unit = ()
+    def borrow(): T                 = factory.alloc()
+    def release(t: T): Unit         = ()
+    override def amortizes: Boolean = false
 
   /** A lock-free, fixed-capacity pool that can be shared between threads — including virtual
     * threads, where a ThreadLocal cache would never be reused. Borrow and release probe the slot
@@ -164,6 +169,86 @@ private[scalanotation] object PublicInternal {
     def finish(repr: Array[AnyRef]): A =
       Tuple.fromIArray(IArray.unsafeFromArray(repr)).asInstanceOf[A]
 
+  object BuildTupleSlots:
+    type State = scalanotation.BuilderSlots | Array[AnyRef]
+
+  class BuildTupleSlots[A <: Tuple] extends Reader.TupleBuilder[BuildTupleSlots.State, A]:
+
+    def init(size: Int): BuildTupleSlots.State =
+      new Array[AnyRef](size)
+
+    override def initPooled(
+        size: Int,
+        pooled: scalanotation.BuilderSlots | Null
+    ): BuildTupleSlots.State =
+      if pooled != null then pooled.reset(size)
+      else new Array[AnyRef](size)
+
+    def add(repr: BuildTupleSlots.State, index: Int, elem: Any): BuildTupleSlots.State =
+      repr match
+        case repr: scalanotation.BuilderSlots =>
+          repr.setRef(index, elem)
+        case arr: Array[AnyRef] =>
+          arr(index) = elem.asInstanceOf[AnyRef]
+      repr
+
+    override def addString(
+        repr: BuildTupleSlots.State,
+        index: Int,
+        elem: String
+    ): BuildTupleSlots.State =
+      repr match
+        case repr: scalanotation.BuilderSlots =>
+          repr.setString(index, elem)
+        case arr: Array[AnyRef] =>
+          arr(index) = elem
+      repr
+
+    override def addChar(
+        repr: BuildTupleSlots.State,
+        index: Int,
+        elem: Char
+    ): BuildTupleSlots.State =
+      repr match
+        case repr: scalanotation.BuilderSlots =>
+          repr.setChar(index, elem)
+        case arr: Array[AnyRef] =>
+          arr(index) = elem.asInstanceOf[AnyRef]
+      repr
+
+    override def addInt(
+        repr: BuildTupleSlots.State,
+        index: Int,
+        elem: Int
+    ): BuildTupleSlots.State =
+      repr match
+        case repr: scalanotation.BuilderSlots =>
+          repr.setInt(index, elem)
+        case arr: Array[AnyRef] =>
+          arr(index) = elem.asInstanceOf[AnyRef]
+      repr
+
+    override def addLong(
+        repr: BuildTupleSlots.State,
+        index: Int,
+        elem: Long
+    ): BuildTupleSlots.State =
+      repr match
+        case repr: scalanotation.BuilderSlots =>
+          repr.setLong(index, elem)
+        case arr: Array[AnyRef] =>
+          arr(index) = elem.asInstanceOf[AnyRef]
+      repr
+
+    def finish(repr: BuildTupleSlots.State): A =
+      repr match
+        case repr: scalanotation.BuilderSlots =>
+          slotsFactory.fromSlots(repr).asInstanceOf[A]
+        case arr: Array[AnyRef] =>
+          Tuple.fromIArray(IArray.unsafeFromArray(arr)).asInstanceOf[A]
+
+    override def slotsFactory: scalanotation.TypedFactory = tupleSlotsFactory
+
   class BuildVector[Elem]
       extends Reader.VectorBuilder[Elem, mutable.Builder[Elem, Vector[Elem]], Vector[Elem]]:
     def init(): mutable.Builder[Elem, Vector[Elem]] = Vector.newBuilder[Elem]
@@ -221,6 +306,99 @@ private[scalanotation] object PublicInternal {
       repr += elem
     def finish(repr: mutable.Builder[Elem, IArray[Elem]]): IArray[Elem] = repr.result()
 
+  // specialized array builders: the typed `addX` override receives the unboxed primitive from the
+  // decoder's typed slot and appends it directly to the unboxed array builder, so an element is
+  // never boxed at any point
+  class BuildIntArray extends Reader.VectorBuilder[Int, mutable.ArrayBuilder.ofInt, Array[Int]]:
+    def init(): mutable.ArrayBuilder.ofInt = new mutable.ArrayBuilder.ofInt
+    def add(repr: mutable.ArrayBuilder.ofInt, elem: Int): mutable.ArrayBuilder.ofInt =
+      addInt(repr, elem)
+    override def addInt(repr: mutable.ArrayBuilder.ofInt, elem: Int): mutable.ArrayBuilder.ofInt =
+      repr.addOne(elem)
+      repr
+    def finish(repr: mutable.ArrayBuilder.ofInt): Array[Int] = repr.result()
+
+  class BuildLongArray extends Reader.VectorBuilder[Long, mutable.ArrayBuilder.ofLong, Array[Long]]:
+    def init(): mutable.ArrayBuilder.ofLong = new mutable.ArrayBuilder.ofLong
+    def add(repr: mutable.ArrayBuilder.ofLong, elem: Long): mutable.ArrayBuilder.ofLong =
+      addLong(repr, elem)
+    override def addLong(
+        repr: mutable.ArrayBuilder.ofLong,
+        elem: Long
+    ): mutable.ArrayBuilder.ofLong =
+      repr.addOne(elem)
+      repr
+    def finish(repr: mutable.ArrayBuilder.ofLong): Array[Long] = repr.result()
+
+  class BuildFloatArray
+      extends Reader.VectorBuilder[Float, mutable.ArrayBuilder.ofFloat, Array[Float]]:
+    def init(): mutable.ArrayBuilder.ofFloat = new mutable.ArrayBuilder.ofFloat
+    def add(repr: mutable.ArrayBuilder.ofFloat, elem: Float): mutable.ArrayBuilder.ofFloat =
+      addFloat(repr, elem)
+    override def addFloat(
+        repr: mutable.ArrayBuilder.ofFloat,
+        elem: Float
+    ): mutable.ArrayBuilder.ofFloat =
+      repr.addOne(elem)
+      repr
+    def finish(repr: mutable.ArrayBuilder.ofFloat): Array[Float] = repr.result()
+
+  class BuildDoubleArray
+      extends Reader.VectorBuilder[Double, mutable.ArrayBuilder.ofDouble, Array[Double]]:
+    def init(): mutable.ArrayBuilder.ofDouble = new mutable.ArrayBuilder.ofDouble
+    def add(repr: mutable.ArrayBuilder.ofDouble, elem: Double): mutable.ArrayBuilder.ofDouble =
+      addDouble(repr, elem)
+    override def addDouble(
+        repr: mutable.ArrayBuilder.ofDouble,
+        elem: Double
+    ): mutable.ArrayBuilder.ofDouble =
+      repr.addOne(elem)
+      repr
+    def finish(repr: mutable.ArrayBuilder.ofDouble): Array[Double] = repr.result()
+
+  class BuildBooleanArray
+      extends Reader.VectorBuilder[Boolean, mutable.ArrayBuilder.ofBoolean, Array[Boolean]]:
+    def init(): mutable.ArrayBuilder.ofBoolean = new mutable.ArrayBuilder.ofBoolean
+    def add(repr: mutable.ArrayBuilder.ofBoolean, elem: Boolean): mutable.ArrayBuilder.ofBoolean =
+      addBoolean(repr, elem)
+    override def addBoolean(
+        repr: mutable.ArrayBuilder.ofBoolean,
+        elem: Boolean
+    ): mutable.ArrayBuilder.ofBoolean =
+      repr.addOne(elem)
+      repr
+    def finish(repr: mutable.ArrayBuilder.ofBoolean): Array[Boolean] = repr.result()
+
+  class BuildCharArray extends Reader.VectorBuilder[Char, mutable.ArrayBuilder.ofChar, Array[Char]]:
+    def init(): mutable.ArrayBuilder.ofChar = new mutable.ArrayBuilder.ofChar
+    def add(repr: mutable.ArrayBuilder.ofChar, elem: Char): mutable.ArrayBuilder.ofChar =
+      addChar(repr, elem)
+    override def addChar(
+        repr: mutable.ArrayBuilder.ofChar,
+        elem: Char
+    ): mutable.ArrayBuilder.ofChar =
+      repr.addOne(elem)
+      repr
+    def finish(repr: mutable.ArrayBuilder.ofChar): Array[Char] = repr.result()
+
+  /** vector read for `Array[T]`, specialized to append without boxing when `T` is primitive */
+  def arrayVectorRead[T](using tag: ClassTag[T]): RawSchema.VectorRead =
+    tag.runtimeClass match
+      case java.lang.Integer.TYPE   => RawSchema.VectorRead.FromReaderBuilder(BuildIntArray())
+      case java.lang.Long.TYPE      => RawSchema.VectorRead.FromReaderBuilder(BuildLongArray())
+      case java.lang.Float.TYPE     => RawSchema.VectorRead.FromReaderBuilder(BuildFloatArray())
+      case java.lang.Double.TYPE    => RawSchema.VectorRead.FromReaderBuilder(BuildDoubleArray())
+      case java.lang.Boolean.TYPE   => RawSchema.VectorRead.FromReaderBuilder(BuildBooleanArray())
+      case java.lang.Character.TYPE => RawSchema.VectorRead.FromReaderBuilder(BuildCharArray())
+      case _                        => RawSchema.VectorRead.FromReaderBuilder(BuildArray[T]())
+
+  /** vector read for `IArray[T]`: a specialized array builder's result is freshly allocated, so for
+    * primitive elements it can be safely viewed as the immutable array
+    */
+  def iarrayVectorRead[T](using tag: ClassTag[T]): RawSchema.VectorRead =
+    if tag.runtimeClass.isPrimitive then arrayVectorRead[T]
+    else RawSchema.VectorRead.FromReaderBuilder(BuildIArray[T]())
+
   // TODO: add to standard library!
   inline def showType[T] = ${ showTypeImpl[T] }
 
@@ -242,6 +420,26 @@ private[scalanotation] object PublicInternal {
 
   def caseClassBuilder[T](using m: Mirror.ProductOf[T]): Array[AnyRef] => T =
     arrAsProduct(m.fromProduct)
+
+  /** finalizes a derived case class directly from pooled builder slots:
+    * [[scalanotation.BuilderSlots]] is itself a [[Product]] over the typed slots, so no boxed
+    * values array is allocated
+    */
+  def caseClassSlotsFactory[T](
+      using m: Mirror.ProductOf[T]
+  ): scalanotation.TypedFactory =
+    slots => m.fromProduct(slots)
+
+  /** Finalizes a tuple (and named tuples, which are tuples at runtime) from pooled builder slots:
+    * [[scalanotation.BuilderSlots]] is itself a [[Product]], so `Tuple.fromProduct` consumes the
+    * typed slots directly without materializing a boxed values array first.
+    */
+  val tupleSlotsFactory: scalanotation.TypedFactory =
+    slots => Tuple.fromProduct(slots)
+
+  /** finalizes a named tuple from pooled builder slots — see [[tupleSlotsFactory]] */
+  val namedTupleSlotsFactory: scalanotation.TypedFactory =
+    tupleSlotsFactory
 
   trait HasDefault[T] {
     def Default: T

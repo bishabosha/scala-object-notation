@@ -140,4 +140,9 @@ trait BenchModule extends Cross.Module[String], ScalaObjectNotationModule, JmhMo
     if crossValue == "HEAD" then Seq.empty
     else Seq(mvn"io.github.bishabosha::scala-object-notation::${crossValue}")
   )
+  // benchmarks using HEAD-only API live in src-head, which older crosses cannot compile
+  def headSources = Task.Sources(moduleDir / "src-head" / "main" / "scala")
+  override def sources = Task {
+    super.sources() ++ (if crossValue == "HEAD" then headSources() else Seq.empty)
+  }
   def runJmhMem(args: String*) = runJmh(("-prof" +: "gc" +: args.toSeq)*)

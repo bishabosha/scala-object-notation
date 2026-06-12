@@ -74,7 +74,7 @@ class CollectionDecodingSuite extends ScalanotationSuite:
       case vector: RawSchema.Vector =>
         vector.read match
           case read: RawSchema.VectorRead.FromReaderBuilder[?, ?, ?] =>
-            assert(read.builder.isInstanceOf[PublicInternal.BuildIArray[?]])
+            assert(read.builder.isInstanceOf[PublicInternal.BuildIntArray])
           case _ =>
             fail(s"Expected a vector reader builder, got ${vector.read}")
       case _ =>
@@ -101,7 +101,7 @@ class CollectionDecodingSuite extends ScalanotationSuite:
       case vector: RawSchema.Vector =>
         vector.read match
           case read: RawSchema.VectorRead.FromReaderBuilder[?, ?, ?] =>
-            assert(read.builder.isInstanceOf[PublicInternal.BuildArray[?]])
+            assert(read.builder.isInstanceOf[PublicInternal.BuildIntArray])
           case _ =>
             fail(s"Expected a vector reader builder, got ${vector.read}")
       case _ =>

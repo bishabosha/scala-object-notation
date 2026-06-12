@@ -2,6 +2,7 @@ package scalanotation.internal
 
 import scalanotation.DecodeError
 import scalanotation.Reader
+import scalanotation.TypedFactory
 import scalanotation.internal.Internal
 import steps.result.Result
 
@@ -189,11 +190,106 @@ private[scalanotation] object RawSchema:
   final case class SumCase(name: String, schema: RawSchema)
 
   trait NamedTupleRead:
+    /** Abstract builder state, consumed and returned by the `add` methods. Implementations that
+      * only provide the legacy [[build]] inherit the defaults, where the state is the
+      * `Array[AnyRef]` of boxed field values handed to [[build]] by [[finish]].
+      */
+    type State
+
+    /** legacy entry point: builds the result from boxed field values */
     def build(values: Array[AnyRef]): Any
+
+    def init(size: Int, slots: scalanotation.BuilderSlots | Null): State =
+      if slots != null && slotsFactory != null then slots.reset(size).asInstanceOf[State]
+      else (new Array[AnyRef](size)).asInstanceOf[State]
+
+    def add(state: State, index: Int, value: Any): State =
+      state match
+        case arr: Array[AnyRef] =>
+          arr(index) = value.asInstanceOf[AnyRef]
+        case slots: scalanotation.BuilderSlots =>
+          slots.setRef(index, value)
+      state
+
+    // typed adds: the defaults box and delegate to `add`; specialized states override to
+    // consume the primitive directly
+    def addString(state: State, index: Int, value: String): State =
+      state match
+        case arr: Array[AnyRef] =>
+          arr(index) = value.asInstanceOf[AnyRef]
+        case slots: scalanotation.BuilderSlots =>
+          slots.setString(index, value)
+      state
+
+    def addChar(state: State, index: Int, value: Char): State =
+      state match
+        case arr: Array[AnyRef] =>
+          arr(index) = value.asInstanceOf[AnyRef]
+        case slots: scalanotation.BuilderSlots =>
+          slots.setChar(index, value)
+      state
+    def addInt(state: State, index: Int, value: Int): State =
+      state match
+        case arr: Array[AnyRef] =>
+          arr(index) = value.asInstanceOf[AnyRef]
+        case slots: scalanotation.BuilderSlots =>
+          slots.setInt(index, value)
+      state
+    def addLong(state: State, index: Int, value: Long): State =
+      state match
+        case arr: Array[AnyRef] =>
+          arr(index) = value.asInstanceOf[AnyRef]
+        case slots: scalanotation.BuilderSlots =>
+          slots.setLong(index, value)
+      state
+    def addFloat(state: State, index: Int, value: Float): State =
+      state match
+        case arr: Array[AnyRef] =>
+          arr(index) = value.asInstanceOf[AnyRef]
+        case slots: scalanotation.BuilderSlots =>
+          slots.setFloat(index, value)
+      state
+    def addDouble(state: State, index: Int, value: Double): State =
+      state match
+        case arr: Array[AnyRef] =>
+          arr(index) = value.asInstanceOf[AnyRef]
+        case slots: scalanotation.BuilderSlots =>
+          slots.setDouble(index, value)
+      state
+    def addBoolean(state: State, index: Int, value: Boolean): State =
+      state match
+        case arr: Array[AnyRef] =>
+          arr(index) = value.asInstanceOf[AnyRef]
+        case slots: scalanotation.BuilderSlots =>
+          slots.setBoolean(index, value)
+      state
+
+    def finish(state: State): Any = state match
+      case arr: Array[AnyRef]                => build(arr)
+      case slots: scalanotation.BuilderSlots =>
+        slotsFactory.nn.fromSlots(slots)
+
+    /** Optional low-boxing finalizer: when non-null, a decoder may fill its pooled
+      * [[scalanotation.BuilderSlots]] with typed field values instead of threading [[State]], and
+      * finalize via [[scalanotation.TypedFactory.fromSlots]].
+      */
+    def slotsFactory: TypedFactory | Null = null
 
   object NamedTupleRead:
     def from[T](build0: Array[AnyRef] => T): NamedTupleRead = new:
       def build(values: Array[AnyRef]): Any = build0(values)
+
+    def from[T](
+        build0: Array[AnyRef] => T,
+        slotsFactory0: TypedFactory | Null
+    ): NamedTupleRead = new:
+      def build(values: Array[AnyRef]): Any          = build0(values)
+      override def slotsFactory: TypedFactory | Null = slotsFactory0
+
+    /** attaches (or replaces) a [[scalanotation.TypedFactory]] on an existing read */
+    def withSlotsFactory(read: NamedTupleRead, factory: TypedFactory): NamedTupleRead = new:
+      def build(values: Array[AnyRef]): Any          = read.build(values)
+      override def slotsFactory: TypedFactory | Null = factory
 
   trait NamedTupleWrite:
     def fieldValue(value: Any, index: Int): Any
@@ -209,8 +305,25 @@ private[scalanotation] object RawSchema:
   trait TupleRead:
     type State
     def init(size: Int): State
+    def initPooled(size: Int, pooled: scalanotation.BuilderSlots | Null): State
     def add(state: State, index: Int, elem: Any): State
+
+    // typed adds: the defaults box and delegate to `add`
+    def addString(state: State, index: Int, elem: String): State   = add(state, index, elem)
+    def addChar(state: State, index: Int, elem: Char): State       = add(state, index, elem)
+    def addInt(state: State, index: Int, elem: Int): State         = add(state, index, elem)
+    def addLong(state: State, index: Int, elem: Long): State       = add(state, index, elem)
+    def addFloat(state: State, index: Int, elem: Float): State     = add(state, index, elem)
+    def addDouble(state: State, index: Int, elem: Double): State   = add(state, index, elem)
+    def addBoolean(state: State, index: Int, elem: Boolean): State = add(state, index, elem)
+
     def finish(state: State): Any
+
+    /** Optional low-boxing finalizer: when non-null, a pooling decoder fills its
+      * [[scalanotation.BuilderSlots]] with typed values instead of threading [[State]], and
+      * finalizes via [[scalanotation.TypedFactory.fromSlots]].
+      */
+    def slotsFactory: TypedFactory | Null = null
 
   object TupleRead:
     final case class FromReaderBuilder[Repr, A](
@@ -218,10 +331,29 @@ private[scalanotation] object RawSchema:
     ) extends TupleRead:
       type State = Repr
 
+      override def slotsFactory: TypedFactory | Null = builder.slotsFactory
+
       def init(size: Int): State = builder.init(size)
+      def initPooled(size: Int, pooled: scalanotation.BuilderSlots | Null): State =
+        builder.initPooled(size, pooled)
 
       def add(state: State, index: Int, elem: Any): State =
         builder.add(state, index, elem)
+
+      override def addString(state: State, index: Int, elem: String): State =
+        builder.addString(state, index, elem)
+      override def addChar(state: State, index: Int, elem: Char): State =
+        builder.addChar(state, index, elem)
+      override def addInt(state: State, index: Int, elem: Int): State =
+        builder.addInt(state, index, elem)
+      override def addLong(state: State, index: Int, elem: Long): State =
+        builder.addLong(state, index, elem)
+      override def addFloat(state: State, index: Int, elem: Float): State =
+        builder.addFloat(state, index, elem)
+      override def addDouble(state: State, index: Int, elem: Double): State =
+        builder.addDouble(state, index, elem)
+      override def addBoolean(state: State, index: Int, elem: Boolean): State =
+        builder.addBoolean(state, index, elem)
 
       def finish(state: State): Any = builder.finish(state)
 
@@ -248,6 +380,16 @@ private[scalanotation] object RawSchema:
     type State
     def init(): State
     def add(state: State, elem: Any): State
+
+    // typed adds: the defaults box and delegate to `add`
+    def addString(state: State, elem: String): State   = add(state, elem)
+    def addChar(state: State, elem: Char): State       = add(state, elem)
+    def addInt(state: State, elem: Int): State         = add(state, elem)
+    def addLong(state: State, elem: Long): State       = add(state, elem)
+    def addFloat(state: State, elem: Float): State     = add(state, elem)
+    def addDouble(state: State, elem: Double): State   = add(state, elem)
+    def addBoolean(state: State, elem: Boolean): State = add(state, elem)
+
     def finish(state: State): Any
 
   object VectorRead:
@@ -260,6 +402,21 @@ private[scalanotation] object RawSchema:
 
       def add(state: State, elem: Any): State =
         builder.add(state, elem.asInstanceOf[Elem])
+
+      override def addString(state: State, elem: String): State =
+        builder.addString(state, elem)
+      override def addChar(state: State, elem: Char): State =
+        builder.addChar(state, elem)
+      override def addInt(state: State, elem: Int): State =
+        builder.addInt(state, elem)
+      override def addLong(state: State, elem: Long): State =
+        builder.addLong(state, elem)
+      override def addFloat(state: State, elem: Float): State =
+        builder.addFloat(state, elem)
+      override def addDouble(state: State, elem: Double): State =
+        builder.addDouble(state, elem)
+      override def addBoolean(state: State, elem: Boolean): State =
+        builder.addBoolean(state, elem)
 
       def finish(state: State): Any = builder.finish(state)
 
@@ -278,6 +435,16 @@ private[scalanotation] object RawSchema:
     type State
     def init(): State
     def add(state: State, key: String, elem: Any): State
+
+    // typed adds: the defaults box and delegate to `add`
+    def addString(state: State, key: String, elem: String): State   = add(state, key, elem)
+    def addChar(state: State, key: String, elem: Char): State       = add(state, key, elem)
+    def addInt(state: State, key: String, elem: Int): State         = add(state, key, elem)
+    def addLong(state: State, key: String, elem: Long): State       = add(state, key, elem)
+    def addFloat(state: State, key: String, elem: Float): State     = add(state, key, elem)
+    def addDouble(state: State, key: String, elem: Double): State   = add(state, key, elem)
+    def addBoolean(state: State, key: String, elem: Boolean): State = add(state, key, elem)
+
     def finish(state: State): Any
 
   object DictRead:
@@ -290,6 +457,21 @@ private[scalanotation] object RawSchema:
 
       def add(state: State, key: String, elem: Any): State =
         builder.add(state, key, elem.asInstanceOf[Elem])
+
+      override def addString(state: State, key: String, elem: String): State =
+        builder.addString(state, key, elem)
+      override def addChar(state: State, key: String, elem: Char): State =
+        builder.addChar(state, key, elem)
+      override def addInt(state: State, key: String, elem: Int): State =
+        builder.addInt(state, key, elem)
+      override def addLong(state: State, key: String, elem: Long): State =
+        builder.addLong(state, key, elem)
+      override def addFloat(state: State, key: String, elem: Float): State =
+        builder.addFloat(state, key, elem)
+      override def addDouble(state: State, key: String, elem: Double): State =
+        builder.addDouble(state, key, elem)
+      override def addBoolean(state: State, key: String, elem: Boolean): State =
+        builder.addBoolean(state, key, elem)
 
       def finish(state: State): Any = builder.finish(state)
 
