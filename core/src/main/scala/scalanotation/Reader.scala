@@ -48,10 +48,10 @@ object Reader extends ReaderLowPriority, CommonTypeClassCompanion[Reader]:
     def finish(repr: Repr): A
 
     /** Optional low-boxing finalizer: when non-null, a pooling decoder fills its typed
-      * [[BuilderSlots]] instead of threading `Repr`, and finalizes via [[TypedFactory.fromSlots]] —
-      * e.g. `Tuple.fromProduct` directly over the slots.
+      * [[BuilderSlots]] instead of threading `Repr`, and finalizes via
+      * [[TypedFactory.OfProduct.fromSlots]] — e.g. `Tuple.fromProduct` directly over the slots.
       */
-    def slotsFactory: TypedFactory | Null = null
+    def slotsFactory: TypedFactory.OfProduct[A] | Null = null
 
     // typed adds: the defaults box and delegate to `add`
     def addString(repr: Repr, index: Int, elem: String): Repr   = add(repr, index, elem)

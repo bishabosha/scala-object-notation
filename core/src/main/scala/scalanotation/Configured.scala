@@ -1,7 +1,6 @@
 package scalanotation
 
 import scalanotation.internal.RawSchema
-import scalanotation.internal.TypedFactoryMacros
 
 import scala.annotation.publicInBinary
 import scala.compiletime
@@ -18,8 +17,8 @@ object Configured:
     * itself, and per-case factories (keyed by case label) for a sum
     */
   private[scalanotation] final class TypedFactories(
-      val selfFactory: TypedFactory | Null,
-      val caseFactories: Map[String, TypedFactory]
+      val selfFactory: TypedFactory.OfProduct[?] | Null,
+      val caseFactories: Map[String, TypedFactory.OfProduct[?]]
   )
 
   def default[T]: Configured[T] =
@@ -35,36 +34,22 @@ object Configured:
   )(using Mirror.SumOf[T]): Configured[T] =
     create(Some(field), skippable)
 
-  /** Like [[default]], but every structured product case is built by a macro-derived
-    * [[TypedFactory]] that pulls each constructor argument from the decoder's typed slots, so
-    * primitive fields are never boxed at any point of the decode.
+  /** Like [[default]], but every structured product case is built by the contextual
+    * [[TypedFactory]] evidence, which pulls each constructor argument from the decoder's typed
+    * slots, so primitive fields are never boxed at any point of the decode. Evidence is derived by
+    * `TypedFactories.derived` in the macros module.
     */
-  inline def typed[T](using mirror: Mirror.Of[T]): Configured[T] =
-    withTypedFactoriesOf(default[T])
+  def typed[T](using TypedFactory[T]): Configured[T] =
+    default[T].withTypedFactories
 
   extension [T](config: Configured[T])
-    /** a copy of this configuration with macro-derived [[TypedFactory]] instances attached */
-    inline def withTypedFactories(using mirror: Mirror.Of[T]): Configured[T] =
-      withTypedFactoriesOf(config)
-
-  private inline def withTypedFactoriesOf[T](config: Configured[T])(
-      using mirror: Mirror.Of[T]
-  ): Configured[T] =
-    inline mirror match
-      case p: Mirror.ProductOf[T] =>
-        createTyped(
-          config.discriminatorField,
-          config.skippable,
-          TypedFactoryMacros.productFactory[T](using p),
-          Map.empty[String, TypedFactory]
-        )
-      case s: Mirror.SumOf[T] =>
-        createTyped(
-          config.discriminatorField,
-          config.skippable,
-          null,
-          TypedFactoryMacros.caseFactories[s.MirroredElemLabels, s.MirroredElemTypes]
-        )
+    /** a copy of this configuration with the contextual [[TypedFactory]] evidence attached */
+    def withTypedFactories(using factory: TypedFactory[T]): Configured[T] =
+      factory match
+        case product: TypedFactory.OfProduct[?] =>
+          createTyped(config.discriminatorField, config.skippable, product, Map.empty)
+        case sum: TypedFactory.OfSum[?] =>
+          createTyped(config.discriminatorField, config.skippable, null, sum.caseFactories)
 
   @publicInBinary
   private[scalanotation] def create[T](
@@ -77,8 +62,8 @@ object Configured:
   private[scalanotation] def createTyped[T](
       discriminatorField: Option[String],
       skippable: Boolean,
-      selfFactory: TypedFactory | Null,
-      caseFactories: Map[String, TypedFactory]
+      selfFactory: TypedFactory.OfProduct[?] | Null,
+      caseFactories: Map[String, TypedFactory.OfProduct[?]]
   ): Configured[T] =
     new Configured[T](discriminatorField, skippable, TypedFactories(selfFactory, caseFactories))
 
@@ -137,7 +122,7 @@ object Configured:
       case Some(factory) => sumCase.copy(schema = attachFactory(sumCase.schema, factory))
       case None          => sumCase
 
-  private def attachFactory(schema: RawSchema, factory: TypedFactory): RawSchema =
+  private def attachFactory(schema: RawSchema, factory: TypedFactory.OfProduct[?]): RawSchema =
     schema match
       case RawSchema.NamedTuple(fields, read, write, allowSkipped) =>
         if read == null then schema

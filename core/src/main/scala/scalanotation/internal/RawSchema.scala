@@ -271,9 +271,9 @@ private[scalanotation] object RawSchema:
 
     /** Optional low-boxing finalizer: when non-null, a decoder may fill its pooled
       * [[scalanotation.BuilderSlots]] with typed field values instead of threading [[State]], and
-      * finalize via [[scalanotation.TypedFactory.fromSlots]].
+      * finalize via [[scalanotation.TypedFactory.OfProduct.fromSlots]].
       */
-    def slotsFactory: TypedFactory | Null = null
+    def slotsFactory: TypedFactory.OfProduct[?] | Null = null
 
   object NamedTupleRead:
     def from[T](build0: Array[AnyRef] => T): NamedTupleRead = new:
@@ -281,15 +281,16 @@ private[scalanotation] object RawSchema:
 
     def from[T](
         build0: Array[AnyRef] => T,
-        slotsFactory0: TypedFactory | Null
+        slotsFactory0: TypedFactory.OfProduct[?] | Null
     ): NamedTupleRead = new:
-      def build(values: Array[AnyRef]): Any          = build0(values)
-      override def slotsFactory: TypedFactory | Null = slotsFactory0
+      def build(values: Array[AnyRef]): Any                       = build0(values)
+      override def slotsFactory: TypedFactory.OfProduct[?] | Null = slotsFactory0
 
     /** attaches (or replaces) a [[scalanotation.TypedFactory]] on an existing read */
-    def withSlotsFactory(read: NamedTupleRead, factory: TypedFactory): NamedTupleRead = new:
-      def build(values: Array[AnyRef]): Any          = read.build(values)
-      override def slotsFactory: TypedFactory | Null = factory
+    def withSlotsFactory(read: NamedTupleRead, factory: TypedFactory.OfProduct[?]): NamedTupleRead =
+      new:
+        def build(values: Array[AnyRef]): Any                       = read.build(values)
+        override def slotsFactory: TypedFactory.OfProduct[?] | Null = factory
 
   trait NamedTupleWrite:
     def fieldValue(value: Any, index: Int): Any
@@ -321,9 +322,9 @@ private[scalanotation] object RawSchema:
 
     /** Optional low-boxing finalizer: when non-null, a pooling decoder fills its
       * [[scalanotation.BuilderSlots]] with typed values instead of threading [[State]], and
-      * finalizes via [[scalanotation.TypedFactory.fromSlots]].
+      * finalizes via [[scalanotation.TypedFactory.OfProduct.fromSlots]].
       */
-    def slotsFactory: TypedFactory | Null = null
+    def slotsFactory: TypedFactory.OfProduct[?] | Null = null
 
   object TupleRead:
     final case class FromReaderBuilder[Repr, A](
@@ -331,7 +332,7 @@ private[scalanotation] object RawSchema:
     ) extends TupleRead:
       type State = Repr
 
-      override def slotsFactory: TypedFactory | Null = builder.slotsFactory
+      override def slotsFactory: TypedFactory.OfProduct[?] | Null = builder.slotsFactory
 
       def init(size: Int): State = builder.init(size)
       def initPooled(size: Int, pooled: scalanotation.BuilderSlots | Null): State =

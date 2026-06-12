@@ -1,4 +1,4 @@
-package scalanotation.internal
+package scalanotation.macros.internal
 
 import scalanotation.BuilderSlots
 import scalanotation.TypedFactory
@@ -12,21 +12,22 @@ import scala.quoted.*
 private[scalanotation] object TypedFactoryMacros:
 
   /** runtime fallback: builds via the mirror, boxing on demand through the Product interface */
-  def fromProductFactory[P](m: Mirror.ProductOf[P]): TypedFactory =
+  def fromProductFactory[P](m: Mirror.ProductOf[P]): TypedFactory.OfProduct[P] =
     slots => m.fromProduct(slots)
 
-  /** Derives a [[TypedFactory]] that invokes `P`'s primary constructor with each argument pulled
-    * from the matching typed slot, so primitive fields are never boxed. Shapes that cannot be
-    * constructed directly (inner classes, non-public or curried constructors) fall back to
+  /** Derives a [[TypedFactory.OfProduct]] that invokes `P`'s primary constructor with each argument
+    * pulled from the matching typed slot, so primitive fields are never boxed. Shapes that cannot
+    * be constructed directly (inner classes, non-public or curried constructors) fall back to
     * `Mirror.fromProduct` over the slots.
     */
-  inline def productFactory[P](using m: Mirror.ProductOf[P]): TypedFactory =
+  inline def productFactory[P](using m: Mirror.ProductOf[P]): TypedFactory.OfProduct[P] =
     ${ productFactoryImpl[P] }
 
-  /** derives a [[TypedFactory]] per structured product case, keyed by case label; nullary cases
-    * decode to a fixed value and need no factory
+  /** derives a [[TypedFactory.OfProduct]] per structured product case, keyed by case label; nullary
+    * cases decode to a fixed value and need no factory
     */
-  inline def caseFactories[Labels <: Tuple, Cases <: Tuple]: Map[String, TypedFactory] =
+  inline def caseFactories[Labels <: Tuple, Cases <: Tuple]
+      : Map[String, TypedFactory.OfProduct[?]] =
     inline compiletime.erasedValue[Labels] match
       case _: EmptyTuple        => Map.empty
       case _: (label *: labels) =>
@@ -35,8 +36,8 @@ private[scalanotation] object TypedFactoryMacros:
             addCaseFactory[label, kase](caseFactories[labels, cases])
 
   inline def addCaseFactory[Label, Case](
-      rest: Map[String, TypedFactory]
-  ): Map[String, TypedFactory] =
+      rest: Map[String, TypedFactory.OfProduct[?]]
+  ): Map[String, TypedFactory.OfProduct[?]] =
     compiletime.summonFrom {
       case m: Mirror.ProductOf[Case] =>
         inline compiletime.erasedValue[m.MirroredElemTypes] match
@@ -49,13 +50,13 @@ private[scalanotation] object TypedFactoryMacros:
       case _ => rest // non-product case: leave it to the legacy build path
     }
 
-  def productFactoryImpl[P: Type](using Quotes): Expr[TypedFactory] =
+  def productFactoryImpl[P: Type](using Quotes): Expr[TypedFactory.OfProduct[P]] =
     import quotes.reflect.*
 
     val tpe = TypeRepr.of[P].dealias
     val sym = tpe.typeSymbol
 
-    def fallback(): Expr[TypedFactory] =
+    def fallback(): Expr[TypedFactory.OfProduct[P]] =
       Expr.summon[Mirror.ProductOf[P]] match
         case Some(mirror) => '{ fromProductFactory[P]($mirror) }
         case None         =>
@@ -112,7 +113,7 @@ private[scalanotation] object TypedFactoryMacros:
           ft.asType match
             case '[t] => '{ $slots.getRef($idx).asInstanceOf[t] }.asTerm
 
-      def construct(slots: Expr[BuilderSlots]): Expr[Any] =
+      def construct(slots: Expr[BuilderSlots]): Expr[P] =
         val args = fields.zipWithIndex.map { (field, index) =>
           pullArg(slots, tpe.memberType(field).widen, index)
         }
@@ -120,9 +121,9 @@ private[scalanotation] object TypedFactoryMacros:
         val applied = tpe match
           case AppliedType(_, targs) => Apply(TypeApply(select, targs.map(Inferred(_))), args)
           case _                     => Apply(select, args)
-        applied.asExprOf[Any]
+        applied.asExprOf[P]
 
       '{
-        new TypedFactory:
-          def fromSlots(slots: BuilderSlots): Any = ${ construct('slots) }
+        new TypedFactory.OfProduct[P]:
+          def fromSlots(slots: BuilderSlots): P = ${ construct('slots) }
       }

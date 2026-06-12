@@ -243,11 +243,12 @@ private[scalanotation] object PublicInternal {
     def finish(repr: BuildTupleSlots.State): A =
       repr match
         case repr: scalanotation.BuilderSlots =>
-          slotsFactory.fromSlots(repr).asInstanceOf[A]
+          slotsFactory.fromSlots(repr)
         case arr: Array[AnyRef] =>
           Tuple.fromIArray(IArray.unsafeFromArray(arr)).asInstanceOf[A]
 
-    override def slotsFactory: scalanotation.TypedFactory = tupleSlotsFactory
+    override def slotsFactory: scalanotation.TypedFactory.OfProduct[A] =
+      tupleSlotsFactory.asInstanceOf[scalanotation.TypedFactory.OfProduct[A]]
 
   class BuildVector[Elem]
       extends Reader.VectorBuilder[Elem, mutable.Builder[Elem, Vector[Elem]], Vector[Elem]]:
@@ -427,18 +428,18 @@ private[scalanotation] object PublicInternal {
     */
   def caseClassSlotsFactory[T](
       using m: Mirror.ProductOf[T]
-  ): scalanotation.TypedFactory =
+  ): scalanotation.TypedFactory.OfProduct[T] =
     slots => m.fromProduct(slots)
 
   /** Finalizes a tuple (and named tuples, which are tuples at runtime) from pooled builder slots:
     * [[scalanotation.BuilderSlots]] is itself a [[Product]], so `Tuple.fromProduct` consumes the
     * typed slots directly without materializing a boxed values array first.
     */
-  val tupleSlotsFactory: scalanotation.TypedFactory =
+  val tupleSlotsFactory: scalanotation.TypedFactory.OfProduct[Tuple] =
     slots => Tuple.fromProduct(slots)
 
   /** finalizes a named tuple from pooled builder slots — see [[tupleSlotsFactory]] */
-  val namedTupleSlotsFactory: scalanotation.TypedFactory =
+  val namedTupleSlotsFactory: scalanotation.TypedFactory.OfProduct[Tuple] =
     tupleSlotsFactory
 
   trait HasDefault[T] {

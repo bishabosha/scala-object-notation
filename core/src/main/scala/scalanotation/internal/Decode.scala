@@ -73,7 +73,7 @@ private[scalanotation] sealed trait PushSlots:
       fields: IArray[Field],
       state0: read.State,
       startIndex: Int,
-      actualName: String,
+      actualName: String
   ): read.State =
     var index = startIndex
     var state = state0
@@ -775,7 +775,7 @@ private final class TokenDecoder(input: String, debug: Boolean)
     else f(read.nn)
 
   private inline def withBorrowSlots[T](
-      factory: scalanotation.TypedFactory | Null
+      factory: scalanotation.TypedFactory.OfProduct[?] | Null
   )(inline f: (BuilderSlots | Null) => T): T =
     if !slotsPooling || factory == null then f(null)
     else

@@ -6,13 +6,16 @@ import scalanotation.BatchContext
 import scalanotation.Configured
 import scalanotation.Reader
 import scalanotation.Readers
+import scalanotation.TypedFactory
+import scalanotation.macros.TypedFactories
 
 // a typed factory pulls each constructor argument from the decoder's typed slots, so the Int
 // fields are never boxed at any point of the decode
 case class TypedFlatClass(x: Int, y: Int, label: String)
 object TypedFlatClass:
-  given Configured[TypedFlatClass] = Configured.typed
-  given Reader[TypedFlatClass]     = Reader.configured.derived
+  given TypedFactory[TypedFlatClass] = TypedFactories.derived
+  given Configured[TypedFlatClass]   = Configured.typed
+  given Reader[TypedFlatClass]       = Reader.configured.derived
 
 object TypedDecodeBenchmarkHelpers {
   type Flat         = (x: Int, y: Int, label: String)

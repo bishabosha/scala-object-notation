@@ -4,13 +4,6 @@ import scalanotation.internal.SlotKind
 
 import scala.annotation.switch
 
-/** Finalizes a product-like value directly from the decoder's typed [[BuilderSlots]]. A derived
-  * factory (see [[Configured.typed]]) pulls each constructor argument from the matching typed slot,
-  * so primitive fields are never boxed at any point of the decode.
-  */
-trait TypedFactory:
-  def fromSlots(slots: BuilderSlots): Any
-
 /** Appendable typed storage for the field values of a single product-like decode, pooled per
   * decoder and reused. Primitive fields are packed into a `Long` per slot, so filling never
   * allocates or boxes. Finalization either pulls typed slots directly (a derived [[TypedFactory]]),

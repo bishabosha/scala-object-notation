@@ -119,6 +119,11 @@ object core extends ScalaObjectNotationModule, CorePublishedModule, Mima, TastyM
   object jsWasm extends ScalaObjectNotationJsWasmModule, CoreModuleBase
   object native extends ScalaObjectNotationNativeModule, CorePublishedModule
 
+object macros extends ScalaObjectNotationModule, PublishSettings:
+  def artifactName = "scala-object-notation-macros"
+  def projectDesc  = "macro derivation of typed factories for scala-object-notation"
+  def moduleDeps   = Seq(core)
+
 object demo extends ScalaObjectNotationModule:
   def artifactName = "scala-object-notation-config"
   def moduleDeps   = Seq(core)
@@ -134,8 +139,9 @@ object demo extends ScalaObjectNotationModule:
 object bench extends Cross[BenchModule]("HEAD", "0.3.5")
 trait BenchModule extends Cross.Module[String], ScalaObjectNotationModule, JmhModule:
   def jmhCoreVersion = "1.37"
+  // HEAD additionally gets the macros module, for benchmarks of macro-derived typed factories
   override def moduleDeps =
-    if crossValue == "HEAD" then Seq(core) else Seq.empty
+    if crossValue == "HEAD" then Seq(core, macros) else Seq.empty
   override def mvnDeps = super.mvnDeps() ++ (
     if crossValue == "HEAD" then Seq.empty
     else Seq(mvn"io.github.bishabosha::scala-object-notation::${crossValue}")
