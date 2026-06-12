@@ -768,7 +768,7 @@ private final class TokenDecoder(input: String, debug: Boolean)
 
   private inline def withRead[T, S <: RawSchema, R](
       schema: S,
-      r: S => R | Null
+      inline r: S => R | Null
   )(inline f: R => T): T =
     val read = r(schema)
     if read == null then missingReadCapability(schema)
@@ -777,11 +777,10 @@ private final class TokenDecoder(input: String, debug: Boolean)
   private inline def withBorrowSlots[T](
       factory: scalanotation.TypedFactory.OfProduct[?] | Null
   )(inline f: (BuilderSlots | Null) => T): T =
-    if !slotsPooling || factory == null then f(null)
-    else
-      slotsPool.withBorrowed {
-        f
-      }
+    def useSlots(slots: BuilderSlots | Null): T =
+      f(slots)
+    if !slotsPooling || factory == null then useSlots(null)
+    else slotsPool.withBorrowed(useSlots)
 
   def decodeRoot[T](
       schema: Reader[T],
