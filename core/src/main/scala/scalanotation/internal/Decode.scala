@@ -765,6 +765,10 @@ private final class TokenDecoder(input: String, debug: Boolean)
 
   def withSlotsPooling(amortizes: Boolean): this.type =
     slotsPooling = amortizes
+    // gate the scanner's intern cache on the same signal: a one-shot decoder discards its scanner
+    // after one decode, so the fixed intern table would be per-decode overhead with nothing to
+    // amortize it against (it still materializes names, just uncached)
+    setNameCaching(amortizes)
     this
 
   private inline def withRead[T, S <: RawSchema, R](

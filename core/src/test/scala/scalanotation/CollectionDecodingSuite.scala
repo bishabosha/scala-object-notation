@@ -202,6 +202,35 @@ class CollectionDecodingSuite extends ScalanotationSuite:
     )
   }
 
+  test("decode a dict with far more keys than the intern table holds"):
+    // the intern table is only active in batched mode (one-shot decodes bypass it). With far more
+    // distinct keys than table slots, keys collide and overwrite cached entries, so this fails if a
+    // dropped entry corrupted a name or aliased two keys
+    type Data = mutable.LinkedHashMap[String, Int]
+
+    given BatchContext = BatchContext.local()
+
+    val entries = (0 until 5000).map(i => s"field_$i" -> i)
+    val input   = entries.map((k, v) => s"  $k = $v").mkString("val data = (\n", ",\n", "\n)\n")
+
+    val decoded  = Readers.batched.readDeclAs[Data](input, rootName = "data")
+    val expected = mutable.LinkedHashMap.from(entries)
+    assertEquals(decoded, Result.Ok(expected))
+
+  test("decode repeated field names through the warm intern cache"):
+    // many records share one batch context, so the field names recur across decodes and hit the
+    // warm cache; the hit path must yield value-equal names every time, even though the returned
+    // instances need not be the same reference
+    type Entry = (key: String, count: Int)
+
+    given BatchContext = BatchContext.local()
+
+    (0 until 200).foreach: i =>
+      val input    = s"""val data = (key = "k$i", count = $i)"""
+      val decoded  = Readers.batched.readDeclAs[Entry](input, rootName = "data")
+      val expected = (key = s"k$i", count = i)
+      assertEquals(decoded, Result.Ok(expected))
+
   test("decode vectors of nested named tuples"):
     type Entry = (name: String, value: Int)
     type Data  = (items: Vector[Entry], total: Long)

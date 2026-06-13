@@ -3,8 +3,6 @@ package scalanotation.internal
 import scalanotation.DecodeError
 import steps.result.Result
 
-import scala.collection.mutable
-
 /** Unboxed token kind constants. The decoder's happy path only ever inspects these (plus the
   * unboxed offset slots in [[TokenStream]]); boxed [[Token]] values and [[DecodeError.Span]]s are
   * materialized lazily, only when a [[DecodeError]] needs to be constructed (or for
@@ -137,8 +135,86 @@ private[scalanotation] final class Tokenizer(private var input: String):
   private[internal] var num: Long          = 0L
   private[internal] var dbl: Double        = 0.0
 
-  private val namesCache              = mutable.HashMap.empty[String, String]
-  private def nameCached(str: String) = namesCache.getOrElseUpdate(str, str)
+  // Whether identifier/field-name strings are classified and stored in `str`. The lookahead scout
+  // reads only token kinds, so it disables this (see [[withoutNameInterning]]) to skip the per-name
+  // work entirely.
+  private var internNames = true
+
+  // Whether interned names are cached in [[internTable]]. Gated on pool amortization, mirroring the
+  // decoder's slots pool: a one-shot (non-amortizing) scanner is discarded after a single decode,
+  // so the fixed table would be pure per-decode overhead with no repeated lookups to amortize it.
+  // When false, names are still materialized for `str` — just by a plain substring, no table.
+  private var cacheNames = true
+
+  // Bounded, direct-mapped intern table for identifier and field-name strings, keyed by content.
+  // A hash collision overwrites the prior entry rather than growing, so the table never leaks; the
+  // cost is only that a colliding name re-allocates. Because entries can be dropped, callers must
+  // compare names by value (never by reference). Allocated lazily on first cached intern and kept
+  // across [[reset]] so the cache stays warm for a pooled scanner; substrings copy their chars
+  // (JDK 7u6+), so cached names never pin old inputs.
+  private var internTable: Array[String | Null] | Null = null
+
+  /** Disables name classification and interning on this scanner (for the lookahead scout). Returns
+    * `this` for use at the construction site.
+    */
+  private[internal] def withoutNameInterning(): this.type =
+    internNames = false
+    cacheNames = false
+    this
+
+  /** Enables or disables the intern cache. A non-amortizing (one-shot) scanner disables it so it
+    * doesn't allocate the table per decode; names are still materialized, just uncached.
+    */
+  private[internal] def withNameCaching(enabled: Boolean): this.type =
+    cacheNames = enabled
+    this
+
+  private def internTableOrAlloc(): Array[String | Null] =
+    val table = internTable
+    if table != null then table
+    else
+      val fresh = new Array[String | Null](InternTableSize)
+      internTable = fresh
+      fresh
+
+  /** Interns the input slice `[from, until)`. With caching, a hit returns the cached instance with
+    * no allocation and a miss allocates the substring, stores it (overwriting any colliding entry)
+    * and returns it. Without caching, it is a plain substring. Only called when [[internNames]].
+    */
+  private def internSlice(from: Int, until: Int): String =
+    if !cacheNames then input.substring(from, until)
+    else
+      val table = internTableOrAlloc()
+      val len   = until - from
+      var h     = 0
+      var i     = from
+      while i < until do
+        h = h * 31 + input.charAt(i)
+        i += 1
+      val slot     = h & (table.length - 1)
+      val existing = table(slot)
+      if existing != null && existing.length == len && input.regionMatches(from, existing, 0, len)
+      then existing
+      else
+        val name = input.substring(from, until)
+        table(slot) = name
+        name
+
+  /** Interns an already-materialized name — a quoted identifier, whose value can differ from its
+    * input slice because of escapes, so it cannot be interned by offsets. Shares the intern table:
+    * `String.hashCode` is the same 31-polynomial as [[internSlice]]'s hash, so equal content lands
+    * in the same slot. A no-op when caching is disabled.
+    */
+  private def internString(s: String): String =
+    if !cacheNames then s
+    else
+      val table    = internTableOrAlloc()
+      val slot     = s.hashCode & (table.length - 1)
+      val existing = table(slot)
+      if existing != null && existing == s then existing
+      else
+        table(slot) = s
+        s
 
   /** Scan the next token into the slot fields. Throws [[TokenizeException]] on malformed input. */
   def scanNext(): Unit =
@@ -172,20 +248,27 @@ private[scalanotation] final class Tokenizer(private var input: String):
     while !isAtEnd && isIdentifierPart(currentChar()) do advance()
     if index > start && input.charAt(index - 1) == '_' then
       while !isAtEnd && isOperatorPart(currentChar()) do advance()
-    input.substring(start, index) match
-      case KW_package                                        => kind = TokenKind.PackageKw
-      case KW_val                                            => kind = TokenKind.ValKw
-      case KW_true                                           => kind = TokenKind.TrueKw
-      case KW_false                                          => kind = TokenKind.FalseKw
-      case KW_null                                           => kind = TokenKind.NullKw
-      case KW_Vector                                         => kind = TokenKind.VectorId
-      case KW_EmptyTuple                                     => kind = TokenKind.EmptyTupleId
-      case name if reservedIdentifierKeywords.contains(name) =>
-        kind = TokenKind.Keyword
-        str = name
-      case name =>
-        kind = TokenKind.Identifier
-        str = nameCached(name)
+    if !internNames then
+      // scout: only the token kind is consumed, and no scout consumer distinguishes identifiers
+      // from keywords, so classification and interning are skipped to avoid allocating
+      kind = TokenKind.Identifier
+    else
+      // intern first (allocation-free on a hit), then classify the cached string: the hard
+      // keywords need no `str`, identifiers and reserved keywords carry the interned name
+      val name = internSlice(start, index)
+      name match
+        case KW_package    => kind = TokenKind.PackageKw
+        case KW_val        => kind = TokenKind.ValKw
+        case KW_true       => kind = TokenKind.TrueKw
+        case KW_false      => kind = TokenKind.FalseKw
+        case KW_null       => kind = TokenKind.NullKw
+        case KW_Vector     => kind = TokenKind.VectorId
+        case KW_EmptyTuple => kind = TokenKind.EmptyTupleId
+        case _             =>
+          kind =
+            if reservedIdentifierKeywords.contains(name) then TokenKind.Keyword
+            else TokenKind.Identifier
+          str = name
 
   private def scanQuotedIdentifier(): Unit =
     advance()
@@ -203,7 +286,7 @@ private[scalanotation] final class Tokenizer(private var input: String):
     if isAtEnd then fail("Unterminated quoted identifier")
     advance()
     kind = TokenKind.Identifier
-    str = nameCached(builder.result())
+    str = internString(builder.result())
 
   private def scanEscape(): Char =
     if currentChar() == 'u' then scanUnicodeEscape()
@@ -234,18 +317,34 @@ private[scalanotation] final class Tokenizer(private var input: String):
 
   private def scanOperator(): Unit =
     while !isAtEnd && isOperatorPart(currentChar()) do advance()
-    input.substring(start, index) match
-      case "="  => kind = TokenKind.Equals
-      case "+"  => kind = TokenKind.Plus
-      case "-"  => kind = TokenKind.Minus
-      case "*:" => kind = TokenKind.StarColon
-      case name @ (KW_colon | KW_leftArrow | KW_arrow | KW_subtype | KW_supertype | KW_hash |
-          KW_at | KW_tlArrow | KW_ctxArrow) =>
-        kind = TokenKind.Keyword
-        str = name
-      case name =>
-        kind = TokenKind.Identifier
-        str = nameCached(name)
+    val len = index - start
+    // the fixed punctuation operators are classified straight from the slice — `=` especially is
+    // scanned once per named-tuple field, so it must never allocate or touch the intern table
+    if len == 1 then
+      input.charAt(start) match
+        case '=' => kind = TokenKind.Equals
+        case '+' => kind = TokenKind.Plus
+        case '-' => kind = TokenKind.Minus
+        case _   => classifyOperatorIdentifier()
+    else if len == 2 && input.charAt(start) == '*' && input.charAt(start + 1) == ':' then
+      kind = TokenKind.StarColon
+    else classifyOperatorIdentifier()
+
+  private def classifyOperatorIdentifier(): Unit =
+    if !internNames then
+      // scout: the fixed operators it cares about (`*:`) are already classified above; everything
+      // else collapses to one bucket, so neither keyword classification nor interning is needed
+      kind = TokenKind.Identifier
+    else
+      val op = internSlice(start, index)
+      op match
+        case KW_colon | KW_leftArrow | KW_arrow | KW_subtype | KW_supertype | KW_hash | KW_at |
+            KW_tlArrow | KW_ctxArrow =>
+          kind = TokenKind.Keyword
+          str = op
+        case _ =>
+          kind = TokenKind.Identifier
+          str = op
 
   private def scanPrefixedInteger(): Unit =
     advance()
@@ -482,6 +581,11 @@ private[scalanotation] final class Tokenizer(private var input: String):
     throw TokenizeException(message, offset)
 
 private[scalanotation] object Tokenizer:
+  // capacity of the per-scanner intern table; power of two so the hash maps in with a bitmask.
+  // Sized for the distinct identifier/field-name count of a typical decode with headroom; a
+  // higher-diversity input (e.g. a large dict) simply sees more collisions and re-allocates.
+  private final val InternTableSize = 512
+
   private val KW_val        = "val"
   private val KW_package    = "package"
   private val KW_true       = "true"
@@ -650,7 +754,7 @@ private[scalanotation] object Tokenizer:
 
   /** A scanner positioned at `offset` — used for non-buffering scout scans. */
   private[internal] def startingAt(input: String, offset: Int): Tokenizer =
-    val scanner = Tokenizer(input)
+    val scanner = Tokenizer(input).withoutNameInterning()
     scanner.index = offset
     scanner
 
@@ -678,6 +782,12 @@ private[scalanotation] abstract class TokenStream(
   private var buffered = false // does slot (cur ^ 1) hold the single-token lookahead?
 
   scanIntoSlot(cur) // initialize the current token
+
+  /** Enables or disables the scanner's name-intern cache — see [[Tokenizer.withNameCaching]]. The
+    * decoder gates this on pool amortization, alongside its slots pool.
+    */
+  protected def setNameCaching(enabled: Boolean): Unit =
+    scanner.withNameCaching(enabled)
 
   /** Re-aims this stream at the start of a new input, for reuse from a pool. */
   protected def resetStream(newInput: String, newDebug: Boolean): Unit =
