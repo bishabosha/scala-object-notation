@@ -317,7 +317,8 @@ private[scalanotation] object RawSchema:
   trait TupleRead:
     type State
     def init(size: Int): State
-    def initPooled(size: Int, pooled: scalanotation.BuilderSlots | Null): State
+    def initPooled(size: Int, pooled: scalanotation.BuilderSlots | Null): State =
+      init(size)
     def add(state: State, index: Int, elem: Any): State
 
     // typed adds: the defaults box and delegate to `add`
@@ -346,7 +347,7 @@ private[scalanotation] object RawSchema:
       override def slotsFactory: TypedFactory.OfProduct[?] | Null = builder.slotsFactory
 
       def init(size: Int): State = builder.init(size)
-      def initPooled(size: Int, pooled: scalanotation.BuilderSlots | Null): State =
+      override def initPooled(size: Int, pooled: scalanotation.BuilderSlots | Null): State =
         builder.initPooled(size, pooled)
 
       def add(state: State, index: Int, elem: Any): State =

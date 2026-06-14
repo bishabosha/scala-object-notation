@@ -132,10 +132,10 @@ class TypedFactorySuite extends munit.FunSuite:
     )
 
   test("pooled decoders build tuples and named tuples directly from the typed slots"):
-    type Mixed = (Int, String, (ok: Boolean), Long)
+    type Mixed = (Int, String, Boolean, Float, Double, Long)
 
-    assertReads[Mixed]("""(1, "two", (ok = true), 3L)""")(
-      Result.Ok((1, "two", (ok = true), 3L))
+    assertReads[Mixed]("""(1, "two", true, 1.5f, 2.25, 3L)""")(
+      Result.Ok((1, "two", true, 1.5f, 2.25, 3L))
     )
     assertReads[Int *: String *: EmptyTuple]("""1 *: "two" *: EmptyTuple""")(
       Result.Ok(1 *: "two" *: EmptyTuple)

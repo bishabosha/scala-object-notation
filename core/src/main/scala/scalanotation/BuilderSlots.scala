@@ -18,13 +18,13 @@ final class BuilderSlots private[scalanotation] () extends Product:
 
   /** clears references from the previous use and re-sizes for a product of `size` fields */
   private[scalanotation] def reset(size: Int): this.type =
-    java.util.Arrays.fill(refs, null)
     if kinds.length < size then
       var capacity = kinds.length
       while capacity < size do capacity *= 2
       kinds = new Array[Int](capacity)
       refs = new Array[AnyRef](capacity)
       prims = new Array[Long](capacity)
+    else if arity > 0 then java.util.Arrays.fill(refs, 0, arity, null)
     arity = size
     this
 

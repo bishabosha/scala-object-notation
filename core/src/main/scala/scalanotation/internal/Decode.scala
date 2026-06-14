@@ -621,8 +621,14 @@ private[scalanotation] object TokenDecoder:
     */
   private[scalanotation] final class PoolHolder(val pool: Internal.Pool[TokenDecoder])
 
+  private def pooled(): TokenDecoder =
+    TokenDecoder("", debug = false, slotsPooling = true, scanOnInit = false)
+
+  private def oneShot(input: String, debug: Boolean): TokenDecoder =
+    TokenDecoder(input, debug, slotsPooling = false, scanOnInit = true)
+
   private given Internal.Alloc[TokenDecoder]:
-    def alloc(): TokenDecoder            = TokenDecoder("", debug = false)
+    def alloc(): TokenDecoder            = TokenDecoder.pooled()
     def prepare(t: TokenDecoder): t.type = t // re-aimed by reset(input, debug) after borrowing
 
   private[scalanotation] val gcContext: PoolHolder =
@@ -637,9 +643,11 @@ private[scalanotation] object TokenDecoder:
   private inline def withPooled[A](ctx: PoolHolder, input: String, debug: Boolean)(
       inline use: TokenDecoder => A
   ): A =
-    ctx.pool.withBorrowed { decoder =>
-      use(decoder.reset(input, debug).withSlotsPooling(ctx.pool.amortizes))
-    }
+    if ctx.pool.amortizes then
+      ctx.pool.withBorrowed { decoder =>
+        use(decoder.reset(input, debug))
+      }
+    else use(TokenDecoder.oneShot(input, debug))
 
   private[scalanotation] def decode[T](
       input: String,
@@ -716,9 +724,15 @@ private final class NamedTupleParseResult() {
     this
 }
 
-private final class TokenDecoder(input: String, debug: Boolean)
-    extends TokenStream(input, debug),
+private final class TokenDecoder private (
+    input: String,
+    debug: Boolean,
+    private val slotsPooling: Boolean,
+    scanOnInit: Boolean
+) extends TokenStream(input, debug, cacheNamesOnInit = slotsPooling, scanOnInit),
       PushSlots {
+  def this(input: String, debug: Boolean) =
+    this(input, debug, slotsPooling = true, scanOnInit = true)
 
   import scala.util.boundary.Label
 
@@ -758,18 +772,6 @@ private final class TokenDecoder(input: String, debug: Boolean)
   // nest, so a reentrant decode inside a field value borrows a fresh instance. Lazy: a one-shot
   // (GC-pooled) decoder skips the slots path and must not pay for the pool either.
   private lazy val slotsPool = Internal.LocalPool[BuilderSlots]()
-
-  // whether this decoder instance is reused by an amortizing pool: a one-shot (GC-pooled)
-  // decoder skips the builder-slots path, whose buffers would be allocated per decode
-  private var slotsPooling: Boolean = false
-
-  def withSlotsPooling(amortizes: Boolean): this.type =
-    slotsPooling = amortizes
-    // gate the scanner's intern cache on the same signal: a one-shot decoder discards its scanner
-    // after one decode, so the fixed intern table would be per-decode overhead with nothing to
-    // amortize it against (it still materializes names, just uncached)
-    setNameCaching(amortizes)
-    this
 
   private inline def withRead[T, S <: RawSchema, R](
       schema: S,

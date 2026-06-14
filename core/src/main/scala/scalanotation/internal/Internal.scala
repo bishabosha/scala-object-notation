@@ -240,6 +240,42 @@ private[scalanotation] object PublicInternal {
           arr(index) = elem.asInstanceOf[AnyRef]
       repr
 
+    override def addFloat(
+        repr: BuildTupleSlots.State,
+        index: Int,
+        elem: Float
+    ): BuildTupleSlots.State =
+      repr match
+        case repr: scalanotation.BuilderSlots =>
+          repr.setFloat(index, elem)
+        case arr: Array[AnyRef] =>
+          arr(index) = elem.asInstanceOf[AnyRef]
+      repr
+
+    override def addDouble(
+        repr: BuildTupleSlots.State,
+        index: Int,
+        elem: Double
+    ): BuildTupleSlots.State =
+      repr match
+        case repr: scalanotation.BuilderSlots =>
+          repr.setDouble(index, elem)
+        case arr: Array[AnyRef] =>
+          arr(index) = elem.asInstanceOf[AnyRef]
+      repr
+
+    override def addBoolean(
+        repr: BuildTupleSlots.State,
+        index: Int,
+        elem: Boolean
+    ): BuildTupleSlots.State =
+      repr match
+        case repr: scalanotation.BuilderSlots =>
+          repr.setBoolean(index, elem)
+        case arr: Array[AnyRef] =>
+          arr(index) = elem.asInstanceOf[AnyRef]
+      repr
+
     def finish(repr: BuildTupleSlots.State): A =
       repr match
         case repr: scalanotation.BuilderSlots =>

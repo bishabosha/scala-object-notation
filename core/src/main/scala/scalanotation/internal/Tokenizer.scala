@@ -81,10 +81,19 @@ private[scalanotation] final class TokenizeException(val message: String, val of
   * buffering (see [[TokenStream]]); the scanner itself holds no token history, so memory use is
   * bounded regardless of input size.
   */
-private[scalanotation] final class Tokenizer(private var input: String):
-  import Tokenizer.*
+private[scalanotation] final class Tokenizer private[internal] (
+    private var input: String,
+    private var index: Int,
+    // Whether identifier/field-name strings are classified and stored in `str`. Lookahead scouts
+    // read only token kinds, so they disable this to skip per-name work entirely.
+    private var internNames: Boolean,
+    // Whether interned names are cached in [[internTable]]. One-shot scanners disable this so the
+    // fixed table is not allocated per decode; names are still materialized, just uncached.
+    private var cacheNames: Boolean
+):
+  def this(input: String) = this(input, 0, internNames = true, cacheNames = true)
 
-  private var index = 0
+  import Tokenizer.*
 
   /** Repositions this scanner at the start of a new input, for reuse from a pool. The name cache is
     * kept: interned names stay useful across inputs.
@@ -135,17 +144,6 @@ private[scalanotation] final class Tokenizer(private var input: String):
   private[internal] var num: Long          = 0L
   private[internal] var dbl: Double        = 0.0
 
-  // Whether identifier/field-name strings are classified and stored in `str`. The lookahead scout
-  // reads only token kinds, so it disables this (see [[withoutNameInterning]]) to skip the per-name
-  // work entirely.
-  private var internNames = true
-
-  // Whether interned names are cached in [[internTable]]. Gated on pool amortization, mirroring the
-  // decoder's slots pool: a one-shot (non-amortizing) scanner is discarded after a single decode,
-  // so the fixed table would be pure per-decode overhead with no repeated lookups to amortize it.
-  // When false, names are still materialized for `str` — just by a plain substring, no table.
-  private var cacheNames = true
-
   // Bounded, direct-mapped intern table for identifier and field-name strings, keyed by content.
   // A hash collision overwrites the prior entry rather than growing, so the table never leaks; the
   // cost is only that a colliding name re-allocates. Because entries can be dropped, callers must
@@ -153,21 +151,6 @@ private[scalanotation] final class Tokenizer(private var input: String):
   // across [[reset]] so the cache stays warm for a pooled scanner; substrings copy their chars
   // (JDK 7u6+), so cached names never pin old inputs.
   private var internTable: Array[String | Null] | Null = null
-
-  /** Disables name classification and interning on this scanner (for the lookahead scout). Returns
-    * `this` for use at the construction site.
-    */
-  private[internal] def withoutNameInterning(): this.type =
-    internNames = false
-    cacheNames = false
-    this
-
-  /** Enables or disables the intern cache. A non-amortizing (one-shot) scanner disables it so it
-    * doesn't allocate the table per decode; names are still materialized, just uncached.
-    */
-  private[internal] def withNameCaching(enabled: Boolean): this.type =
-    cacheNames = enabled
-    this
 
   private def internTableOrAlloc(): Array[String | Null] =
     val table = internTable
@@ -754,9 +737,7 @@ private[scalanotation] object Tokenizer:
 
   /** A scanner positioned at `offset` — used for non-buffering scout scans. */
   private[internal] def startingAt(input: String, offset: Int): Tokenizer =
-    val scanner = Tokenizer(input).withoutNameInterning()
-    scanner.index = offset
-    scanner
+    Tokenizer(input, offset, internNames = false, cacheNames = false)
 
 /** A bounded buffer over a streaming [[Tokenizer]]: at most two tokens (the current token plus a
   * single lookahead) are buffered at any time, held in vectorized slots — parallel arrays with an
@@ -764,11 +745,17 @@ private[scalanotation] object Tokenizer:
   * [[DecodeError.Span]]s are only materialized when constructing a [[DecodeError]] (or for debug
   * output).
   */
-private[scalanotation] abstract class TokenStream(
+private[scalanotation] abstract class TokenStream private[internal] (
     private var input: String,
-    private var debug: Boolean
+    private var debug: Boolean,
+    cacheNamesOnInit: Boolean,
+    scanOnInit: Boolean
 ) extends Internal.PoolHolder {
-  private val scanner = Tokenizer(input)
+  def this(input: String, debug: Boolean) =
+    this(input, debug, cacheNamesOnInit = true, scanOnInit = true)
+
+  private val scanner =
+    Tokenizer(input, 0, internNames = true, cacheNames = cacheNamesOnInit)
 
   // vectorized slots: indices 0 and 1 hold the at-most-two buffered tokens
   private val kinds  = new Array[Int](2)
@@ -781,13 +768,7 @@ private[scalanotation] abstract class TokenStream(
   private var cur      = 0
   private var buffered = false // does slot (cur ^ 1) hold the single-token lookahead?
 
-  scanIntoSlot(cur) // initialize the current token
-
-  /** Enables or disables the scanner's name-intern cache — see [[Tokenizer.withNameCaching]]. The
-    * decoder gates this on pool amortization, alongside its slots pool.
-    */
-  protected def setNameCaching(enabled: Boolean): Unit =
-    scanner.withNameCaching(enabled)
+  if scanOnInit then scanIntoSlot(cur) // initialize the current token
 
   /** Re-aims this stream at the start of a new input, for reuse from a pool. */
   protected def resetStream(newInput: String, newDebug: Boolean): Unit =
