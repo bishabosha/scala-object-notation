@@ -24,22 +24,10 @@ private[internal] object Internal {
     def borrow(): T
     def release(t: T): Unit
 
-    /** whether borrowed instances are reused, so per-instance buffers amortize across calls */
-    def amortizes: Boolean = true
-
     inline def withBorrowed[A](inline f: T => A): A =
       val t = borrow()
       try f(t)
       finally release(t)
-
-  /** A pool that never stores anything: borrow always allocates a fresh instance and release is a
-    * no-op, leaving reclamation to the GC. Used where pooling must not introduce shared mutable
-    * state between calls.
-    */
-  final class GCPool[T <: AnyRef: Alloc as factory] extends Pool[T]:
-    def borrow(): T                 = factory.alloc()
-    def release(t: T): Unit         = ()
-    override def amortizes: Boolean = false
 
   /** A lock-free, fixed-capacity pool that can be shared between threads — including virtual
     * threads, where a ThreadLocal cache would never be reused. Borrow and release probe the slot

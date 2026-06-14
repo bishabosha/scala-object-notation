@@ -750,7 +750,7 @@ private[scalanotation] abstract class TokenStream private[internal] (
     private var debug: Boolean,
     cacheNamesOnInit: Boolean,
     scanOnInit: Boolean
-) extends Internal.PoolHolder {
+) extends PushSlots {
   def this(input: String, debug: Boolean) =
     this(input, debug, cacheNamesOnInit = true, scanOnInit = true)
 

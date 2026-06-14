@@ -33,7 +33,7 @@ private[scalanotation] object NumericPromotions:
   * [[Result.Ok]] carrying the final value is only allocated at the boundary where the result is
   * returned back to the user.
   */
-private[scalanotation] sealed trait PushSlots:
+private[scalanotation] abstract class PushSlots extends Internal.PoolHolder:
   /** the most recently decoded reference value; written by the callee via [[pushRef]] */
   private var anySlot: Any = null
 
@@ -41,22 +41,17 @@ private[scalanotation] sealed trait PushSlots:
   private var skipFillIndex: Int = 0
 
   /** the [[SlotKind]] of the most recent push: tells the caller which slot is live */
-  protected var lastSlotKind: Int = SlotKind.Ref
+  private var lastSlotKind: Int = SlotKind.Ref
 
   // typed slots for atomic values: an atomic decoder pushes here without boxing, and the caller
   // pulls the typed value to wrap or append to its builder
-  protected var stringSlot: String   = ""
-  protected var charSlot: Char       = '\u0000'
-  protected var intSlot: Int         = 0
-  protected var longSlot: Long       = 0L
-  protected var floatSlot: Float     = 0.0f
-  protected var doubleSlot: Double   = 0.0d
-  protected var booleanSlot: Boolean = false
-
-  /** pushes a reference (or already-boxed) value, tagging the Any slot as the live one */
-  protected final def pushRef(value: Any): Unit =
-    anySlot = value
-    lastSlotKind = SlotKind.Ref
+  private var stringSlot: String   = ""
+  private var charSlot: Char       = '\u0000'
+  private var intSlot: Int         = 0
+  private var longSlot: Long       = 0L
+  private var floatSlot: Float     = 0.0f
+  private var doubleSlot: Double   = 0.0d
+  private var booleanSlot: Boolean = false
 
   protected final def pullSkipFillIndex(): Int =
     val res = skipFillIndex
@@ -86,33 +81,73 @@ private[scalanotation] sealed trait PushSlots:
     skipFillIndex = index
     state
 
+  /** pushes a reference (or already-boxed) value, tagging the Any slot as the live one */
+  protected final def pushRef(value: Any): Unit =
+    anySlot = value
+    lastSlotKind = SlotKind.Ref
+
+  protected final def pullRefStrict(): Any =
+    assert(lastSlotKind == SlotKind.Ref, "pullRefStrict called when lastSlotKind != Ref")
+    anySlot
+
   protected final def pushString(value: String): Unit =
     stringSlot = value
     lastSlotKind = SlotKind.String
+
+  protected final def pullStringStrict(): String =
+    assert(lastSlotKind == SlotKind.String, "pullStringStrict called when lastSlotKind != String")
+    stringSlot
 
   protected final def pushChar(value: Char): Unit =
     charSlot = value
     lastSlotKind = SlotKind.Char
 
+  protected final def pullCharStrict(): Char =
+    assert(lastSlotKind == SlotKind.Char, "pullCharStrict called when lastSlotKind != Char")
+    charSlot
+
   protected final def pushInt(value: Int): Unit =
     intSlot = value
     lastSlotKind = SlotKind.Int
+
+  protected final def pullIntStrict(): Int =
+    assert(lastSlotKind == SlotKind.Int, "pullIntStrict called when lastSlotKind != Int")
+    intSlot
 
   protected final def pushLong(value: Long): Unit =
     longSlot = value
     lastSlotKind = SlotKind.Long
 
+  protected final def pullLongStrict(): Long =
+    assert(lastSlotKind == SlotKind.Long, "pullLongStrict called when lastSlotKind != Long")
+    longSlot
+
   protected final def pushFloat(value: Float): Unit =
     floatSlot = value
     lastSlotKind = SlotKind.Float
+
+  protected final def pullFloatStrict(): Float =
+    assert(lastSlotKind == SlotKind.Float, "pullFloatStrict called when lastSlotKind != Float")
+    floatSlot
 
   protected final def pushDouble(value: Double): Unit =
     doubleSlot = value
     lastSlotKind = SlotKind.Double
 
+  protected final def pullDoubleStrict(): Double =
+    assert(lastSlotKind == SlotKind.Double, "pullDoubleStrict called when lastSlotKind != Double")
+    doubleSlot
+
   protected final def pushBoolean(value: Boolean): Unit =
     booleanSlot = value
     lastSlotKind = SlotKind.Boolean
+
+  protected final def pullBooleanStrict(): Boolean =
+    assert(
+      lastSlotKind == SlotKind.Boolean,
+      "pullBooleanStrict called when lastSlotKind != Boolean"
+    )
+    booleanSlot
 
   /** pulls the most recent push as a single value, boxing the live typed slot if necessary */
   protected final def pullAny(): Any =
@@ -186,18 +221,6 @@ private[scalanotation] sealed trait PushSlots:
       case SlotKind.Boolean => read.addBoolean(state, key, booleanSlot)
       case _                => read.add(state, key, anySlot)
 
-  /** stores the live slot at `index` of pooled [[BuilderSlots]], unboxed when typed */
-  protected final def storeSlot(slots: BuilderSlots, index: Int): Unit =
-    (lastSlotKind: @switch) match
-      case SlotKind.String  => slots.setString(index, stringSlot)
-      case SlotKind.Char    => slots.setChar(index, charSlot)
-      case SlotKind.Int     => slots.setInt(index, intSlot)
-      case SlotKind.Long    => slots.setLong(index, longSlot)
-      case SlotKind.Float   => slots.setFloat(index, floatSlot)
-      case SlotKind.Double  => slots.setDouble(index, doubleSlot)
-      case SlotKind.Boolean => slots.setBoolean(index, booleanSlot)
-      case _                => slots.setRef(index, anySlot)
-
   /** applies a [[RawSchema.Mapped]] mapping to the live slot after a successful push */
   protected final def mapSlot(
       mapping: RawSchema.SchemaMapping,
@@ -218,7 +241,7 @@ private[scalanotation] sealed trait PushSlots:
       case Result.Err(error) => raise(decorate(error))
       case _                 => ()
 
-private[scalanotation] class ExprDecoder extends Internal.PoolHolder, PushSlots:
+private[scalanotation] class ExprDecoder extends PushSlots:
   private def missingReadCapability(schema: RawSchema): Nothing =
     throw IllegalStateException(
       s"read is not available for schema ${schema.describeSelf}"
@@ -500,7 +523,7 @@ private[scalanotation] class ExprDecoder extends Internal.PoolHolder, PushSlots:
           checkOrRaise(decodeBase(RawSchema.String, discriminatorExpr.value))(
             _.atPath(s".$discriminatorField")
           )
-          val caseName = stringSlot
+          val caseName = pullStringStrict()
           val sumCase  = RawSchema.findCase(schema.cases, caseName) match
             case null =>
               raise(DecodeError.UnexpectedField(caseName).atPath(s".$discriminatorField"))
@@ -619,7 +642,9 @@ private[scalanotation] object TokenDecoder:
     * fixed cost of small decodes; a reentrant decode (e.g. from a user-supplied schema mapping)
     * borrows a second instance instead of corrupting the active one.
     */
-  private[scalanotation] final class PoolHolder(val pool: Internal.Pool[TokenDecoder])
+  private[scalanotation] enum PoolHolder:
+    case RealPoolHolder(pool: Internal.Pool[TokenDecoder])
+    case NoPoolHolder
 
   private def pooled(): TokenDecoder =
     TokenDecoder("", debug = false, slotsPooling = true, scanOnInit = false)
@@ -627,27 +652,31 @@ private[scalanotation] object TokenDecoder:
   private def oneShot(input: String, debug: Boolean): TokenDecoder =
     TokenDecoder(input, debug, slotsPooling = false, scanOnInit = true)
 
-  private given Internal.Alloc[TokenDecoder]:
+  private object PoolDecoderAlloc extends Internal.Alloc[TokenDecoder]:
     def alloc(): TokenDecoder            = TokenDecoder.pooled()
     def prepare(t: TokenDecoder): t.type = t // re-aimed by reset(input, debug) after borrowing
 
   private[scalanotation] val gcContext: PoolHolder =
-    PoolHolder(Internal.GCPool[TokenDecoder]())
+    PoolHolder.NoPoolHolder // one-shot decodes allocate a new decoder for each call
 
   private[scalanotation] def localContext(): PoolHolder =
-    PoolHolder(Internal.LocalPool[TokenDecoder]())
+    given Internal.Alloc[TokenDecoder] = PoolDecoderAlloc
+    PoolHolder.RealPoolHolder(Internal.LocalPool[TokenDecoder]())
 
   private[scalanotation] def sharedContext(capacityHint: Int): PoolHolder =
-    PoolHolder(Internal.SharedPool[TokenDecoder](capacityHint))
+    given Internal.Alloc[TokenDecoder] = PoolDecoderAlloc
+    PoolHolder.RealPoolHolder(Internal.SharedPool[TokenDecoder](capacityHint))
 
   private inline def withPooled[A](ctx: PoolHolder, input: String, debug: Boolean)(
       inline use: TokenDecoder => A
   ): A =
-    if ctx.pool.amortizes then
-      ctx.pool.withBorrowed { decoder =>
-        use(decoder.reset(input, debug))
-      }
-    else use(TokenDecoder.oneShot(input, debug))
+    def useDecoder(decoder: TokenDecoder): A = use(decoder)
+    ctx match
+      case PoolHolder.RealPoolHolder(pool) =>
+        pool.withBorrowed { decoder =>
+          useDecoder(decoder.reset(input, debug))
+        }
+      case PoolHolder.NoPoolHolder => useDecoder(TokenDecoder.oneShot(input, debug))
 
   private[scalanotation] def decode[T](
       input: String,
@@ -729,34 +758,13 @@ private final class TokenDecoder private (
     debug: Boolean,
     private val slotsPooling: Boolean,
     scanOnInit: Boolean
-) extends TokenStream(input, debug, cacheNamesOnInit = slotsPooling, scanOnInit),
-      PushSlots {
+) extends TokenStream(input, debug, cacheNamesOnInit = slotsPooling, scanOnInit) {
   def this(input: String, debug: Boolean) =
     this(input, debug, slotsPooling = true, scanOnInit = true)
 
   import scala.util.boundary.Label
 
   type Resulting[+A, +E] = Label[Result.Err[E]] ?=> A
-
-  /** runs `r`, and on success pushes `value` into the Any slot via [[pushRef]] */
-  private inline def pushAny(
-      inline r: Result[Unit, DecodeError],
-      inline value: Any
-  ): Result[Unit, DecodeError] =
-    val res = r
-    if res.isOk then pushRef(value)
-    res
-
-  /** runs `r`, and on success tags `kind` as the live slot — the typed decode step has already
-    * pushed the unboxed value into the matching typed slot, so nothing is repushed or boxed
-    */
-  private inline def tagSlot(
-      inline r: Result[Unit, DecodeError],
-      inline kind: Int
-  ): Result[Unit, DecodeError] =
-    val res = r
-    if res.isOk then lastSlotKind = kind
-    res
 
   /** Clears decode state and re-aims at a new input, for reuse via [[TokenDecoder.withPooled]]. */
   def reset(input: String, debug: Boolean): this.type =
@@ -798,7 +806,7 @@ private final class TokenDecoder private (
       expectPackageStatement(packageName).check
       expectVal().check
       expectIdentifier().check
-      val declaredName = stringSlot
+      val declaredName = pullStringStrict()
       if declaredName != rootName then raise(DecodeError.UnexpectedRoot(declaredName))
       expectEquals().check
       decodeBase(schema.schema).check
@@ -814,7 +822,7 @@ private final class TokenDecoder private (
       expectPackageStatement(packageName).check
       expectVal().check
       expectIdentifier().check
-      val declaredName = stringSlot
+      val declaredName = pullStringStrict()
       expectEquals().check
       decodeBase(schema.schema).check
       val value = pullAny().asInstanceOf[T]
@@ -856,21 +864,21 @@ private final class TokenDecoder private (
       case RawSchema.AnyExpr =>
         decodeAnyExpr()
       case RawSchema.String =>
-        tagSlot(decodeString(), SlotKind.String)
+        decodeString()
       case RawSchema.Char =>
-        tagSlot(decodeChar(), SlotKind.Char)
+        decodeChar()
       case RawSchema.Int =>
-        tagSlot(decodeInt(), SlotKind.Int)
+        decodeInt()
       case RawSchema.Long =>
-        tagSlot(decodeLong(), SlotKind.Long)
+        decodeLong()
       case RawSchema.Float =>
-        tagSlot(decodeFloat(), SlotKind.Float)
+        decodeFloat()
       case RawSchema.Double =>
-        tagSlot(decodeDouble(), SlotKind.Double)
+        decodeDouble()
       case RawSchema.Boolean =>
-        tagSlot(decodeBoolean(), SlotKind.Boolean)
+        decodeBoolean()
       case RawSchema.Null =>
-        pushAny(decodeNull(), null)
+        decodeNull()
 
   private def decodeNamedTuple(
       schema: RawSchema.NamedTuple
@@ -1167,7 +1175,7 @@ private final class TokenDecoder private (
           if r.isOk then pushRef(Some(pullAny()))
           r
       case RawSchema.String if !allowStringConcat =>
-        tagSlot(decodeStringAtom(), SlotKind.String)
+        decodeStringAtom()
       case _ if currentKind() == TokenKind.LParen && !canDecodeFromLParen(schema) =>
         decodeGroupedTupleElement(schema)
       case _ =>
@@ -1276,7 +1284,7 @@ private final class TokenDecoder private (
 
       val nameOffset = currentOffset()
       parseNamedFieldStart().check
-      val actualName = stringSlot
+      val actualName = pullStringStrict()
       if actualName != discriminatorField then
         raise(
           DecodeError
@@ -1286,7 +1294,7 @@ private final class TokenDecoder private (
         )
 
       checkOrRaise(decodeString())(_.atPath(s".$actualName"))
-      val caseName = stringSlot
+      val caseName = pullStringStrict()
       val sumCase  = RawSchema.findCase(schema.cases, caseName) match
         case null =>
           raise(
@@ -1614,29 +1622,38 @@ private final class TokenDecoder private (
       pushRef(Expr.VectorExpr(elements.result()))
     }
 
-    def onString(): Result[Unit, DecodeError] =
-      pushAny(decodeString(), Expr.StringConstant(stringSlot))
+    def onString(): Result[Unit, DecodeError] = Result.task:
+      decodeString().check
+      pushRef(Expr.StringConstant(pullStringStrict()))
 
-    def onChar(): Result[Unit, DecodeError] =
-      pushAny(decodeChar(), Expr.CharConstant(charSlot))
+    def onChar(): Result[Unit, DecodeError] = Result.task:
+      decodeChar().check
+      pushRef(Expr.CharConstant(pullCharStrict()))
 
-    def onInt(): Result[Unit, DecodeError] =
-      pushAny(decodeInt(), Expr.IntConstant(intSlot))
+    def onInt(): Result[Unit, DecodeError] = Result.task:
+      decodeInt().check
+      pushRef(Expr.IntConstant(pullIntStrict()))
 
-    def onLong(): Result[Unit, DecodeError] =
-      pushAny(decodeLong(), Expr.LongConstant(longSlot))
+    def onLong(): Result[Unit, DecodeError] = Result.task:
+      decodeLong().check
+      pushRef(Expr.LongConstant(pullLongStrict()))
 
-    def onFloat(): Result[Unit, DecodeError] =
-      pushAny(decodeFloat(), Expr.FloatConstant(floatSlot))
+    def onFloat(): Result[Unit, DecodeError] = Result.task:
+      decodeFloat().check
+      pushRef(Expr.FloatConstant(pullFloatStrict()))
 
-    def onDouble(): Result[Unit, DecodeError] =
-      pushAny(decodeDouble(), Expr.DoubleConstant(doubleSlot))
+    def onDouble(): Result[Unit, DecodeError] = Result.task:
+      decodeDouble().check
+      pushRef(Expr.DoubleConstant(pullDoubleStrict()))
 
-    def onBoolean(): Result[Unit, DecodeError] =
-      pushAny(decodeBoolean(), Expr.BooleanConstant(booleanSlot))
+    def onBoolean(): Result[Unit, DecodeError] = Result.task:
+      decodeBoolean().check
+      pushRef(Expr.BooleanConstant(pullBooleanStrict()))
 
-    def onNull(): Result[Unit, DecodeError] =
-      pushAny(decodeNull(), Expr.NullConstant)
+    def onNull(): Result[Unit, DecodeError] = Result.task:
+      decodeNull().check
+      val _ = pullRefStrict().ensuring(_ == null, "Expected null in Any slot after decoding Null")
+      pushRef(Expr.NullConstant)
 
     def onEmptyTuple(): Result[Unit, DecodeError] = Result.task:
       if currentKind() == TokenKind.EmptyTupleId then
@@ -1687,7 +1704,7 @@ private final class TokenDecoder private (
       advance()
       if currentKind() == TokenKind.Equals then
         advance()
-        stringSlot = actualName
+        pushString(actualName)
       else raise(DecodeError.ExpectedEquals(describeCurrent()).atToken(currentSpan()))
 
   private inline def parseNamedTupleStructure(
@@ -1763,7 +1780,7 @@ private final class TokenDecoder private (
             val closingOffset: Int           = loop {
               val nameOffset = currentOffset()
               parseNamedFieldStart().check
-              val actualName = stringSlot
+              val actualName = pullStringStrict()
               consumeFieldValue(actualName, nameOffset, fieldIndex)
               lastFieldName = actualName
               fieldIndex += 1
@@ -1818,23 +1835,23 @@ private final class TokenDecoder private (
     Result.task {
       decodeStringAtom().check
       if currentKind() == TokenKind.Plus then
-        val builder = StringBuilder() ++= stringSlot
+        val builder = StringBuilder() ++= pullStringStrict()
         while currentKind() == TokenKind.Plus do
           advance()
           decodeStringAtom().check
-          builder ++= stringSlot
-        stringSlot = builder.toString()
+          builder ++= pullStringStrict()
+        pushString(builder.result())
     }
 
   private def decodeStringAtom(): Result[Unit, DecodeError] = Result.task:
     if currentKind() == TokenKind.StringLit then
-      stringSlot = currentStringValue()
+      pushString(currentStringValue())
       advance()
     else raise(expectedTypeAtCurrent(RawSchema.String))
 
   private[scalanotation] def decodeChar(): Result[Unit, DecodeError] = Result.task:
     if currentKind() == TokenKind.CharLit then
-      charSlot = currentCharValue()
+      pushChar(currentCharValue())
       advance()
     else raise(expectedTypeAtCurrent(RawSchema.Char))
 
@@ -1844,7 +1861,7 @@ private final class TokenDecoder private (
         currentKind() match
           case TokenKind.IntLit => currentIntValue(negative)
           case _                => raise(expectedTypeAtCurrent(RawSchema.Int)),
-      store = v => intSlot = v
+      store = v => pushInt(v)
     )
 
   private[scalanotation] def decodeLong(): Result[Unit, DecodeError] = Result.task:
@@ -1854,7 +1871,7 @@ private final class TokenDecoder private (
           case TokenKind.LongLit => currentLongValue(negative)
           case TokenKind.IntLit  => currentIntValue(negative).toLong
           case _                 => raise(expectedTypeAtCurrent(RawSchema.Long)),
-      store = v => longSlot = v
+      store = v => pushLong(v)
     )
 
   private[scalanotation] def decodeFloat(): Result[Unit, DecodeError] = Result.task:
@@ -1869,7 +1886,7 @@ private final class TokenDecoder private (
             if NumericPromotions.isExactFloat(value) then value.toFloat
             else raise(expectedTypeAtCurrent(RawSchema.Float))
           case _ => raise(expectedTypeAtCurrent(RawSchema.Float)),
-      store = v => floatSlot = v
+      store = v => pushFloat(v)
     )
 
   private[scalanotation] def decodeDouble(): Result[Unit, DecodeError] = Result.task:
@@ -1881,7 +1898,7 @@ private final class TokenDecoder private (
             if negative then -magnitude else magnitude
           case TokenKind.IntLit => currentIntValue(negative).toDouble
           case _                => raise(expectedTypeAtCurrent(RawSchema.Double)),
-      store = v => doubleSlot = v
+      store = v => pushDouble(v)
     )
 
   private[scalanotation] def decodeBoolean(): Result[Unit, DecodeError] =
@@ -1889,15 +1906,17 @@ private final class TokenDecoder private (
       currentKind() match
         case TokenKind.TrueKw =>
           advance()
-          booleanSlot = true
+          pushBoolean(true)
         case TokenKind.FalseKw =>
           advance()
-          booleanSlot = false
+          pushBoolean(false)
         case _ =>
           raise(expectedTypeAtCurrent(RawSchema.Boolean))
 
   private[scalanotation] def decodeNull(): Result[Unit, DecodeError] = Result.task:
-    if currentKind() == TokenKind.NullKw then advance()
+    if currentKind() == TokenKind.NullKw then
+      advance()
+      pushRef(null)
     else raise(expectedTypeAtCurrent(RawSchema.Null))
 
   // The sign is passed into `literal` rather than multiplied in afterwards, so integer literals
@@ -1927,7 +1946,7 @@ private final class TokenDecoder private (
       if packageName.nonEmpty then
         expectPackage().check
         expectQualifiedIdentifier().check
-        val declaredName = stringSlot
+        val declaredName = pullStringStrict()
         if declaredName != packageName then raise(DecodeError.UnexpectedPackage(declaredName))
         acceptStatementSeparator()
 
@@ -1942,13 +1961,13 @@ private final class TokenDecoder private (
   private def expectQualifiedIdentifier(): Result[Unit, DecodeError] = Result.task:
     expectIdentifier().check
     if currentKind() == TokenKind.Dot then
-      val builder = new StringBuilder(stringSlot)
+      val builder = new StringBuilder(pullStringStrict())
       while currentKind() == TokenKind.Dot do
         advance()
         builder.append('.')
         expectIdentifier().check
-        builder ++= stringSlot
-      stringSlot = builder.result()
+        builder ++= pullStringStrict()
+      pushString(builder.result())
 
   /** parses an identifier, pushing it into [[stringSlot]] */
   private def expectIdentifier(): Result[Unit, DecodeError] = Result.task:
@@ -1962,7 +1981,7 @@ private final class TokenDecoder private (
       case _                      =>
         raise(DecodeError.ExpectedIdentifier(describeCurrent()).atToken(currentSpan()))
     advance()
-    stringSlot = name
+    pushString(name)
 
   private def expectEquals(): Result[Unit, DecodeError] = Result.task:
     if currentKind() == TokenKind.Equals then advance()
