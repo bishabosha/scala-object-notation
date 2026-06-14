@@ -20,18 +20,19 @@ import mill.scalanativelib.*
 import mill.contrib.jmh.JmhModule
 
 object Versions:
-  val scala       = "3.8.3"
-  val munit       = "1.1.0"
-  val scalaJs     = "1.21.0"
-  val scalaNative = "0.5.11"
-  val scalaJavaTime = "2.6.0"
-  val previous    = "0.3.0"
+  val scala          = "3.8.3"
+  val munit          = "1.1.0"
+  val scalaJs        = "1.21.0"
+  val scalaNative    = "0.5.11"
+  val scalaJavaTime  = "2.6.0"
+  val previous       = "0.3.0"
+  val previousMacros = "0.3.7"
 
 trait ScalaObjectNotationModule extends SbtModule:
   def scalaVersion = Versions.scala
 
   object test extends SbtTests with TestModule.Munit:
-    override def munitVersion = Versions.munit
+    override def munitVersion   = Versions.munit
     override def sourcesFolders =
       // TODO: reorganize modules to benefit from SbtPlatformModule automatic source folder names?
       super.sourcesFolders.flatMap(p => Seq(p, os.sub / "jvm-native" / p))
@@ -55,19 +56,17 @@ trait ScalaObjectNotationJsWasmModule extends ScalaObjectNotationJsModule:
   override def jsEnvConfig: T[JsEnvConfig] = Task {
     JsEnvConfig.NodeJs(
       args = List(
-        "--experimental-wasm-exnref",
-        "--experimental-wasm-imported-strings"
+        // "--experimental-wasm-exnref",
+        // "--experimental-wasm-imported-strings"
       )
     )
   }
 
-  override def moduleKind: T[ModuleKind] = Task { ModuleKind.ESModule }
+  override def moduleKind: T[ModuleKind]             = Task { ModuleKind.ESModule }
   override def moduleSplitStyle: T[ModuleSplitStyle] = Task { ModuleSplitStyle.FewestModules }
   override def scalaJSExperimentalUseWebAssembly: T[Boolean] = Task { true }
 
-trait ScalaObjectNotationNativeModule
-    extends ScalaObjectNotationPlatformModule,
-      ScalaNativeModule:
+trait ScalaObjectNotationNativeModule extends ScalaObjectNotationPlatformModule, ScalaNativeModule:
   def scalaNativeVersion = Versions.scalaNative
 
   object test extends ScalaNativeTests with SbtPlatformTests with TestModule.Munit:
@@ -118,14 +117,28 @@ object core extends ScalaObjectNotationModule, CorePublishedModule, Mima, TastyM
   override def tastyMimaExcludedArtifactEntryPrefixes: Seq[String] =
     Seq("scalanotation/internal/TokenDecoder")
 
-  object js extends ScalaObjectNotationJsModule, CorePublishedModule
+  object js     extends ScalaObjectNotationJsModule, CorePublishedModule
   object jsWasm extends ScalaObjectNotationJsWasmModule, CoreModuleBase
   object native extends ScalaObjectNotationNativeModule, CorePublishedModule
 
-object macros extends ScalaObjectNotationModule, PublishSettings:
+trait MacrosBase extends ScalaModule:
   def artifactName = "scala-object-notation-macros"
-  def projectDesc  = "macro derivation of typed factories for scala-object-notation"
-  def moduleDeps   = Seq(core)
+
+trait MacrosPublishedModule extends MacrosBase, PublishSettings:
+  def projectDesc = "macro derivation of typed factories for scala-object-notation"
+
+object macros extends ScalaObjectNotationModule, MacrosPublishedModule, Mima, TastyMimaModule:
+  override def mimaPreviousVersions: T[Seq[String]] = Task {
+    Seq(Versions.previousMacros)
+  }
+  def moduleDeps = Seq(core)
+
+  object js extends ScalaObjectNotationJsModule, MacrosPublishedModule:
+    def moduleDeps = Seq(core.js)
+  object jsWasm extends ScalaObjectNotationJsWasmModule, MacrosBase:
+    def moduleDeps = Seq(core.jsWasm)
+  object native extends ScalaObjectNotationNativeModule, MacrosPublishedModule:
+    def moduleDeps = Seq(core.native)
 
 object demo extends ScalaObjectNotationModule:
   def artifactName = "scala-object-notation-config"
@@ -139,7 +152,7 @@ object demo extends ScalaObjectNotationModule:
 
   def mainClass = Some("scalableconfig.Main")
 
-object bench extends Cross[BenchModule]("HEAD", "0.3.6", "0.3.5")
+object bench      extends Cross[BenchModule]("HEAD", "0.3.6", "0.3.5")
 trait BenchModule extends Cross.Module[String], ScalaObjectNotationModule, JmhModule:
   def jmhCoreVersion = "1.37"
   // HEAD additionally gets the macros module, for benchmarks of macro-derived typed factories
@@ -150,7 +163,7 @@ trait BenchModule extends Cross.Module[String], ScalaObjectNotationModule, JmhMo
     else Seq(mvn"io.github.bishabosha::scala-object-notation::${crossValue}")
   )
   // benchmarks using HEAD-only API live in src-head, which older crosses cannot compile
-  def headSources = Task.Sources(moduleDir / "src-head" / "main" / "scala")
+  def headSources      = Task.Sources(moduleDir / "src-head" / "main" / "scala")
   override def sources = Task {
     super.sources() ++ (if crossValue == "HEAD" then headSources() else Seq.empty)
   }

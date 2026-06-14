@@ -12,19 +12,19 @@ jobs:
       matrix:
         include:
           - platform: jvm
-            mill-targets: mill.scalalib.scalafmt/checkFormatAll + core.test + demo.test
+            mill-targets: mill.scalalib.scalafmt/checkFormatAll + core.test + macros.test + demo.test
             node-version: ''
             install-native-deps: false
           - platform: scala-js
-            mill-targets: core.js.test
+            mill-targets: core.js.test + macros.js.test
             node-version: '24'
             install-native-deps: false
           - platform: scala-js-wasm
-            mill-targets: core.jsWasm.test
+            mill-targets: core.jsWasm.test + macros.jsWasm.test
             node-version: '24'
             install-native-deps: false
           - platform: scala-native
-            mill-targets: core.native.test
+            mill-targets: core.native.test + macros.native.test
             node-version: ''
             install-native-deps: true
     runs-on: ubuntu-latest
