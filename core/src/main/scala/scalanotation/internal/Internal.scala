@@ -64,7 +64,13 @@ private[internal] object Internal {
         n += 1
 
   class JumboNameSet:
-    val underlying: mutable.HashSet[String] = mutable.HashSet.empty[String]
+    @deprecated("Kept for binary compatibility; will be removed in a future version", "0.3.6")
+    @publicInBinary
+    private[JumboNameSet] def underlying: mutable.HashSet[String] =
+      mutable.HashSet.from(underlying0.keysIterator)
+
+    private val underlying0: mutable.AnyRefMap[String, Unit] = mutable.AnyRefMap.empty[String, Unit]
+
   object JumboNameSet:
     given Alloc[JumboNameSet]:
       def alloc(): JumboNameSet            = new JumboNameSet
@@ -75,9 +81,11 @@ private[internal] object Internal {
     given NameSet[JumboNameSet]:
       extension (seen: JumboNameSet)
         def alreadySeen(name: String): Boolean =
-          !seen.underlying.add(name)
+          val map = seen.underlying0
+          val sizeBefore = map.size
+          map.addOne(name, ()).size == sizeBefore
 
-        def clear(): Unit = seen.underlying.clear()
+        def clear(): Unit = seen.underlying0.clear()
 
   trait NameSet[T] {
     extension (seen: T)
