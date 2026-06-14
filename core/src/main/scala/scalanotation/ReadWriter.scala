@@ -93,7 +93,8 @@ object ReadWriter extends CommonTypeClassCompanion[ReadWriter]:
         RawSchema.NamedTuple(
           IArray.from(fields),
           RawSchema.NamedTupleRead.from(
-            PublicInternal.buildNamedTuple.asInstanceOf[Array[AnyRef] => T]
+            PublicInternal.buildNamedTuple.asInstanceOf[Array[AnyRef] => T],
+            PublicInternal.namedTupleSlotsFactory
           ),
           RawSchema.NamedTupleWrite.productLike
         )
@@ -105,7 +106,7 @@ object ReadWriter extends CommonTypeClassCompanion[ReadWriter]:
       fromSchema[T](
         RawSchema.Tuple(
           IArray.from(slots),
-          RawSchema.TupleRead.FromReaderBuilder(PublicInternal.BuildTuple[T]),
+          RawSchema.TupleRead.FromReaderBuilder(PublicInternal.BuildTupleSlots[T]),
           RawSchema.TupleWrite.productLike
         )
       )
@@ -116,7 +117,10 @@ object ReadWriter extends CommonTypeClassCompanion[ReadWriter]:
       fromSchema[T](
         RawSchema.NamedTuple(
           IArray.from(fields),
-          RawSchema.NamedTupleRead.from(PublicInternal.caseClassBuilder[T]),
+          RawSchema.NamedTupleRead.from(
+            PublicInternal.caseClassBuilder[T],
+            PublicInternal.caseClassSlotsFactory[T]
+          ),
           RawSchema.NamedTupleWrite.productLike,
           allowSkippedNullableFields = allowSkippedNullableFields
         )
@@ -181,7 +185,7 @@ object ReadWriter extends CommonTypeClassCompanion[ReadWriter]:
         fromSchema[IArray[T]](
           RawSchema.Vector(
             wrapped.typeclass.schema,
-            RawSchema.VectorRead.FromReaderBuilder(PublicInternal.BuildIArray[T]),
+            PublicInternal.iarrayVectorRead[T],
             RawSchema.VectorWrite.from[IArray[T], T](_.length, _.iterator)
           )
         )
@@ -194,7 +198,7 @@ object ReadWriter extends CommonTypeClassCompanion[ReadWriter]:
         fromSchema[Array[T]](
           RawSchema.Vector(
             wrapped.typeclass.schema,
-            RawSchema.VectorRead.FromReaderBuilder(PublicInternal.BuildArray[T]),
+            PublicInternal.arrayVectorRead[T],
             RawSchema.VectorWrite.from[Array[T], T](_.length, _.iterator)
           )
         )

@@ -27,14 +27,18 @@ object Readers:
       input: String,
       debugTokens: Boolean = false
   ): Result[T, DecodeError] =
-    TokenDecoder.decodeExpression(input, debugTokens, reader)
+    TokenDecoder.decodeExpression(input, debugTokens, reader)(
+      using BatchContext.garbageCollected.holder
+    )
 
   def readDeclsAs[T: Reader as reader](
       input: String,
       debugTokens: Boolean = false,
       packageName: String = ""
   ): Result[Expr.SourceFile[T], DecodeError] =
-    TokenDecoder.decodeAnyRoot(input, debugTokens, packageName, reader)
+    TokenDecoder.decodeAnyRoot(input, debugTokens, packageName, reader)(
+      using BatchContext.garbageCollected.holder
+    )
 
   def readDeclAs[T: Reader as reader](
       input: String,
@@ -42,4 +46,35 @@ object Readers:
       debugTokens: Boolean = false,
       packageName: String = ""
   ): Result[T, DecodeError] =
-    TokenDecoder.decode(input, debugTokens, rootName, packageName, reader)
+    TokenDecoder.decode(input, debugTokens, rootName, packageName, reader)(
+      using BatchContext.garbageCollected.holder
+    )
+
+  /** Variants of the read methods that reuse decoder machinery across calls, as configured by the
+    * given [[BatchContext]] — see its factories for the pooling options. Results are identical to
+    * the plain methods; only the allocation behaviour differs.
+    */
+  object batched:
+    def readAs[T](
+        input: String,
+        debugTokens: Boolean = false
+    )(using reader: Reader[T], ctx: BatchContext): Result[T, DecodeError] =
+      given TokenDecoder.PoolHolder = ctx.holder
+      TokenDecoder.decodeExpression(input, debugTokens, reader)
+
+    def readDeclsAs[T](
+        input: String,
+        debugTokens: Boolean = false,
+        packageName: String = ""
+    )(using reader: Reader[T], ctx: BatchContext): Result[Expr.SourceFile[T], DecodeError] =
+      given TokenDecoder.PoolHolder = ctx.holder
+      TokenDecoder.decodeAnyRoot(input, debugTokens, packageName, reader)
+
+    def readDeclAs[T](
+        input: String,
+        rootName: String,
+        debugTokens: Boolean = false,
+        packageName: String = ""
+    )(using reader: Reader[T], ctx: BatchContext): Result[T, DecodeError] =
+      given TokenDecoder.PoolHolder = ctx.holder
+      TokenDecoder.decode(input, debugTokens, rootName, packageName, reader)

@@ -32,6 +32,9 @@ trait ScalaObjectNotationModule extends SbtModule:
 
   object test extends SbtTests with TestModule.Munit:
     override def munitVersion = Versions.munit
+    override def sourcesFolders =
+      // TODO: reorganize modules to benefit from SbtPlatformModule automatic source folder names?
+      super.sourcesFolders.flatMap(p => Seq(p, os.sub / "jvm-native" / p))
 
 trait ScalaObjectNotationPlatformModule extends SbtPlatformModule:
   def scalaVersion = Versions.scala
@@ -119,6 +122,11 @@ object core extends ScalaObjectNotationModule, CorePublishedModule, Mima, TastyM
   object jsWasm extends ScalaObjectNotationJsWasmModule, CoreModuleBase
   object native extends ScalaObjectNotationNativeModule, CorePublishedModule
 
+object macros extends ScalaObjectNotationModule, PublishSettings:
+  def artifactName = "scala-object-notation-macros"
+  def projectDesc  = "macro derivation of typed factories for scala-object-notation"
+  def moduleDeps   = Seq(core)
+
 object demo extends ScalaObjectNotationModule:
   def artifactName = "scala-object-notation-config"
   def moduleDeps   = Seq(core)
@@ -134,10 +142,16 @@ object demo extends ScalaObjectNotationModule:
 object bench extends Cross[BenchModule]("HEAD", "0.3.5")
 trait BenchModule extends Cross.Module[String], ScalaObjectNotationModule, JmhModule:
   def jmhCoreVersion = "1.37"
+  // HEAD additionally gets the macros module, for benchmarks of macro-derived typed factories
   override def moduleDeps =
-    if crossValue == "HEAD" then Seq(core) else Seq.empty
+    if crossValue == "HEAD" then Seq(core, macros) else Seq.empty
   override def mvnDeps = super.mvnDeps() ++ (
     if crossValue == "HEAD" then Seq.empty
     else Seq(mvn"io.github.bishabosha::scala-object-notation::${crossValue}")
   )
+  // benchmarks using HEAD-only API live in src-head, which older crosses cannot compile
+  def headSources = Task.Sources(moduleDir / "src-head" / "main" / "scala")
+  override def sources = Task {
+    super.sources() ++ (if crossValue == "HEAD" then headSources() else Seq.empty)
+  }
   def runJmhMem(args: String*) = runJmh(("-prof" +: "gc" +: args.toSeq)*)

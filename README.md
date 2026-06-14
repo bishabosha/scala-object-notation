@@ -108,6 +108,45 @@ Package statements are always rejected by top-level expression readers such as `
 This direct structural decoding is especially useful when your config is already naturally
 tree-shaped and you want Scala’s nested named tuple types to mirror the file exactly.
 
+## Batched Decoding
+
+The plain `Readers` methods allocate a fresh decoder for each call. That is a good default for
+one-off reads because no mutable decode state is retained after the call returns.
+
+When reading many values with the same process, use `Readers.batched` with a `BatchContext` to
+reuse decoder machinery across calls. The result values and errors are identical to the plain API;
+only allocation behaviour changes.
+
+```scala
+import scalanotation.*
+
+val inputs = IArray(
+  """(region = "eu-central", weight = 2)""",
+  """(region = "us-east", weight = 1)"""
+)
+
+given BatchContext = BatchContext.local()
+
+val decoded = inputs.map: input =>
+  Readers.batched.readAs[(region: String, weight: Int)](input)
+```
+
+`BatchContext.local()` is the cheapest pooled context for a batch confined to one thread. Do not
+share it between threads.
+
+For concurrent batches, use a shared context:
+
+```scala
+given BatchContext = BatchContext.shared()
+```
+
+`BatchContext.shared(capacityHint)` uses a fixed-capacity lock-free pool. When more decodes run
+concurrently than the pool can hold, the excess decodes allocate temporary decoder instances and
+leave them to the garbage collector.
+
+For completeness, `BatchContext.garbageCollected` is the no-pooling context. The plain `Readers`
+API is equivalent to using it.
+
 ## Dynamic Data
 
 `scalanotation.Expr` is an algebraic data type representing the syntax of Scala Object Notation:
@@ -302,6 +341,7 @@ Currently, configuration supports:
 
 - discriminator-field encoding for sum types
 - skippable decoding for product fields
+- opt-in typed factories for lower-boxing product construction
 
 Discriminator-field encoding flattens the selected enum case into the surrounding named tuple.
 The discriminator field is written first and is not preserved in the decoded value:
@@ -371,6 +411,82 @@ This accepts either:
 (`type` = "Ping")
 (`type` = "Ping", id = 1)
 ```
+
+### Opt-in Typed Derivation
+
+Decoding in batched mode already shares reusable intermediate buffers with typed slots for primitive
+values, however by default derived Reader instances use `scala.deriving.Mirror.Product's`
+`fromProduct` method, which passes all values through the `productElement(index: Int): Any` method.
+
+Without inlining and escape analysis, this will box primitive values, so an alternative
+`TypedFactory[T]` typeclass exists that gives unboxed accessors to builder state.
+This can give a measurable reduction in allocation count for classes with many primitive fields.
+
+You can opt in to a lower-boxing path by deriving a `TypedFactory[T]` and attaching it to the
+configured reader. This is an example using the macros package, and attaching
+to a `Configured` instance:
+
+```scala
+import scalanotation.*
+import scalanotation.macros.TypedFactories
+
+final case class Endpoint(host: String, port: Int, secure: Boolean)
+
+given TypedFactory[Endpoint] = TypedFactories.derived
+given Configured[Endpoint]   = Configured.typed
+given Reader[Endpoint]       = Reader.configured.derived
+
+given BatchContext = BatchContext.local()
+
+val decoded =
+  Readers.batched.readAs[Endpoint]("""(host = "localhost", port = 8080, secure = true)""")
+```
+
+`Configured.typed` is equivalent to `Configured.default.withTypedFactories`. It is most useful with
+`Readers.batched`, where the decoder can reuse its typed product slots across reads.
+
+Typed factories also compose with other configured derivation modes:
+
+```scala
+enum Shape:
+  case Circle(radius: Double)
+  case Rect(width: Int, height: Int)
+  case Dot
+
+given TypedFactory[Shape] = TypedFactories.derived
+
+given Configured[Shape] =
+  Configured.discriminator[Shape]("type").withTypedFactories
+
+given Reader[Shape] =
+  Reader.configured.derived
+```
+
+For sums, the derived `TypedFactory` stores typed factories for the structured product cases.
+Nullary cases still decode as fixed nullary values and do not need a product factory.
+
+### BuilderSlots
+
+`BuilderSlots` is the decoder-owned product buffer behind the batched and typed decoding paths. A
+slot records both the value and its kind. Reference values are stored as references, while primitive
+values are packed without boxing.
+
+You can either manually provide a TypedFactory yourself, or derive one from
+the `scalanotation.macros` package.
+
+```scala
+import scalanotation.*
+
+final case class Point(x: Int, y: Int)
+
+given TypedFactory.OfProduct[Point]:
+  def fromSlots(slots: BuilderSlots): Point =
+    Point(slots.getInt(0), slots.getInt(1))
+```
+
+A `TypedFactory` must treat `BuilderSlots` as borrowed decoder state: read the values during
+`fromSlots` and do not store the `BuilderSlots` instance anywhere. In pooled batched decoding, the
+same slot buffer may be reused for later decodes.
 
 ## Custom Decoding And Encoding
 

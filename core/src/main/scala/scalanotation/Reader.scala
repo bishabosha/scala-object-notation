@@ -28,15 +28,60 @@ object Reader extends ReaderLowPriority, CommonTypeClassCompanion[Reader]:
     def add(repr: Repr, elem: Elem): Repr
     def finish(repr: Repr): A
 
+    // typed adds, called by the decoder when the element decoded into a typed slot: each consumes
+    // the state and returns the new state. The defaults box and delegate to `add`; builders over
+    // primitive storage override the matching one to append without boxing.
+    def addString(repr: Repr, elem: String): Repr   = add(repr, elem.asInstanceOf[Elem])
+    def addChar(repr: Repr, elem: Char): Repr       = add(repr, elem.asInstanceOf[Elem])
+    def addInt(repr: Repr, elem: Int): Repr         = add(repr, elem.asInstanceOf[Elem])
+    def addLong(repr: Repr, elem: Long): Repr       = add(repr, elem.asInstanceOf[Elem])
+    def addFloat(repr: Repr, elem: Float): Repr     = add(repr, elem.asInstanceOf[Elem])
+    def addDouble(repr: Repr, elem: Double): Repr   = add(repr, elem.asInstanceOf[Elem])
+    def addBoolean(repr: Repr, elem: Boolean): Repr = add(repr, elem.asInstanceOf[Elem])
+
   trait TupleBuilder[Repr, A]:
     def init(size: Int): Repr
+    def initPooled(size: Int, pooled: BuilderSlots | Null): Repr =
+      // overriden by pooled builders
+      init(size)
     def add(repr: Repr, index: Int, elem: Any): Repr
     def finish(repr: Repr): A
+
+    /** Optional low-boxing finalizer: when non-null, a pooling decoder fills its typed
+      * [[BuilderSlots]] instead of threading `Repr`, and finalizes via
+      * [[TypedFactory.OfProduct.fromSlots]] — e.g. `Tuple.fromProduct` directly over the slots.
+      */
+    def slotsFactory: TypedFactory.OfProduct[A] | Null = null
+
+    // typed adds: the defaults box and delegate to `add`
+    def addString(repr: Repr, index: Int, elem: String): Repr   = add(repr, index, elem)
+    def addChar(repr: Repr, index: Int, elem: Char): Repr       = add(repr, index, elem)
+    def addInt(repr: Repr, index: Int, elem: Int): Repr         = add(repr, index, elem)
+    def addLong(repr: Repr, index: Int, elem: Long): Repr       = add(repr, index, elem)
+    def addFloat(repr: Repr, index: Int, elem: Float): Repr     = add(repr, index, elem)
+    def addDouble(repr: Repr, index: Int, elem: Double): Repr   = add(repr, index, elem)
+    def addBoolean(repr: Repr, index: Int, elem: Boolean): Repr = add(repr, index, elem)
 
   trait DictBuilder[Elem, Repr, A]:
     def init(): Repr
     def add(repr: Repr, key: String, elem: Elem): Repr
     def finish(repr: Repr): A
+
+    // typed adds: the defaults box and delegate to `add`
+    def addString(repr: Repr, key: String, elem: String): Repr =
+      add(repr, key, elem.asInstanceOf[Elem])
+    def addChar(repr: Repr, key: String, elem: Char): Repr =
+      add(repr, key, elem.asInstanceOf[Elem])
+    def addInt(repr: Repr, key: String, elem: Int): Repr =
+      add(repr, key, elem.asInstanceOf[Elem])
+    def addLong(repr: Repr, key: String, elem: Long): Repr =
+      add(repr, key, elem.asInstanceOf[Elem])
+    def addFloat(repr: Repr, key: String, elem: Float): Repr =
+      add(repr, key, elem.asInstanceOf[Elem])
+    def addDouble(repr: Repr, key: String, elem: Double): Repr =
+      add(repr, key, elem.asInstanceOf[Elem])
+    def addBoolean(repr: Repr, key: String, elem: Boolean): Repr =
+      add(repr, key, elem.asInstanceOf[Elem])
 
   private final class Instance[T](val schema: RawSchema) extends Reader[T]
 
@@ -100,7 +145,8 @@ object Reader extends ReaderLowPriority, CommonTypeClassCompanion[Reader]:
         RawSchema.NamedTuple(
           IArray.from(fields),
           RawSchema.NamedTupleRead.from(
-            PublicInternal.buildNamedTuple.asInstanceOf[Array[AnyRef] => T]
+            PublicInternal.buildNamedTuple.asInstanceOf[Array[AnyRef] => T],
+            PublicInternal.namedTupleSlotsFactory
           ),
           write = null
         )
@@ -112,7 +158,7 @@ object Reader extends ReaderLowPriority, CommonTypeClassCompanion[Reader]:
       fromSchema[T](
         RawSchema.Tuple(
           IArray.from(slots),
-          RawSchema.TupleRead.FromReaderBuilder(PublicInternal.BuildTuple[T]),
+          RawSchema.TupleRead.FromReaderBuilder(PublicInternal.BuildTupleSlots[T]),
           write = null
         )
       )
@@ -123,7 +169,10 @@ object Reader extends ReaderLowPriority, CommonTypeClassCompanion[Reader]:
       fromSchema[T](
         RawSchema.NamedTuple(
           IArray.from(fields),
-          RawSchema.NamedTupleRead.from(PublicInternal.caseClassBuilder[T]),
+          RawSchema.NamedTupleRead.from(
+            PublicInternal.caseClassBuilder[T],
+            PublicInternal.caseClassSlotsFactory[T]
+          ),
           write = null,
           allowSkippedNullableFields = allowSkippedNullableFields
         )
@@ -188,7 +237,7 @@ object Reader extends ReaderLowPriority, CommonTypeClassCompanion[Reader]:
         fromSchema[IArray[T]](
           RawSchema.Vector(
             wrapped.typeclass.schema,
-            RawSchema.VectorRead.FromReaderBuilder(PublicInternal.BuildIArray[T]),
+            PublicInternal.iarrayVectorRead[T],
             write = null
           )
         )
@@ -201,7 +250,7 @@ object Reader extends ReaderLowPriority, CommonTypeClassCompanion[Reader]:
         fromSchema[Array[T]](
           RawSchema.Vector(
             wrapped.typeclass.schema,
-            RawSchema.VectorRead.FromReaderBuilder(PublicInternal.BuildArray[T]),
+            PublicInternal.arrayVectorRead[T],
             write = null
           )
         )

@@ -1,0 +1,227 @@
+package scalanotation.internal
+
+import scalanotation.DecodeError
+import scalanotation.Expr
+import scalanotation.Reader
+import steps.result.Result
+import steps.result.Result.eval.check
+import steps.result.Result.eval.raise
+
+import scala.compiletime.uninitialized
+
+private[scalanotation] object TokenDecoder:
+
+  /** The sole implementation of the opaque [[scalanotation.BatchContext]]: a wrapper over a pool of
+    * decoder instances. The pooled contexts amortize decoder construction, which dominates the
+    * fixed cost of small decodes; a reentrant decode (e.g. from a user-supplied schema mapping)
+    * borrows a second instance instead of corrupting the active one.
+    */
+  private[scalanotation] enum PoolHolder:
+    case RealPoolHolder(pool: Internal.Pool[TokenDecoder])
+    case NoPoolHolder
+
+  private def pooled(): TokenDecoder =
+    TokenDecoder("", debug = false, slotsPooling = true, scanOnInit = false)
+
+  private def oneShot(input: String, debug: Boolean): TokenDecoder =
+    TokenDecoder(input, debug, slotsPooling = false, scanOnInit = true)
+
+  private object PoolDecoderAlloc extends Internal.Alloc[TokenDecoder]:
+    def alloc(): TokenDecoder            = TokenDecoder.pooled()
+    def prepare(t: TokenDecoder): t.type = t // re-aimed by reset(input, debug) after borrowing
+
+  private[scalanotation] val gcContext: PoolHolder =
+    PoolHolder.NoPoolHolder // one-shot decodes allocate a new decoder for each call
+
+  private[scalanotation] def localContext(): PoolHolder =
+    given Internal.Alloc[TokenDecoder] = PoolDecoderAlloc
+    PoolHolder.RealPoolHolder(Internal.LocalPool[TokenDecoder]())
+
+  private[scalanotation] def sharedContext(capacityHint: Int): PoolHolder =
+    given Internal.Alloc[TokenDecoder] = PoolDecoderAlloc
+    PoolHolder.RealPoolHolder(Internal.SharedPool[TokenDecoder](capacityHint))
+
+  private inline def withPooled[A](ctx: PoolHolder, input: String, debug: Boolean)(
+      inline use: TokenDecoder => A
+  ): A =
+    def useDecoder(decoder: TokenDecoder): A = use(decoder)
+    ctx match
+      case PoolHolder.RealPoolHolder(pool) =>
+        pool.withBorrowed { decoder =>
+          useDecoder(decoder.reset(input, debug))
+        }
+      case PoolHolder.NoPoolHolder => useDecoder(TokenDecoder.oneShot(input, debug))
+
+  private[scalanotation] def decode[T](
+      input: String,
+      debugTokens: Boolean,
+      rootName: String,
+      packageName: String,
+      decoder: Reader[T]
+  )(using ctx: PoolHolder): Result[T, DecodeError] =
+    catchingTokenErrors(input):
+      withPooled(ctx, input, debugTokens)(_.decodeRoot(decoder, rootName, packageName))
+
+  private[scalanotation] def decodeAnyRoot[T](
+      input: String,
+      debugTokens: Boolean,
+      packageName: String,
+      decoder: Reader[T]
+  )(using ctx: PoolHolder): Result[Expr.SourceFile[T], DecodeError] =
+    catchingTokenErrors(input):
+      withPooled(ctx, input, debugTokens)(_.decodeAnyRoot(decoder, packageName))
+
+  private[scalanotation] def decodeExpression[T](
+      input: String,
+      debugTokens: Boolean,
+      decoder: Reader[T]
+  )(using ctx: PoolHolder): Result[T, DecodeError] =
+    catchingTokenErrors(input):
+      withPooled(ctx, input, debugTokens)(_.decodeExpression(decoder))
+
+  /** tokens are scanned lazily while decoding, so malformed input can surface anywhere in the
+    * decode as a [[TokenizeException]] — converted to a [[DecodeError]] here.
+    */
+  private inline def catchingTokenErrors[A](input: String)(
+      inline body: => Result[A, DecodeError]
+  ): Result[A, DecodeError] =
+    try body
+    catch
+      case e: TokenizeException =>
+        Result.Err(DecodeError.TokenFormat(e.message).atToken(Tokenizer.spanAt(input, e.offset)))
+
+  private[scalanotation] def isNullable(schema: RawSchema): Boolean =
+    schema match
+      case RawSchema.Option(_)       => true
+      case RawSchema.Mapped(base, _) => isNullable(base)
+      case _                         => false
+
+  private[scalanotation] def describe(expr: Expr): String =
+    expr match
+      case Expr.VectorExpr(_)       => "Vector(...)"
+      case Expr.TupleExpr(elements) =>
+        RawSchema.describeTupleSlots(elements.length)
+      case Expr.NamedTupleExpr(fieldExprs) =>
+        if fieldExprs.isEmpty then "NamedTuple.Empty" else s"(${fieldExprs.head.name} = ...)"
+      case Expr.StringConstant(value)  => s"""("$value": String)"""
+      case Expr.CharConstant(value)    => s"('$value': Char)"
+      case Expr.IntConstant(value)     => s"($value: Int)"
+      case Expr.LongConstant(value)    => s"($value: Long)"
+      case Expr.FloatConstant(value)   => s"($value: Float)"
+      case Expr.DoubleConstant(value)  => s"($value: Double)"
+      case Expr.BooleanConstant(value) => s"($value: Boolean)"
+      case Expr.NullConstant           => "null"
+
+/** Reusable buffer for named-tuple parse results: the closing token is recorded as an unboxed Int
+  * offset; a Span is only materialized if an error is constructed.
+  */
+private final class NamedTupleParseResult() {
+  var fieldCount: Int          = uninitialized
+  var fieldName: String | Null = uninitialized
+  var closingOffset: Int       = uninitialized
+
+  def push(fieldCount: Int, fieldName: String | Null, closingOffset: Int): this.type =
+    this.fieldCount = fieldCount
+    this.fieldName = fieldName
+    this.closingOffset = closingOffset
+    this
+}
+
+private final class TokenDecoder private (
+    input: String,
+    debug: Boolean,
+    protected val slotsPooling: Boolean,
+    scanOnInit: Boolean
+) extends TokenStream(input, debug, cacheNamesOnInit = slotsPooling, scanOnInit),
+      TokenSchemaDecoder {
+  def this(input: String, debug: Boolean) =
+    this(input, debug, slotsPooling = true, scanOnInit = true)
+
+  /** Clears decode state and re-aims at a new input, for reuse via [[TokenDecoder.withPooled]]. */
+  def reset(input: String, debug: Boolean): this.type =
+    resetStream(input, debug)
+    resetSlots()
+    namedTupleParseResult.fieldName = null
+    this
+
+  def decodeRoot[T](
+      schema: Reader[T],
+      rootName: String,
+      packageName: String
+  ): Result[T, DecodeError] =
+    Result:
+      expectPackageStatement(packageName).check
+      expectVal().check
+      expectIdentifier().check
+      val declaredName = pullStringStrict()
+      if declaredName != rootName then raise(DecodeError.UnexpectedRoot(declaredName))
+      expectEquals().check
+      decodeBase(schema.schema).check
+      val value = pullAny()
+      expectEof().check
+      value.asInstanceOf[T]
+
+  def decodeAnyRoot[T](
+      schema: Reader[T],
+      packageName: String
+  ): Result[Expr.SourceFile[T], DecodeError] =
+    Result:
+      expectPackageStatement(packageName).check
+      expectVal().check
+      expectIdentifier().check
+      val declaredName = pullStringStrict()
+      expectEquals().check
+      decodeBase(schema.schema).check
+      val value = pullAny().asInstanceOf[T]
+      expectEof().check
+      Expr.SourceFile(Map(declaredName -> value))
+
+  def decodeExpression[T](schema: Reader[T]): Result[T, DecodeError] =
+    Result:
+      decodeBase(schema.schema).check
+      val value = pullAny()
+      expectEof().check
+      value.asInstanceOf[T]
+
+  @deprecated("Kept for binary compatibility; will be removed in a future version", "0.3.6")
+  private object exprVisitor:
+    def inferExpr(): Result[Unit, DecodeError] =
+      TokenDecoder.this.inferExpr()
+    def onNamedTuple(schema: RawSchema.NamedTuple): Result[Unit, DecodeError] =
+      TokenDecoder.this.inferNamedTuple(schema)
+    def onVector(schema: RawSchema.Vector): Result[Unit, DecodeError] =
+      TokenDecoder.this.inferVector(schema)
+    def onString(): Result[Unit, DecodeError] =
+      TokenDecoder.this.inferString()
+    def onChar(): Result[Unit, DecodeError] =
+      TokenDecoder.this.inferChar()
+    def onInt(): Result[Unit, DecodeError] =
+      TokenDecoder.this.inferInt()
+    def onLong(): Result[Unit, DecodeError] =
+      TokenDecoder.this.inferLong()
+    def onFloat(): Result[Unit, DecodeError] =
+      TokenDecoder.this.inferFloat()
+    def onDouble(): Result[Unit, DecodeError] =
+      TokenDecoder.this.inferDouble()
+    def onBoolean(): Result[Unit, DecodeError] =
+      TokenDecoder.this.inferBoolean()
+    def onNull(): Result[Unit, DecodeError] =
+      TokenDecoder.this.inferNull()
+
+  @deprecated("Kept for binary compatibility; will be removed in a future version", "0.3.6")
+  private class NamedTupleParseResultBuf() {
+    // retained only for binary compatibility — superseded by NamedTupleParseResult above
+    var fieldCount: Int               = uninitialized
+    var fieldName: String | Null      = uninitialized
+    var closingSpan: DecodeError.Span = uninitialized
+  }
+
+  @deprecated("Kept for binary compatibility; will be removed in a future version", "0.3.6")
+  private object NamedTupleParseResultBuf extends NamedTupleParseResultBuf() {
+    def push(fieldCount: Int, fieldName: String | Null, closingSpan: DecodeError.Span): this.type =
+      this.fieldCount = fieldCount
+      this.fieldName = fieldName
+      this.closingSpan = closingSpan
+      this
+  }
+}
