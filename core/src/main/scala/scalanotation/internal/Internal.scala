@@ -64,7 +64,7 @@ private[internal] object Internal {
         n += 1
 
   class JumboNameSet:
-    @deprecated("Kept for binary compatibility; will be removed in a future version", "0.3.6")
+    @deprecated("Kept for binary compatibility; will be removed in a future version", "0.3.7")
     @publicInBinary
     private[JumboNameSet] def underlying: mutable.HashSet[String] =
       mutable.HashSet.from(underlying0.keysIterator)

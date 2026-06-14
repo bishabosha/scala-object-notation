@@ -183,7 +183,7 @@ private final class TokenDecoder private (
       expectEof().check
       value.asInstanceOf[T]
 
-  @deprecated("Kept for binary compatibility; will be removed in a future version", "0.3.6")
+  @deprecated("Kept for binary compatibility; will be removed in a future version", "0.3.7")
   private object exprVisitor:
     def inferExpr(): Result[Unit, DecodeError] =
       TokenDecoder.this.inferExpr()
