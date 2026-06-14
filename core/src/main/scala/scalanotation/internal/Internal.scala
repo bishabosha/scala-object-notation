@@ -81,7 +81,7 @@ private[internal] object Internal {
     given NameSet[JumboNameSet]:
       extension (seen: JumboNameSet)
         def alreadySeen(name: String): Boolean =
-          val map = seen.underlying0
+          val map        = seen.underlying0
           val sizeBefore = map.size
           map.addOne(name, ()).size == sizeBefore
 

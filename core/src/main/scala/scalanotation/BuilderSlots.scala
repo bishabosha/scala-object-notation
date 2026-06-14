@@ -60,11 +60,7 @@ final class BuilderSlots private[scalanotation] () extends Product:
     prims(index) = if value then 1L else 0L
     kinds(index) = SlotKind.Boolean
 
-  // typed getters for derived factories: a slot that had to box anyway (e.g. filled from a
-  // mapped schema) is unboxed transparently
-  def getRef(index: Int): Any =
-    if kinds(index) == SlotKind.Ref || kinds(index) == SlotKind.String then refs(index)
-    else productElement(index)
+  def getRef(index: Int): Any = productElement(index)
 
   def getString(index: Int): String =
     refs(index).asInstanceOf[String]
