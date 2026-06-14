@@ -108,7 +108,7 @@ private[internal] object Internal {
   /** Retained only for binary compatibility — superseded by the bounded, slot-based
     * [[scalanotation.internal.TokenStream]].
     */
-  @deprecated("superseded by scalanotation.internal.TokenStream", "0.4.0")
+  @deprecated("superseded by scalanotation.internal.TokenStream", "0.3.6")
   private[internal] open class TokenStream[T: PublicInternal.HasDefault as default](
       @constructorOnly tokens: List[T]
   ) extends PoolHolder {
