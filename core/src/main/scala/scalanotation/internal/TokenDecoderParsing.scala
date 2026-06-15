@@ -5,6 +5,10 @@ import steps.result.Result
 import steps.result.Result.eval.check
 import steps.result.Result.eval.raise
 
+private[scalanotation] trait TokenExpressionParser extends TokenDecoderParsing:
+  self: TokenStream =>
+  // used to contain some methods for Expr decoding.
+
 private[scalanotation] trait TokenDecoderParsing extends TokenDecoderSupport:
   self: TokenStream =>
 
