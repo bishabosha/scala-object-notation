@@ -49,6 +49,13 @@ private[scalanotation] class ExprDecoder extends PushSlots:
     schema match
       case mapped: RawSchema.Mapped =>
         mapSlot(mapped.mapping, decodeBase(mapped.base, expr))
+      case RawSchema.Ref(_, target) =>
+        decodeBase(target(), expr)
+      case router: RawSchema.Router =>
+        if router eq RawSchema.ExprRouterSchema then
+          pushRef(expr)
+          Result.done
+        else decodeRouter(router, expr)
       case sc: RawSchema.NamedTuple =>
         decodeNamedTuple(sc, expr)
       case sc: RawSchema.Tuple =>
@@ -61,6 +68,8 @@ private[scalanotation] class ExprDecoder extends PushSlots:
         decodeDiscriminatorSum(sc, expr)
       case sc: RawSchema.Vector =>
         decodeVector(sc, expr)
+      case sc: RawSchema.TupleOf =>
+        decodeTupleOf(sc, expr)
       case sc: RawSchema.Dict =>
         decodeDict(sc, expr)
       case sc: RawSchema.Option =>
@@ -133,12 +142,55 @@ private[scalanotation] class ExprDecoder extends PushSlots:
             Result.done
           case other => Result.Err(expectedType(schema, other))
 
+  private def decodeRouter(
+      schema: RawSchema.Router,
+      expr: Expr
+  ): Result[Unit, DecodeError] =
+    Result.task:
+      if schema.read == null then missingReadCapability(schema)
+      val index = schema.read.nn.route(routerConstruct(expr))
+      if index < 0 || index >= schema.cases.length then
+        raise(DecodeError.ExpectedType(schema.describeSelf, describeExpr(expr)))
+      decodeBase(schema.cases(index).schema, expr).check
+
+  private def routerConstruct(expr: Expr): RawSchema.RouterConstruct =
+    expr match
+      case Expr.NamedTupleExpr(_)  => RawSchema.RouterConstruct.Record
+      case Expr.TupleExpr(_)       => RawSchema.RouterConstruct.Tuple
+      case Expr.VectorExpr(_)      => RawSchema.RouterConstruct.Vector
+      case Expr.StringConstant(_)  => RawSchema.RouterConstruct.String
+      case Expr.CharConstant(_)    => RawSchema.RouterConstruct.Char
+      case Expr.IntConstant(_)     => RawSchema.RouterConstruct.Int
+      case Expr.LongConstant(_)    => RawSchema.RouterConstruct.Long
+      case Expr.FloatConstant(_)   => RawSchema.RouterConstruct.Float
+      case Expr.DoubleConstant(_)  => RawSchema.RouterConstruct.Double
+      case Expr.BooleanConstant(_) => RawSchema.RouterConstruct.Boolean
+      case Expr.NullConstant       => RawSchema.RouterConstruct.Null
+
   private def decodeVector(
       schema: RawSchema.Vector,
       expr: Expr
   ): Result[Unit, DecodeError] = Result.task:
     expr match
       case Expr.VectorExpr(elements) =>
+        if schema.read == null then missingReadCapability(schema)
+        val read   = schema.read.nn
+        var values = read.init()
+        var index  = 0
+        while index < elements.length do
+          checkOrRaise(decodeBase(schema.element, elements(index)))(_.atPath(s"[$index]"))
+          values = addSlot(read)(values)
+          index += 1
+        pushRef(read.finish(values))
+      case other =>
+        raise(DecodeError.ExpectedType(schema.describeSelf, describe(other)))
+
+  private def decodeTupleOf(
+      schema: RawSchema.TupleOf,
+      expr: Expr
+  ): Result[Unit, DecodeError] = Result.task:
+    expr match
+      case Expr.TupleExpr(elements) =>
         if schema.read == null then missingReadCapability(schema)
         val read   = schema.read.nn
         var values = read.init()

@@ -62,6 +62,46 @@ class SchemaSuite extends ScalanotationSuite:
     assertEquals(Readers.readAs[Null]("null"), Result.Ok(null: Null))
     assertEquals(Writers.write(null: Null), "null")
 
+  test("Expr is represented as a recursive router schema"):
+    summon[ReadWriter[Expr]].schema match
+      case router: RawSchema.Router =>
+        assertEquals(router.numberMode, RawSchema.RouterNumberMode.Bounded)
+        assert(router.read != null)
+        assert(router.write != null)
+        assertEquals(
+          router.cases.iterator.map(_.name).toList,
+          List(
+            "NamedTupleExpr",
+            "TupleExpr",
+            "VectorExpr",
+            "StringConstant",
+            "CharConstant",
+            "IntConstant",
+            "LongConstant",
+            "FloatConstant",
+            "DoubleConstant",
+            "BooleanConstant",
+            "NullConstant"
+          )
+        )
+        assertEquals(
+          router.read.nn.route(RawSchema.RouterConstruct.Record),
+          RawSchema.ExprRouter.NamedTupleCase
+        )
+        router.cases(RawSchema.ExprRouter.NamedTupleCase).schema match
+          case RawSchema.Dict(RawSchema.Ref("Expr", target), _, _) =>
+            assert(target() eq router)
+          case other =>
+            fail(s"Expected a recursive Expr dict case, got ${other.describeSelf}")
+      case other =>
+        fail(s"Expected Expr router schema, got ${other.describeSelf}")
+
+    val expr = Expr.TupleExpr(
+      IndexedSeq(Expr.TupleExpr(IndexedSeq(Expr.IntConstant(1))))
+    )
+    assertEquals(Writers.write(expr), "(1 *: EmptyTuple) *: EmptyTuple")
+    assertEquals(Readers.readAs[Expr](Writers.write(expr)), Result.Ok(expr))
+
   test("RawSchema.describeSelf"):
     // primitive schemas
     assertEquals(RawSchema.Int.describeSelf, "Int")

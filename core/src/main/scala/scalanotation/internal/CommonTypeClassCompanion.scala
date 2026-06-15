@@ -318,7 +318,7 @@ private[scalanotation] trait CommonTypeClassCompanion[TC[_]]:
   val Builders: CommonBuilders[false, ? <: "Reader" | "Writer" | "ReadWriter"]
 
   given ExprSchema: TC[Expr] =
-    primitiveTypeClass(RawSchema.AnyExpr)
+    primitiveTypeClass(RawSchema.ExprRouterSchema)
 
   given StringSchema: TC[String] =
     primitiveTypeClass(RawSchema.String)

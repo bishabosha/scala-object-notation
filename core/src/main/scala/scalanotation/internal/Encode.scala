@@ -11,10 +11,23 @@ private[scalanotation] object Encode:
       s"write is not available for schema ${schema.describeSelf}"
     )
 
+  private def selectedRouterCase(schema: RawSchema.Router, value: Any): RawSchema.RouterCase =
+    if schema.write == null then missingWriteCapability(schema)
+    val index = schema.write.nn.caseIndex(value)
+    if index < 0 || index >= schema.cases.length then
+      throw IllegalArgumentException(
+        s"router ${schema.describeSelf} cannot select a case for value $value"
+      )
+    schema.cases(index)
+
   def writeExpr(schema: RawSchema, value: Any): Expr =
     schema match
       case mapped: RawSchema.Mapped =>
         writeExpr(mapped.base, mapped.mapping.mapInput(value))
+      case RawSchema.Ref(_, target) =>
+        writeExpr(target(), value)
+      case router: RawSchema.Router =>
+        writeExpr(selectedRouterCase(router, value).schema, value)
       case namedTuple: RawSchema.NamedTuple =>
         if namedTuple.write == null then missingWriteCapability(schema)
         val access     = namedTuple.write.nn
@@ -50,6 +63,11 @@ private[scalanotation] object Encode:
         if vector.write == null then missingWriteCapability(schema)
         Expr.VectorExpr(
           vector.write.nn.iterator(value).map(writeExpr(vector.element, _)).toIndexedSeq
+        )
+      case tupleOf: RawSchema.TupleOf =>
+        if tupleOf.write == null then missingWriteCapability(schema)
+        Expr.TupleExpr(
+          tupleOf.write.nn.iterator(value).map(writeExpr(tupleOf.element, _)).toIndexedSeq
         )
       case dict: RawSchema.Dict =>
         if dict.write == null then missingWriteCapability(schema)
@@ -90,6 +108,10 @@ private[scalanotation] object Encode:
   )(using format: TextFormat): Unit = schema match
     case mapped: RawSchema.Mapped =>
       renderText(mapped.base, mapped.mapping.mapInput(value), out, depth)
+    case RawSchema.Ref(_, target) =>
+      renderText(target(), value, out, depth)
+    case router: RawSchema.Router =>
+      renderText(selectedRouterCase(router, value).schema, value, out, depth)
     case namedTuple: RawSchema.NamedTuple =>
       val write = namedTuple.write
       if write == null then missingWriteCapability(schema)
@@ -127,6 +149,13 @@ private[scalanotation] object Encode:
       val values = write.iterator(value)
       ExprRenderer.renderVector(out, depth, write.size(value)) { _ =>
         renderText(vector.element, values.next(), out, depth + 1)
+      }
+    case tupleOf: RawSchema.TupleOf =>
+      val write = tupleOf.write
+      if write == null then missingWriteCapability(schema)
+      val values = write.iterator(value)
+      ExprRenderer.renderTuple(out, depth, write.size(value)) { _ =>
+        renderTupleElement(tupleOf.element, values.next(), out, depth + 1)
       }
     case dict: RawSchema.Dict =>
       val write = dict.write
@@ -169,6 +198,8 @@ private[scalanotation] object Encode:
         writeDiscriminatorPayload(base, value)
       case mapped: RawSchema.Mapped =>
         writeDiscriminatorPayload(mapped.base, mapped.mapping.mapInput(value))
+      case RawSchema.Ref(_, target) =>
+        writeDiscriminatorPayload(target(), value)
       case namedTuple: RawSchema.NamedTuple =>
         if namedTuple.write == null then missingWriteCapability(namedTuple)
         val access     = namedTuple.write.nn
@@ -193,14 +224,19 @@ private[scalanotation] object Encode:
       out: ExprRenderer.Output,
       depth: Int
   )(using format: TextFormat): Unit =
-    if isTupleLike(schema) then
+    if isTupleLike(schema, value) then
       out.append('(')
       renderText(schema, value, out, depth)
       out.append(')')
     else renderText(schema, value, out, depth)
 
-  private def isTupleLike(schema: RawSchema): Boolean =
+  private def isTupleLike(schema: RawSchema, value: Any): Boolean =
     schema match
-      case _: RawSchema.Tuple        => true
-      case RawSchema.Mapped(base, _) => isTupleLike(base)
-      case _                         => false
+      case _: RawSchema.Tuple              => true
+      case _: RawSchema.TupleOf            => true
+      case RawSchema.Ref(_, target)        => isTupleLike(target(), value)
+      case RawSchema.Mapped(base, mapping) =>
+        isTupleLike(base, mapping.mapInput(value))
+      case router: RawSchema.Router =>
+        isTupleLike(selectedRouterCase(router, value).schema, value)
+      case _ => false

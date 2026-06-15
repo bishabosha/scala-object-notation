@@ -94,6 +94,7 @@ private[scalanotation] object TokenDecoder:
     schema match
       case RawSchema.Option(_)       => true
       case RawSchema.Mapped(base, _) => isNullable(base)
+      case RawSchema.Ref(_, target)  => isNullable(target())
       case _                         => false
 
   private[scalanotation] def describe(expr: Expr): String =
