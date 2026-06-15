@@ -5,11 +5,14 @@ import steps.result.Result
 import steps.result.Result.eval.check
 import steps.result.Result.eval.raise
 
-private[scalanotation] trait TokenTupleDecoder extends TokenExpressionParser:
+private[scalanotation] trait TokenTupleDecoder
+    extends TokenDecoderParsing: // TokenExpressionParser:
   self: TokenStream =>
 
   protected def decodeBase(schema: RawSchema): Result[Unit, DecodeError]
   protected def decodeOption(schema: RawSchema.Option): Result[Unit, DecodeError]
+  protected def decodeBaseInTupleElement(schema: RawSchema): Result[Unit, DecodeError] =
+    decodeBase(schema)
 
   protected final def decodeTuple(schema: RawSchema.Tuple): Result[Unit, DecodeError] =
     withRead(schema, _.read) { read =>
@@ -32,9 +35,13 @@ private[scalanotation] trait TokenTupleDecoder extends TokenExpressionParser:
               if slots.isEmpty then
                 raise(DecodeError.ExpectedType(schema.describeSelf, describeCurrent()))
               decodeTupleSlotValue(slots, index = 0, allowStringConcat = false).check
-              state = addSlot(read)(state, 0)
-              decodeTupleConsTail(read)(slots, state, startIndex = 1).check
-              state = pullAny().asInstanceOf[read.State]
+              val stateAfterFirst = addSlot(read)(state, 0)
+              val expectedSlots   = slots.length
+              state = parseTupleConsTailLike(stateAfterFirst, startIndex = 1, expectedSlots)(
+                index => decodeTupleSlotValue(slots, index, allowStringConcat = false),
+                (state, index) => addSlot(read)(state, index),
+                emptyTupleTerminates = true
+              )
           pushRef(read.finish(state))
         }
       }
@@ -62,14 +69,42 @@ private[scalanotation] trait TokenTupleDecoder extends TokenExpressionParser:
           val stateAfterFirst = addSlot(read)(state, 0)
           currentKind() match
             case TokenKind.Comma =>
-              decodeTupleCommaTail(read)(slots, stateAfterFirst, startCount = 1).check
+              def afterComma() = Result.task {
+                // FIXME: must lift out expectedSlots to avoid boxing closure
+                val expectedSlots = slots.length
+                pushRef(
+                  parseTupleCommaTailLike(
+                    stateAfterFirst,
+                    startCount = 1,
+                    expectedSlots
+                  )(
+                    index => decodeTupleSlotValue(slots, index, allowStringConcat = true),
+                    (state, index) => addSlot(read)(state, index)
+                  )
+                )
+              }
+
+              afterComma().check
             case TokenKind.StarColon =>
-              decodeTupleConsTail(read)(slots, stateAfterFirst, startIndex = 1).check
-              val stateAfterTail = pullAny()
+              def stateAfterTail() = Result.task {
+                // FIXME: must lift out expectedSlots to avoid boxing closure
+                val expectedSlots = slots.length
+                pushRef(
+                  parseTupleConsTailLike(
+                    stateAfterFirst,
+                    startIndex = 1,
+                    expectedSlots
+                  )(
+                    index => decodeTupleSlotValue(slots, index, allowStringConcat = false),
+                    (state, index) => addSlot(read)(state, index),
+                    emptyTupleTerminates = true
+                  )
+                )
+              }
               currentKind() match
                 case TokenKind.RParen =>
                   advanceTupleClose().check
-                  pushRef(stateAfterTail)
+                  stateAfterTail().check
                 case _ =>
                   raise(DecodeError.ExpectedRParen(describeCurrent()).atToken(currentSpan()))
             case TokenKind.RParen =>
@@ -77,7 +112,21 @@ private[scalanotation] trait TokenTupleDecoder extends TokenExpressionParser:
               advanceTupleClose().check
               currentKind() match
                 case TokenKind.StarColon =>
-                  decodeTupleConsTail(read)(slots, stateAfterFirst, startIndex = 1).check
+                  def stateAfterTail() = Result.task {
+                    // FIXME: must lift out expectedSlots to avoid boxing closure
+                    val expectedSlots       = slots.length
+                    val stateAfterStarColon = parseTupleConsTailLike(
+                      stateAfterFirst,
+                      startIndex = 1,
+                      expectedSlots
+                    )(
+                      index => decodeTupleSlotValue(slots, index, allowStringConcat = false),
+                      (state, index) => addSlot(read)(state, index),
+                      emptyTupleTerminates = true
+                    )
+                    pushRef(stateAfterStarColon)
+                  }
+                  stateAfterTail().check
                 case _ =>
                   raise(
                     DecodeError
@@ -96,41 +145,14 @@ private[scalanotation] trait TokenTupleDecoder extends TokenExpressionParser:
       startCount: Int
   ): Result[Unit, DecodeError] =
     Result.task:
-      var state              = state0
-      var count              = startCount
-      var done               = false
-      var closingOffset: Int = currentOffset()
-      while !done do
-        currentKind() match
-          case TokenKind.Comma =>
-            advanceTupleComma().check
-            currentKind() match
-              case TokenKind.RParen =>
-                closingOffset = currentOffset()
-                if count == 1 then
-                  raise(DecodeError.FieldCountMismatch(2, 1).atToken(spanAt(closingOffset)))
-                done = true
-              case _ =>
-                if count >= slots.length then
-                  raise(
-                    DecodeError
-                      .FieldCountMismatch(slots.length, count + 1)
-                      .atToken(currentSpan())
-                  )
-                decodeTupleSlotValue(slots, count, allowStringConcat = true).check
-                state = addSlot(read)(state, count)
-                count += 1
-          case TokenKind.RParen =>
-            closingOffset = currentOffset()
-            done = true
-          case _ =>
-            raise(DecodeError.ExpectedRParen(describeCurrent()).atToken(currentSpan()))
-
-      advanceTupleClose().check
-      if count == 1 then raise(DecodeError.FieldCountMismatch(2, 1).atToken(spanAt(closingOffset)))
-      if count != slots.length then
-        raise(DecodeError.FieldCountMismatch(slots.length, count).atToken(spanAt(closingOffset)))
-      pushRef(state)
+      // FIXME: must lift out expectedSlots to avoid boxing closure
+      val expectedSlots = slots.length
+      pushRef(
+        parseTupleCommaTailLike(state0, startCount, expectedSlots)(
+          index => decodeTupleSlotValue(slots, index, allowStringConcat = true),
+          (state, index) => addSlot(read)(state, index)
+        )
+      )
 
   /** decodes the `*:`-separated tuple tail, leaving the final builder state in the Any slot */
   protected final def decodeTupleConsTail(
@@ -141,26 +163,115 @@ private[scalanotation] trait TokenTupleDecoder extends TokenExpressionParser:
       startIndex: Int
   ): Result[Unit, DecodeError] =
     Result.task:
-      var state = state0
-      var index = startIndex
-      var done  = false
-      while !done do
-        advanceTupleConsSeparator().check
-        currentKind() match
-          case TokenKind.EmptyTupleId =>
-            advanceTupleEmptyTail(slots.length, index).check
-            done = true
-          case _ =>
-            if index >= slots.length then
-              raise(
-                DecodeError
-                  .FieldCountMismatch(slots.length, index + 1)
-                  .atToken(currentSpan())
-              )
-            decodeTupleSlotValue(slots, index, allowStringConcat = false).check
-            state = addSlot(read)(state, index)
-            index += 1
-      pushRef(state)
+      // FIXME: must lift out expectedSlots to avoid boxing closure
+      val expectedSlots = slots.length
+      pushRef(
+        parseTupleConsTailLike(state0, startIndex, expectedSlots)(
+          index => decodeTupleSlotValue(slots, index, allowStringConcat = false),
+          (state, index) => addSlot(read)(state, index),
+          emptyTupleTerminates = true
+        )
+      )
+
+  protected final val VariableTupleSlots = -1
+
+  protected inline def hasFixedTupleSlots(inline expectedSlots: Int): Boolean =
+    expectedSlots >= 0
+
+  protected final def tupleCurrentKind(): Int =
+    currentKind()
+
+  protected final def tupleCurrentSpan(): DecodeError.Span =
+    currentSpan()
+
+  protected final def tupleDescribeCurrent(): String =
+    describeCurrent()
+
+  protected final def tupleAdvance(): Unit =
+    advance()
+
+  protected inline def parseTupleCommaTailLike[State](
+      state0: State,
+      startCount: Int,
+      expectedSlots: Int
+  )(
+      inline decodeElement: Int => Result[Unit, DecodeError],
+      inline addElement: (State, Int) => State
+  ): Resulting[State, DecodeError] =
+    var state                         = state0
+    var count                         = startCount
+    var done                          = false
+    var closingSpan: DecodeError.Span = tupleCurrentSpan()
+    while !done do
+      tupleCurrentKind() match
+        case TokenKind.Comma =>
+          tupleAdvance()
+          tupleCurrentKind() match
+            case TokenKind.RParen =>
+              closingSpan = tupleCurrentSpan()
+              if count == 1 then raise(DecodeError.FieldCountMismatch(2, 1).atToken(closingSpan))
+              done = true
+            case _ =>
+              if hasFixedTupleSlots(expectedSlots) && count >= expectedSlots then
+                raise(
+                  DecodeError
+                    .FieldCountMismatch(expectedSlots, count + 1)
+                    .atToken(tupleCurrentSpan())
+                )
+              decodeElement(count).check
+              state = addElement(state, count)
+              count += 1
+        case TokenKind.RParen =>
+          closingSpan = tupleCurrentSpan()
+          done = true
+        case _ =>
+          raise(DecodeError.ExpectedRParen(tupleDescribeCurrent()).atToken(tupleCurrentSpan()))
+
+    if tupleCurrentKind() == TokenKind.RParen then tupleAdvance()
+    else raise(DecodeError.ExpectedRParen(tupleDescribeCurrent()).atToken(tupleCurrentSpan()))
+    if count == 1 then raise(DecodeError.FieldCountMismatch(2, 1).atToken(closingSpan))
+    if hasFixedTupleSlots(expectedSlots) && count != expectedSlots then
+      raise(DecodeError.FieldCountMismatch(expectedSlots, count).atToken(closingSpan))
+    state
+
+  protected inline def parseTupleConsTailLike[State](
+      state0: State,
+      startIndex: Int,
+      expectedSlots: Int
+  )(
+      inline decodeElement: Int => Result[Unit, DecodeError],
+      inline addElement: (State, Int) => State,
+      inline emptyTupleTerminates: Boolean
+  ): Resulting[State, DecodeError] =
+    var state = state0
+    var index = startIndex
+    var done  = false
+    while !done do
+      if tupleCurrentKind() == TokenKind.StarColon then tupleAdvance()
+      else
+        raise(DecodeError.ExpectedType("'*:'", tupleDescribeCurrent()).atToken(tupleCurrentSpan()))
+      tupleCurrentKind() match
+        case TokenKind.EmptyTupleId if emptyTupleTerminates =>
+          val emptyTupleSpan = tupleCurrentSpan()
+          tupleAdvance()
+          if hasFixedTupleSlots(expectedSlots) && index != expectedSlots then
+            raise(
+              DecodeError
+                .FieldCountMismatch(expectedSlots, index)
+                .atToken(emptyTupleSpan)
+            )
+          done = true
+        case _ =>
+          if hasFixedTupleSlots(expectedSlots) && index >= expectedSlots then
+            raise(
+              DecodeError
+                .FieldCountMismatch(expectedSlots, index + 1)
+                .atToken(tupleCurrentSpan())
+            )
+          decodeElement(index).check
+          state = addElement(state, index)
+          index += 1
+    state
 
   protected final def decodeTupleSlotValue(
       slots: IArray[RawSchema],
@@ -228,7 +339,7 @@ private[scalanotation] trait TokenTupleDecoder extends TokenExpressionParser:
       case _ if currentKind() == TokenKind.LParen && !canDecodeFromLParen(schema) =>
         decodeGroupedTupleElement(schema)
       case _ =>
-        decodeBase(schema)
+        decodeBaseInTupleElement(schema)
 
   protected final def decodeGroupedTupleElement(schema: RawSchema): Result[Unit, DecodeError] =
     Result.task {
@@ -259,8 +370,8 @@ private[scalanotation] trait TokenTupleDecoder extends TokenExpressionParser:
       case _                              => false
 
   // bit flags of parenthesizedTupleSeparators — packed into an Int so no tuple is boxed per decode
-  private final val SeparatorComma     = 1
-  private final val SeparatorStarColon = 2
+  protected final val SeparatorComma     = 1
+  protected final val SeparatorStarColon = 2
 
   /** Scans ahead (without buffering) from the current '(' to its matching ')' to discover which
     * separators the parenthesized tuple uses, returned as a bitmask of [[SeparatorComma]] and
