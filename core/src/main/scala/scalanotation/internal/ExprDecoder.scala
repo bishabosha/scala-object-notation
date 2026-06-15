@@ -82,8 +82,7 @@ private[scalanotation] class ExprDecoder extends PushSlots:
             if r.isOk then pushRef(Some(pullAny()))
             r
       case RawSchema.AnyExpr =>
-        pushRef(expr)
-        Result.done
+        decodeBase(RawSchema.ExprRouterSchema, expr)
       case RawSchema.String =>
         expr match
           case Expr.StringConstant(value) =>

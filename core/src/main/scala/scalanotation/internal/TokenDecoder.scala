@@ -187,27 +187,77 @@ private final class TokenDecoder private (
   @deprecated("Kept for binary compatibility; will be removed in a future version", "0.3.7")
   private object exprVisitor:
     def inferExpr(): Result[Unit, DecodeError] =
-      TokenDecoder.this.inferExpr()
+      TokenDecoder.this.decodeBase(RawSchema.ExprRouterSchema)
     def onNamedTuple(schema: RawSchema.NamedTuple): Result[Unit, DecodeError] =
-      TokenDecoder.this.inferNamedTuple(schema)
+      TokenDecoder.this.decodeBase(
+        RawSchema.ExprRouterSchema
+          .asInstanceOf[RawSchema.Router]
+          .cases(RawSchema.ExprRouter.NamedTupleCase)
+          .schema
+      )
     def onVector(schema: RawSchema.Vector): Result[Unit, DecodeError] =
-      TokenDecoder.this.inferVector(schema)
+      TokenDecoder.this.decodeBase(
+        RawSchema.ExprRouterSchema
+          .asInstanceOf[RawSchema.Router]
+          .cases(RawSchema.ExprRouter.VectorCase)
+          .schema
+      )
     def onString(): Result[Unit, DecodeError] =
-      TokenDecoder.this.inferString()
+      TokenDecoder.this.decodeBase(
+        RawSchema.ExprRouterSchema
+          .asInstanceOf[RawSchema.Router]
+          .cases(RawSchema.ExprRouter.StringCase)
+          .schema
+      )
     def onChar(): Result[Unit, DecodeError] =
-      TokenDecoder.this.inferChar()
+      TokenDecoder.this.decodeBase(
+        RawSchema.ExprRouterSchema
+          .asInstanceOf[RawSchema.Router]
+          .cases(RawSchema.ExprRouter.CharCase)
+          .schema
+      )
     def onInt(): Result[Unit, DecodeError] =
-      TokenDecoder.this.inferInt()
+      TokenDecoder.this.decodeBase(
+        RawSchema.ExprRouterSchema
+          .asInstanceOf[RawSchema.Router]
+          .cases(RawSchema.ExprRouter.IntCase)
+          .schema
+      )
     def onLong(): Result[Unit, DecodeError] =
-      TokenDecoder.this.inferLong()
+      TokenDecoder.this.decodeBase(
+        RawSchema.ExprRouterSchema
+          .asInstanceOf[RawSchema.Router]
+          .cases(RawSchema.ExprRouter.LongCase)
+          .schema
+      )
     def onFloat(): Result[Unit, DecodeError] =
-      TokenDecoder.this.inferFloat()
+      TokenDecoder.this.decodeBase(
+        RawSchema.ExprRouterSchema
+          .asInstanceOf[RawSchema.Router]
+          .cases(RawSchema.ExprRouter.FloatCase)
+          .schema
+      )
     def onDouble(): Result[Unit, DecodeError] =
-      TokenDecoder.this.inferDouble()
+      TokenDecoder.this.decodeBase(
+        RawSchema.ExprRouterSchema
+          .asInstanceOf[RawSchema.Router]
+          .cases(RawSchema.ExprRouter.DoubleCase)
+          .schema
+      )
     def onBoolean(): Result[Unit, DecodeError] =
-      TokenDecoder.this.inferBoolean()
+      TokenDecoder.this.decodeBase(
+        RawSchema.ExprRouterSchema
+          .asInstanceOf[RawSchema.Router]
+          .cases(RawSchema.ExprRouter.BooleanCase)
+          .schema
+      )
     def onNull(): Result[Unit, DecodeError] =
-      TokenDecoder.this.inferNull()
+      TokenDecoder.this.decodeBase(
+        RawSchema.ExprRouterSchema
+          .asInstanceOf[RawSchema.Router]
+          .cases(RawSchema.ExprRouter.NullCase)
+          .schema
+      )
 
   @deprecated("Kept for binary compatibility; will be removed in a future version", "0.3.6")
   private class NamedTupleParseResultBuf() {
