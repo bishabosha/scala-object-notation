@@ -93,6 +93,15 @@ class ExpressionSyntaxSuite extends ScalanotationSuite:
       )
     )
     assertEquals(parsed.render, """(1, "abc", EmptyTuple)""")
+    assertEquals(
+      Readers.quick.read("""(x = 1) *: Vector(2) *: EmptyTuple"""),
+      Expr.TupleExpr(
+        IndexedSeq(
+          Expr.NamedTupleExpr(IndexedSeq("x" -> Expr.IntConstant(1))),
+          Expr.VectorExpr(IndexedSeq(Expr.IntConstant(2)))
+        )
+      )
+    )
 
   test("describe tuple literal expressions with counted slots"):
     val obtained = Readers.quick.read("""(1, "two", true)""").decodeAs[Int]
