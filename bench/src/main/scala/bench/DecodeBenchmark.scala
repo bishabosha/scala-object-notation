@@ -2,6 +2,7 @@ package bench
 
 import org.openjdk.jmh.annotations.*
 import java.util.concurrent.TimeUnit
+import scalanotation.Expr
 import scalanotation.Reader
 import scalanotation.Readers
 
@@ -34,6 +35,7 @@ object DecodeBenchmarkHelpers:
   val nested2xReader: Reader[Nested2x]         = summon[Reader[Nested2x]]
   val withVecReader: Reader[WithVec]           = summon[Reader[WithVec]]
   val withIntArrayReader: Reader[WithIntArray] = summon[Reader[WithIntArray]]
+  val exprReader: Reader[Expr]                 = summon[Reader[Expr]]
 
 @State(Scope.Thread)
 @BenchmarkMode(Array(Mode.AverageTime))
@@ -83,9 +85,16 @@ class DecodeBenchmark:
   private given Reader[Nested2x]     = nested2xReader
   private given Reader[WithVec]      = withVecReader
   private given Reader[WithIntArray] = withIntArrayReader
+  private given Reader[Expr]         = exprReader
 
   @Benchmark def flat: Any   = Readers.readAs[Flat](flatInput)
   @Benchmark def flat2x: Any = Readers.readAs[Flat2x](flatInput2x)
+
+  @Benchmark def exprFlat: Any      = Readers.readAs[Expr](flatInput)
+  @Benchmark def exprNested: Any    = Readers.readAs[Expr](nestedInput)
+  @Benchmark def exprNested2x: Any  = Readers.readAs[Expr](nestedInput2x)
+  @Benchmark def exprWithVec: Any   = Readers.readAs[Expr](vecInput)
+  @Benchmark def exprWithVec2x: Any = Readers.readAs[Expr](vecInput2x)
 
   @Benchmark def flatClass: Any   = Readers.readAs[FlatClass](flatInput)
   @Benchmark def nestedClass: Any = Readers.readAs[NestedClass](nestedInput)
@@ -103,6 +112,13 @@ class DecodeBenchmark:
     Readers.readDeclAs[Flat](declFlatInput, rootName = "data")
   @Benchmark def declFlat2x: Any =
     Readers.readDeclAs[Flat2x](declFlatInput2x, rootName = "data")
+
+  @Benchmark def declExprFlat: Any =
+    Readers.readDeclAs[Expr](declFlatInput, rootName = "data")
+  @Benchmark def declExprWithVec: Any =
+    Readers.readDeclAs[Expr](declVecInput, rootName = "data")
+  @Benchmark def declExprWithVec2x: Any =
+    Readers.readDeclAs[Expr](declVecInput2x, rootName = "data")
 
   @Benchmark def declWithVec: Any =
     Readers.readDeclAs[WithVec](declVecInput, rootName = "data")

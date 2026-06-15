@@ -252,6 +252,9 @@ private[scalanotation] trait TokenTupleDecoder extends TokenExpressionParser:
       case _: RawSchema.Sum               => true
       case _: RawSchema.DiscriminatorSum  => true
       case _: RawSchema.Dict              => true
+      case _: RawSchema.TupleOf           => true
+      case _: RawSchema.Router            => true
+      case RawSchema.Ref(_, target)       => canDecodeFromLParen(target())
       case RawSchema.AnyExpr              => true
       case _                              => false
 

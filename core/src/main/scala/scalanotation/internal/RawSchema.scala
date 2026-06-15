@@ -1,11 +1,13 @@
 package scalanotation.internal
 
 import scalanotation.DecodeError
+import scalanotation.Expr
 import scalanotation.Reader
 import scalanotation.TypedFactory
 import scalanotation.internal.Internal
 import steps.result.Result
 
+import scala.collection.mutable.ArrayBuffer
 import Result.eval.check
 import Result.eval.raise
 import scalanotation.internal.RawSchema.SchemaMapping
@@ -40,11 +42,23 @@ private[scalanotation] enum RawSchema:
       read: RawSchema.VectorRead | Null = null,
       write: RawSchema.VectorWrite | Null = null
   )
+  case TupleOf(
+      element: RawSchema,
+      read: RawSchema.VectorRead | Null = null,
+      write: RawSchema.VectorWrite | Null = null
+  )
   case Dict(
       element: RawSchema,
       read: RawSchema.DictRead | Null = null,
       write: RawSchema.DictWrite | Null = null
   )
+  case Router(
+      cases: IArray[RawSchema.RouterCase],
+      read: RawSchema.RouterRead | Null,
+      write: RawSchema.RouterWrite | Null,
+      numberMode: RawSchema.RouterNumberMode
+  )
+  case Ref(name: String, target: () => RawSchema)
   case Option(inner: RawSchema)
   case Mapped(base: RawSchema, mapping: RawSchema.SchemaMapping)
   case AnyExpr
@@ -97,6 +111,8 @@ private[scalanotation] enum RawSchema:
             i += 1
         case RawSchema.Mapped(base, _) =>
           base.validateNamedTuple(pool).check
+        case RawSchema.Ref(_, target) =>
+          target().validateNamedTuple(pool).check
         case _ => ()
   }
 
@@ -121,7 +137,13 @@ private[scalanotation] enum RawSchema:
           val field = sum.discriminatorField
           cases.iterator.map(k => s"""($field: "${k.name}", ...)""").mkString(" | ")
       case _: RawSchema.Vector      => "Vector[...]"
+      case _: RawSchema.TupleOf     => "Tuple[...]"
       case _: RawSchema.Dict        => "AnyNamedTuple"
+      case router: RawSchema.Router =>
+        val cases = router.cases
+        if cases.isEmpty then "Nothing"
+        else cases.iterator.map(_.name).mkString("Router[", " | ", "]")
+      case RawSchema.Ref(name, _)   => name
       case RawSchema.AnyExpr        => "Any"
       case RawSchema.String         => "String"
       case RawSchema.Char           => "Char"
@@ -141,6 +163,7 @@ private[scalanotation] enum RawSchema:
 private[scalanotation] object RawSchema:
   type ResultMap = Any => Result[Any, DecodeError]
   type InputMap  = Any => Any
+  private final val UnsupportedRouterCase = -1
 
   def describeTupleSlots(size: Int): String =
     size match
@@ -189,6 +212,58 @@ private[scalanotation] object RawSchema:
 
   final case class SumCase(name: String, schema: RawSchema)
 
+  final case class RouterCase(name: String, schema: RawSchema)
+
+  enum RouterConstruct:
+    case Record
+    case Tuple
+    case Vector
+    case String
+    case Char
+    case Int
+    case Long
+    case Float
+    case Double
+    case Boolean
+    case Null
+    case RawNumber
+
+  enum RouterNumberMode:
+    case Bounded
+    case Raw
+
+  trait RouterRead:
+    final def route(construct: RouterConstruct): Int =
+      construct match
+        case RouterConstruct.Record    => onRecord()
+        case RouterConstruct.Tuple     => onTuple()
+        case RouterConstruct.Vector    => onVector()
+        case RouterConstruct.String    => onString()
+        case RouterConstruct.Char      => onChar()
+        case RouterConstruct.Int       => onInt()
+        case RouterConstruct.Long      => onLong()
+        case RouterConstruct.Float     => onFloat()
+        case RouterConstruct.Double    => onDouble()
+        case RouterConstruct.Boolean   => onBoolean()
+        case RouterConstruct.Null      => onNull()
+        case RouterConstruct.RawNumber => onRawNumber()
+
+    def onRecord(): Int    = UnsupportedRouterCase
+    def onTuple(): Int     = UnsupportedRouterCase
+    def onVector(): Int    = UnsupportedRouterCase
+    def onString(): Int    = UnsupportedRouterCase
+    def onChar(): Int      = UnsupportedRouterCase
+    def onInt(): Int       = UnsupportedRouterCase
+    def onLong(): Int      = UnsupportedRouterCase
+    def onFloat(): Int     = UnsupportedRouterCase
+    def onDouble(): Int    = UnsupportedRouterCase
+    def onBoolean(): Int   = UnsupportedRouterCase
+    def onNull(): Int      = UnsupportedRouterCase
+    def onRawNumber(): Int = UnsupportedRouterCase
+
+  trait RouterWrite:
+    def caseIndex(value: Any): Int
+
   /** linear scan for the case named `name` — unlike `cases.iterator.find`, allocates no iterator,
     * closure or `Some` on the decode hot path
     */
@@ -199,6 +274,258 @@ private[scalanotation] object RawSchema:
       if sumCase.name == name then return sumCase
       i += 1
     null
+
+  private def invalidExprRouterInput(expected: String, value: Expr): Nothing =
+    throw IllegalArgumentException(s"Expected Expr.$expected but found $value")
+
+  private def okAny(value: Any): Result[Any, DecodeError] =
+    Result.Ok(value).asInstanceOf[Result[Any, DecodeError]]
+
+  private def exprMappedPrimitive[A](
+      base: RawSchema,
+      read: A => Expr,
+      write: Expr => A
+  ): RawSchema =
+    mapResultAndInput(base)(
+      resultMap0 = value => okAny(read(value.asInstanceOf[A])),
+      inputMap0 = value => write(value.asInstanceOf[Expr])
+    )
+
+  private object ExprTupleRead extends VectorRead:
+    type State = ArrayBuffer[Expr]
+
+    def init(): State =
+      ArrayBuffer.empty[Expr]
+
+    def add(state: State, elem: Any): State =
+      state += elem.asInstanceOf[Expr]
+      state
+
+    def finish(state: State): Any =
+      Expr.TupleExpr(state.toIndexedSeq)
+
+  private object ExprTupleWrite extends VectorWrite:
+    def size(value: Any): Int =
+      value.asInstanceOf[Expr] match
+        case Expr.TupleExpr(elements) => elements.length
+        case other                    => invalidExprRouterInput("TupleExpr", other)
+
+    def iterator(value: Any): Iterator[Any] =
+      value.asInstanceOf[Expr] match
+        case Expr.TupleExpr(elements) => elements.iterator
+        case other                    => invalidExprRouterInput("TupleExpr", other)
+
+  private object ExprVectorRead extends VectorRead:
+    type State = ArrayBuffer[Expr]
+
+    def init(): State =
+      ArrayBuffer.empty[Expr]
+
+    def add(state: State, elem: Any): State =
+      state += elem.asInstanceOf[Expr]
+      state
+
+    def finish(state: State): Any =
+      Expr.VectorExpr(state.toIndexedSeq)
+
+  private object ExprVectorWrite extends VectorWrite:
+    def size(value: Any): Int =
+      value.asInstanceOf[Expr] match
+        case Expr.VectorExpr(elements) => elements.length
+        case other                     => invalidExprRouterInput("VectorExpr", other)
+
+    def iterator(value: Any): Iterator[Any] =
+      value.asInstanceOf[Expr] match
+        case Expr.VectorExpr(elements) => elements.iterator
+        case other                     => invalidExprRouterInput("VectorExpr", other)
+
+  private object ExprNamedTupleRead extends DictRead:
+    type State = ArrayBuffer[(String, Expr)]
+
+    def init(): State =
+      ArrayBuffer.empty[(String, Expr)]
+
+    def add(state: State, key: String, elem: Any): State =
+      state += ((key, elem.asInstanceOf[Expr]))
+      state
+
+    def finish(state: State): Any =
+      Expr.NamedTupleExpr(state.toIndexedSeq)
+
+  private object ExprNamedTupleWrite extends DictWrite:
+    def size(value: Any): Int =
+      value.asInstanceOf[Expr] match
+        case Expr.NamedTupleExpr(elements) => elements.length
+        case other                         => invalidExprRouterInput("NamedTupleExpr", other)
+
+    def iterator(value: Any): Iterator[(String, Any)] =
+      value.asInstanceOf[Expr] match
+        case Expr.NamedTupleExpr(elements) => elements.iterator.map((key, expr) => key -> expr)
+        case other                         => invalidExprRouterInput("NamedTupleExpr", other)
+
+  object ExprRouter:
+    final val NamedTupleCase = 0
+    final val TupleCase      = 1
+    final val VectorCase     = 2
+    final val StringCase     = 3
+    final val CharCase       = 4
+    final val IntCase        = 5
+    final val LongCase       = 6
+    final val FloatCase      = 7
+    final val DoubleCase     = 8
+    final val BooleanCase    = 9
+    final val NullCase       = 10
+
+  private object ExprRouterRead extends RouterRead:
+    override def onRecord(): Int  = ExprRouter.NamedTupleCase
+    override def onTuple(): Int   = ExprRouter.TupleCase
+    override def onVector(): Int  = ExprRouter.VectorCase
+    override def onString(): Int  = ExprRouter.StringCase
+    override def onChar(): Int    = ExprRouter.CharCase
+    override def onInt(): Int     = ExprRouter.IntCase
+    override def onLong(): Int    = ExprRouter.LongCase
+    override def onFloat(): Int   = ExprRouter.FloatCase
+    override def onDouble(): Int  = ExprRouter.DoubleCase
+    override def onBoolean(): Int = ExprRouter.BooleanCase
+    override def onNull(): Int    = ExprRouter.NullCase
+
+  private object ExprRouterWrite extends RouterWrite:
+    def caseIndex(value: Any): Int =
+      value match
+        case Expr.NamedTupleExpr(_)  => ExprRouter.NamedTupleCase
+        case Expr.TupleExpr(_)       => ExprRouter.TupleCase
+        case Expr.VectorExpr(_)      => ExprRouter.VectorCase
+        case Expr.StringConstant(_)  => ExprRouter.StringCase
+        case Expr.CharConstant(_)    => ExprRouter.CharCase
+        case Expr.IntConstant(_)     => ExprRouter.IntCase
+        case Expr.LongConstant(_)    => ExprRouter.LongCase
+        case Expr.FloatConstant(_)   => ExprRouter.FloatCase
+        case Expr.DoubleConstant(_)  => ExprRouter.DoubleCase
+        case Expr.BooleanConstant(_) =>
+          ExprRouter.BooleanCase
+        case Expr.NullConstant => ExprRouter.NullCase
+        case _                 => UnsupportedRouterCase
+
+  lazy val ExprRouterSchema: RawSchema =
+    lazy val self: RawSchema = RawSchema.Ref("Expr", () => ExprRouterSchema)
+    RawSchema.Router(
+      IArray(
+        RouterCase(
+          "NamedTupleExpr",
+          RawSchema.Dict(
+            self,
+            ExprNamedTupleRead,
+            ExprNamedTupleWrite
+          )
+        ),
+        RouterCase(
+          "TupleExpr",
+          RawSchema.TupleOf(
+            self,
+            ExprTupleRead,
+            ExprTupleWrite
+          )
+        ),
+        RouterCase(
+          "VectorExpr",
+          RawSchema.Vector(
+            self,
+            ExprVectorRead,
+            ExprVectorWrite
+          )
+        ),
+        RouterCase(
+          "StringConstant",
+          exprMappedPrimitive[String](
+            RawSchema.String,
+            Expr.StringConstant(_),
+            {
+              case Expr.StringConstant(value) => value
+              case other                      => invalidExprRouterInput("StringConstant", other)
+            }
+          )
+        ),
+        RouterCase(
+          "CharConstant",
+          exprMappedPrimitive[Char](
+            RawSchema.Char,
+            Expr.CharConstant(_),
+            {
+              case Expr.CharConstant(value) => value
+              case other                    => invalidExprRouterInput("CharConstant", other)
+            }
+          )
+        ),
+        RouterCase(
+          "IntConstant",
+          exprMappedPrimitive[Int](
+            RawSchema.Int,
+            Expr.IntConstant(_),
+            {
+              case Expr.IntConstant(value) => value
+              case other                   => invalidExprRouterInput("IntConstant", other)
+            }
+          )
+        ),
+        RouterCase(
+          "LongConstant",
+          exprMappedPrimitive[Long](
+            RawSchema.Long,
+            Expr.LongConstant(_),
+            {
+              case Expr.LongConstant(value) => value
+              case other                    => invalidExprRouterInput("LongConstant", other)
+            }
+          )
+        ),
+        RouterCase(
+          "FloatConstant",
+          exprMappedPrimitive[Float](
+            RawSchema.Float,
+            Expr.FloatConstant(_),
+            {
+              case Expr.FloatConstant(value) => value
+              case other                     => invalidExprRouterInput("FloatConstant", other)
+            }
+          )
+        ),
+        RouterCase(
+          "DoubleConstant",
+          exprMappedPrimitive[Double](
+            RawSchema.Double,
+            Expr.DoubleConstant(_),
+            {
+              case Expr.DoubleConstant(value) => value
+              case other                      => invalidExprRouterInput("DoubleConstant", other)
+            }
+          )
+        ),
+        RouterCase(
+          "BooleanConstant",
+          exprMappedPrimitive[Boolean](
+            RawSchema.Boolean,
+            Expr.BooleanConstant(_),
+            {
+              case Expr.BooleanConstant(value) => value
+              case other                       => invalidExprRouterInput("BooleanConstant", other)
+            }
+          )
+        ),
+        RouterCase(
+          "NullConstant",
+          mapResultAndInput(RawSchema.Null)(
+            resultMap0 = _ => okAny(Expr.NullConstant),
+            inputMap0 = value =>
+              value.asInstanceOf[Expr] match
+                case Expr.NullConstant => null
+                case other             => invalidExprRouterInput("NullConstant", other)
+          )
+        )
+      ),
+      ExprRouterRead,
+      ExprRouterWrite,
+      RouterNumberMode.Bounded
+    )
 
   trait NamedTupleRead:
     /** Abstract builder state, consumed and returned by the `add` methods. Implementations that
