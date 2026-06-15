@@ -84,8 +84,8 @@ private[scalanotation] final class TokenizeException(val message: String, val of
 private[scalanotation] final class Tokenizer private[internal] (
     private var input: String,
     private var index: Int,
-    // Whether identifier/field-name strings are classified and stored in `str`. Lookahead scouts
-    // read only token kinds, so they disable this to skip per-name work entirely.
+    // Whether token payloads are materialized. Lookahead scouts read only token kinds, so they
+    // disable this to skip per-name, string and numeric payload work.
     private var internNames: Boolean,
     // Whether interned names are cached in [[internTable]]. One-shot scanners disable this so the
     // fixed table is not allocated per decode; names are still materialized, just uncached.
@@ -199,6 +199,10 @@ private[scalanotation] final class Tokenizer private[internal] (
         table(slot) = s
         s
 
+  private def sliceEquals(from: Int, until: Int, expected: String): Boolean =
+    val len = until - from
+    len == expected.length && input.regionMatches(from, expected, 0, len)
+
   /** Scan the next token into the slot fields. Throws [[TokenizeException]] on malformed input. */
   def scanNext(): Unit =
     skipTrivia()
@@ -232,9 +236,13 @@ private[scalanotation] final class Tokenizer private[internal] (
     if index > start && input.charAt(index - 1) == '_' then
       while !isAtEnd && isOperatorPart(currentChar()) do advance()
     if !internNames then
-      // scout: only the token kind is consumed, and no scout consumer distinguishes identifiers
-      // from keywords, so classification and interning are skipped to avoid allocating
-      kind = TokenKind.Identifier
+      kind =
+        if sliceEquals(start, index, KW_true) then TokenKind.TrueKw
+        else if sliceEquals(start, index, KW_false) then TokenKind.FalseKw
+        else if sliceEquals(start, index, KW_null) then TokenKind.NullKw
+        else if sliceEquals(start, index, KW_Vector) then TokenKind.VectorId
+        else if sliceEquals(start, index, KW_EmptyTuple) then TokenKind.EmptyTupleId
+        else TokenKind.Identifier
     else
       // intern first (allocation-free on a hit), then classify the cached string: the hard
       // keywords need no `str`, identifiers and reserved keywords carry the interned name
@@ -255,21 +263,36 @@ private[scalanotation] final class Tokenizer private[internal] (
 
   private def scanQuotedIdentifier(): Unit =
     advance()
-    val builder = new StringBuilder
-    while !isAtEnd && currentChar() != '`' do
-      currentChar() match
-        case '\n' | '\r' =>
-          fail("Quoted identifier cannot contain a raw newline")
-        case '\\' =>
-          advance()
-          if isAtEnd then fail("Unterminated quoted identifier")
-          builder.append(scanEscape())
-        case _ =>
-          builder.append(advance())
-    if isAtEnd then fail("Unterminated quoted identifier")
-    advance()
-    kind = TokenKind.Identifier
-    str = internString(builder.result())
+    if !internNames then
+      while !isAtEnd && currentChar() != '`' do
+        currentChar() match
+          case '\n' | '\r' =>
+            fail("Quoted identifier cannot contain a raw newline")
+          case '\\' =>
+            advance()
+            if isAtEnd then fail("Unterminated quoted identifier")
+            scanEscape()
+          case _ =>
+            advance()
+      if isAtEnd then fail("Unterminated quoted identifier")
+      advance()
+      kind = TokenKind.Identifier
+    else
+      val builder = new StringBuilder
+      while !isAtEnd && currentChar() != '`' do
+        currentChar() match
+          case '\n' | '\r' =>
+            fail("Quoted identifier cannot contain a raw newline")
+          case '\\' =>
+            advance()
+            if isAtEnd then fail("Unterminated quoted identifier")
+            builder.append(scanEscape())
+          case _ =>
+            builder.append(advance())
+      if isAtEnd then fail("Unterminated quoted identifier")
+      advance()
+      kind = TokenKind.Identifier
+      str = internString(builder.result())
 
   private def scanEscape(): Char =
     if currentChar() == 'u' then scanUnicodeEscape()
@@ -413,38 +436,54 @@ private[scalanotation] final class Tokenizer private[internal] (
         kind = TokenKind.LongLit
       case 'f' | 'F' =>
         kind = TokenKind.FloatLit
-        dbl = parseFloatLiteral(normalizedDigits(sawSeparator)).toDouble
+        if internNames then dbl = parseFloatLiteral(normalizedDigits(sawSeparator)).toDouble
       case 'd' | 'D' =>
         kind = TokenKind.DoubleLit
-        dbl = parseDoubleLiteral(normalizedDigits(sawSeparator))
+        if internNames then dbl = parseDoubleLiteral(normalizedDigits(sawSeparator))
       case _ if hasDot || hasExponent =>
         kind = TokenKind.DoubleLit
-        dbl = parseDoubleLiteral(normalizedDigits(sawSeparator))
+        if internNames then dbl = parseDoubleLiteral(normalizedDigits(sawSeparator))
       case _ =>
         kind = TokenKind.IntLit
 
   private def scanString(): Unit =
     advance()
-    // fast path: an escape-free string is a slice of the input, no builder needed
-    val contentStart = index
-    while !isAtEnd && currentChar() != '"' && currentChar() != '\\' do advance()
-    if isAtEnd then fail("Unterminated string literal")
-    if currentChar() == '"' then
-      str = input.substring(contentStart, index)
-      advance()
+    if !internNames then
+      var done = false
+      while !done do
+        if isAtEnd then fail("Unterminated string literal")
+        currentChar() match
+          case '"' =>
+            advance()
+            done = true
+          case '\\' =>
+            advance()
+            if isAtEnd then fail("Unterminated string literal")
+            decodeEscape(advance())
+          case _ =>
+            advance()
       kind = TokenKind.StringLit
     else
-      val value = new StringBuilder(input.substring(contentStart, index))
-      while !isAtEnd && currentChar() != '"' do
-        if currentChar() == '\\' then
-          advance()
-          if isAtEnd then fail("Unterminated string literal")
-          value.append(decodeEscape(advance()))
-        else value.append(advance())
+      // fast path: an escape-free string is a slice of the input, no builder needed
+      val contentStart = index
+      while !isAtEnd && currentChar() != '"' && currentChar() != '\\' do advance()
       if isAtEnd then fail("Unterminated string literal")
-      advance()
-      kind = TokenKind.StringLit
-      str = value.result()
+      if currentChar() == '"' then
+        str = input.substring(contentStart, index)
+        advance()
+        kind = TokenKind.StringLit
+      else
+        val value = new StringBuilder(input.substring(contentStart, index))
+        while !isAtEnd && currentChar() != '"' do
+          if currentChar() == '\\' then
+            advance()
+            if isAtEnd then fail("Unterminated string literal")
+            value.append(decodeEscape(advance()))
+          else value.append(advance())
+        if isAtEnd then fail("Unterminated string literal")
+        advance()
+        kind = TokenKind.StringLit
+        str = value.result()
 
   private def scanChar(): Unit =
     advance()
@@ -459,7 +498,7 @@ private[scalanotation] final class Tokenizer private[internal] (
       fail("Character literal must contain exactly one character")
     advance()
     kind = TokenKind.CharLit
-    num = value.toLong
+    if internNames then num = value.toLong
 
   private def decodeEscape(ch: Char): Char =
     ch match

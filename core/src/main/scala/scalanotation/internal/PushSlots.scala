@@ -210,12 +210,34 @@ private[scalanotation] abstract class PushSlots extends Internal.PoolHolder:
       mapping: RawSchema.SchemaMapping,
       r: Result[Unit, DecodeError]
   ): Result[Unit, DecodeError] =
-    val fn = mapping.resultMap
-    if fn == null || r.isErr then r
+    if r.isErr then r
+    else if mapping.intTotalMap == null && mapping.floatTotalMap == null && mapping.doubleTotalMap == null
+    then
+      val fn = mapping.resultMap
+      if fn == null then r
+      else
+        fn(pullAny()) match
+          case Result.Ok(value)    => pushRef(value); r
+          case err @ Result.Err(_) => err
     else
-      fn(pullAny()) match
-        case Result.Ok(value)    => pushRef(value); r
-        case err @ Result.Err(_) => err
+      (lastSlotKind: @switch) match
+        case SlotKind.Int =>
+          val fn = mapping.intTotalMap
+          if fn != null then pushRef(fn(intSlot))
+        case SlotKind.Float =>
+          val fn = mapping.floatTotalMap
+          if fn != null then pushRef(fn(floatSlot))
+        case SlotKind.Double =>
+          val fn = mapping.doubleTotalMap
+          if fn != null then pushRef(fn(doubleSlot))
+        case _ => ()
+
+      val fn = mapping.resultMap
+      if fn == null then r
+      else
+        fn(pullAny()) match
+          case Result.Ok(value)    => pushRef(value); r
+          case err @ Result.Err(_) => err
 
   /** [[Result.eval.check]] with error decoration that allocates only on the error path */
   protected inline def checkOrRaise(inline r: Result[Unit, DecodeError])(
