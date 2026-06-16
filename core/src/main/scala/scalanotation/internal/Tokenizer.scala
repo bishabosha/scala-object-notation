@@ -861,15 +861,7 @@ private[scalanotation] abstract class TokenStream private[internal] (
   protected def spanAt(offset: Int): DecodeError.Span = Tokenizer.spanAt(input, offset)
   protected def currentSpan(): DecodeError.Span       = spanAt(starts(cur))
 
-  protected def peekSpan(): DecodeError.Span =
-    ensureLookahead(1)
-    spanAt(starts(slot(1)))
-
   protected def describeCurrent(): String = describeSlot(cur)
-
-  protected def describePeek(): String =
-    ensureLookahead(1)
-    describeSlot(slot(1))
 
   private def describeSlot(slot: Int): String =
     def raw = input.substring(starts(slot), ends(slot))
