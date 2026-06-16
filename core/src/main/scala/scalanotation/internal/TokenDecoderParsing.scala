@@ -1,16 +1,53 @@
 package scalanotation.internal
 
+import scalanotation.BuilderSlots
 import scalanotation.DecodeError
+import scalanotation.internal.BuilderSlotsPool.given
+import scalanotation.internal.Internal.loop
 import steps.result.Result
 import steps.result.Result.eval.check
 import steps.result.Result.eval.raise
 
-private[scalanotation] trait TokenExpressionParser extends TokenDecoderParsing:
-  self: TokenStream =>
-  // used to contain some methods for Expr decoding.
+import scala.util.boundary.Label
 
-private[scalanotation] trait TokenDecoderParsing extends TokenDecoderSupport:
+private[scalanotation] trait TokenDecoderParsing:
   self: TokenStream =>
+
+  protected type Resulting[+A, +E] = Label[Result.Err[E]] ?=> A
+
+  protected def slotsPooling: Boolean
+
+  protected final val namedTupleParseResult: NamedTupleParseResult =
+    new NamedTupleParseResult()
+
+  // pooled builder slots for product-like schemas with a slots factory; borrow/release pairs nest,
+  // so a reentrant decode inside a field value borrows a fresh instance. Lazy: a one-shot decoder
+  // skips the slots path and must not pay for the pool either.
+  private lazy val slotsPool = Internal.LocalPool[BuilderSlots]()
+
+  protected final def expectedTypeAtCurrent(schema: RawSchema): DecodeError =
+    DecodeError.ExpectedType(schema.describeSelf, describeCurrent()).atToken(currentSpan())
+
+  protected final def missingReadCapability(schema: RawSchema): Nothing =
+    throw IllegalStateException(
+      s"read is not available for schema ${schema.describeSelf}"
+    )
+
+  protected inline def withRead[T, S <: RawSchema, R](
+      schema: S,
+      inline r: S => R | Null
+  )(inline f: R => T): T =
+    val read = r(schema)
+    if read == null then missingReadCapability(schema)
+    else f(read.nn)
+
+  protected inline def withBorrowSlots[T](
+      factory: scalanotation.TypedFactory.OfProduct[?] | Null
+  )(inline f: (BuilderSlots | Null) => T): T =
+    def useSlots(slots: BuilderSlots | Null): T =
+      f(slots)
+    if !slotsPooling || factory == null then useSlots(null)
+    else slotsPool.withBorrowed(useSlots)
 
   /** decodes a string (with `+` concatenation), pushing the value into [[stringSlot]] */
   protected final def decodeString(): Result[Unit, DecodeError] =
@@ -177,6 +214,133 @@ private[scalanotation] trait TokenDecoderParsing extends TokenDecoderSupport:
     def exprToEval(): T = op
     exprToEval()
 
+  protected inline val VariableTupleSlots = -1
+
+  protected inline def parseTupleLike[State](
+      schema: RawSchema,
+      state0: State,
+      expectedSlots: Int
+  )(
+      inline decodeElement: Int => Result[Unit, DecodeError],
+      inline addElement: (State, Int) => State
+  ): Resulting[State, DecodeError] =
+    currentKind() match
+      case TokenKind.EmptyTupleId =>
+        val emptyTupleOffset = currentOffset()
+        advance()
+        if expectedSlots > 0 then
+          raise(
+            DecodeError.FieldCountMismatch(expectedSlots, 0).atToken(spanAt(emptyTupleOffset))
+          )
+        state0
+      case TokenKind.TupleId =>
+        parseSingletonTupleLike(state0, expectedSlots)(decodeElement, addElement)
+      case TokenKind.LParen =>
+        val openOffset = currentOffset()
+        advance()
+        if currentKind() == TokenKind.RParen then
+          raise(DecodeError.UnitValueNotAllowed().atToken(currentSpan()))
+        if expectedSlots == 0 then
+          raise(DecodeError.FieldCountMismatch(0, 1).atToken(currentSpan()))
+        decodeElement(0).check
+        currentKind() match
+          case TokenKind.Comma =>
+            def commaTail() = parseTupleCommaTailLike(
+              addElement(state0, 0),
+              startCount = 1,
+              expectedSlots
+            )(
+              decodeElement,
+              addElement
+            )
+            commaTail().check
+            pullAny().asInstanceOf[State]
+          case TokenKind.RParen =>
+            raise(
+              DecodeError
+                .ExpectedType(schema.describeSelf, "(...)")
+                .atToken(spanAt(openOffset))
+            )
+          case _ =>
+            raise(DecodeError.ExpectedRParen(describeCurrent()).atToken(currentSpan()))
+      case _ =>
+        raise(
+          DecodeError
+            .ExpectedType(schema.describeSelf, describeCurrent())
+            .atToken(currentSpan())
+        )
+
+  protected inline def parseSingletonTupleLike[State](
+      state0: State,
+      expectedSlots: Int
+  )(
+      inline decodeElement: Int => Result[Unit, DecodeError],
+      inline addElement: (State, Int) => State
+  ): Resulting[State, DecodeError] =
+    val tupleOffset = currentOffset()
+    advance()
+    if currentKind() == TokenKind.LParen then advance()
+    else
+      raise(
+        DecodeError.ExpectedType("Tuple(...)", describeCurrent()).atToken(currentSpan())
+      )
+    if currentKind() == TokenKind.RParen then
+      raise(DecodeError.FieldCountMismatch(1, 0).atToken(currentSpan()))
+    if expectedSlots == 0 then
+      raise(DecodeError.FieldCountMismatch(0, 1).atToken(spanAt(tupleOffset)))
+
+    decodeElement(0).check
+    currentKind() match
+      case TokenKind.RParen =>
+        advance()
+        if expectedSlots > 1 then
+          raise(DecodeError.FieldCountMismatch(expectedSlots, 1).atToken(spanAt(tupleOffset)))
+        addElement(state0, 0)
+      case TokenKind.Comma =>
+        raise(DecodeError.FieldCountMismatch(1, 2).atToken(currentSpan()))
+      case _ =>
+        raise(DecodeError.ExpectedRParen(describeCurrent()).atToken(currentSpan()))
+
+  protected inline def parseTupleCommaTailLike[State](
+      state0: State,
+      startCount: Int,
+      expectedSlots: Int
+  )(
+      inline decodeElement: Int => Result[Unit, DecodeError],
+      inline addElement: (State, Int) => State
+  ): Result[Unit, DecodeError] = Result.task {
+    var state                         = state0
+    var count                         = startCount
+    val closingSpan: DecodeError.Span = loop {
+      currentKind() match
+        case TokenKind.Comma =>
+          advance()
+          currentKind() match
+            case TokenKind.RParen =>
+              loop.break(currentSpan())
+            case _ =>
+              if expectedSlots > 0 && count >= expectedSlots then
+                raise(
+                  DecodeError
+                    .FieldCountMismatch(expectedSlots, count + 1)
+                    .atToken(currentSpan())
+                )
+              decodeElement(count).check
+              state = addElement(state, count)
+              count += 1
+        case TokenKind.RParen =>
+          loop.break(currentSpan())
+        case _ =>
+          raise(DecodeError.ExpectedRParen(describeCurrent()).atToken(currentSpan()))
+    }
+    assert(currentKind() == TokenKind.RParen)
+    advance()
+    if count == 1 then raise(DecodeError.FieldCountMismatch(2, 1).atToken(closingSpan))
+    if expectedSlots > 0 && count != expectedSlots then
+      raise(DecodeError.FieldCountMismatch(expectedSlots, count).atToken(closingSpan))
+    pushRef(state)
+  }
+
   /** parses `<name> =`, pushing the field name into [[stringSlot]] */
   protected final def parseNamedFieldStart(): Result[Unit, DecodeError] =
     Result.task:
@@ -255,8 +419,6 @@ private[scalanotation] trait TokenDecoderParsing extends TokenDecoderSupport:
     // well enough to pass along the label. i would like to investigate why.
     {
       scala.util.boundary {
-        import Internal.loop
-
         currentKind() match {
           case TokenKind.RParen =>
             val closingOffset = currentOffset()

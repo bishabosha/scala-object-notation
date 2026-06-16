@@ -6,7 +6,7 @@ import steps.result.Result
 import steps.result.Result.eval.check
 import steps.result.Result.eval.raise
 
-private[scalanotation] trait TokenSchemaDecoder extends TokenTupleDecoder:
+private[scalanotation] trait TokenSchemaDecoder extends TokenDecoderParsing:
   self: TokenStream =>
 
   protected final def decodeBase(schema: RawSchema): Result[Unit, DecodeError] =
@@ -108,14 +108,11 @@ private[scalanotation] trait TokenSchemaDecoder extends TokenTupleDecoder:
       if schema.read == null then missingReadCapability(schema)
       val index = schema.read.nn.route(construct)
       if index < 0 || index >= schema.cases.length then
-        if schema eq RawSchema.ExprRouterSchema then
-          raise(DecodeError.ExpectedExpression(describeCurrent()).atToken(currentSpan()))
-        else
-          raise(
-            DecodeError
-              .ExpectedType(schema.describeSelf, describeCurrent())
-              .atToken(currentSpan())
-          )
+        raise(
+          DecodeError
+            .ExpectedType(schema.describeSelf, describeCurrent())
+            .atToken(currentSpan())
+        )
       decodeBase(schema.cases(index).schema).check
 
   private def numberConstruct(
@@ -126,10 +123,35 @@ private[scalanotation] trait TokenSchemaDecoder extends TokenTupleDecoder:
       case RawSchema.RouterNumberMode.Bounded => bounded
       case RawSchema.RouterNumberMode.Raw     => RawSchema.RouterConstruct.RawNumber
 
+  protected final def decodeTuple(schema: RawSchema.Tuple): Result[Unit, DecodeError] =
+    withRead(schema, _.read) { read =>
+      withBorrowSlots(read.slotsFactory) { pooled =>
+        Result.task {
+          val slots              = schema.slots
+          val state0: read.State = read.initPooled(slots.length, pooled)
+          val expectedSlots      = slots.length
+          val state1             = parseTupleLike(
+            schema,
+            state0,
+            expectedSlots
+          )(
+            index => decodeTupleSlotValue(slots, index),
+            (state, index) => addSlot(read)(state, index)
+          )
+          pushRef(read.finish(state1))
+        }
+      }
+    }
+
+  protected final def decodeTupleSlotValue(
+      slots: IArray[RawSchema],
+      index: Int
+  ): Result[Unit, DecodeError] =
+    decodeBase(slots(index)) match
+      case Result.Err(error) => Result.Err(error.atPath(s"[$index]"))
+      case ok                => ok
+
   private def parenStartsRecord(): Boolean =
-    val pre  = asFieldNameStart(peekKind())
-    val post = peekSecondKind() - TokenKind.Equals
-    (pre ^ post) > 0
     isFieldNameStart(peekKind()) && peekSecondKind() == TokenKind.Equals
 
   private inline val FieldNameStartMask =
@@ -142,9 +164,6 @@ private[scalanotation] trait TokenSchemaDecoder extends TokenTupleDecoder:
 
   private inline def isFieldNameStart(kind: Int): Boolean =
     ((FieldNameStartMask >>> kind) & 1) != 0
-
-  private inline def asFieldNameStart(kind: Int): Int =
-    ((FieldNameStartMask >>> kind) & 1)
 
   protected final def decodeNamedTuple(
       schema: RawSchema.NamedTuple
