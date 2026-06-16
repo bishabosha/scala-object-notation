@@ -272,6 +272,28 @@ object Reader extends ReaderLowPriority, CommonTypeClassCompanion[Reader]:
         )
       )
 
+    given [Path <: String, K, V, Col[X, Y] <: scala.collection.Map[X, Y]]
+      => NotGiven[K =:= String]
+      => (entry: AtPath[Path + "[]", (K, V)])
+      => (factory: scala.collection.Factory[(K, V), Col[K, V]])
+      => AtPath[Path, Col[K, V]] =
+      liftAtPath[Path, Col[K, V]](
+        fromSchema[Col[K, V]](
+          RawSchema.mapPure(
+            RawSchema.Vector(
+              entry.typeclass.schema,
+              RawSchema.VectorRead.FromReaderBuilder(PublicInternal.BuildVector[(K, V)]),
+              write = null
+            )
+          )(value =>
+            buildMapFromEntries(
+              value.asInstanceOf[Vector[(K, V)]],
+              factory
+            )
+          )
+        )
+      )
+
   override object Builders extends ReaderBuilders[false]:
     val thisBuilder: this.type = this
     override type ThisBuilder = thisBuilder.type

@@ -28,6 +28,19 @@ private[scalanotation] trait CommonTypeClassCompanion[TC[_]]:
       )
     )
 
+  protected final def buildMapFromEntries[K, V, Col[X, Y] <: scala.collection.Map[X, Y]](
+      entries: Vector[(K, V)],
+      factory: scala.collection.Factory[(K, V), Col[K, V]]
+  ): Col[K, V] =
+    val builder = factory.newBuilder
+    builder.addAll(entries)
+    builder.result()
+
+  protected final def mapEntries[K, V, Col[X, Y] <: scala.collection.Map[X, Y]](
+      value: Col[K, V]
+  ): Vector[(K, V)] =
+    Vector.from(value.iterator)
+
   trait CommonDerivationBuilders[
       RejectAllOptionalProducts <: Boolean,
       TypeClassName <: "Reader" | "Writer" | "ReadWriter"
@@ -389,6 +402,12 @@ private[scalanotation] trait CommonTypeClassCompanion[TC[_]]:
   given MapSchema: [Col[X, Y] <: scala.collection.Map[X, Y], T]
     => (atPath: Builders.AtPath["", Col[String, T]])
     => TC[Col[String, T]] =
+    atPath.typeclass
+
+  given [Col[X, Y] <: scala.collection.Map[X, Y], K, V]
+    => NotGiven[K =:= String]
+    => (atPath: Builders.AtPath["", Col[K, V]])
+    => TC[Col[K, V]] =
     atPath.typeclass
 
   given TupleSchema: [T <: Tuple]
