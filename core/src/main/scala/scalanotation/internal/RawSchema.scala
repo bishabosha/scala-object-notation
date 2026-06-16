@@ -189,100 +189,52 @@ private[scalanotation] object RawSchema:
 
   final case class SchemaMapping(
       resultMap: ResultMap | Null = null,
-      inputMap: InputMap | Null = null
+      inputMap: InputMap | Null = null,
+      totalMaps: SchemaMapping.TotalMap = SchemaMapping.TotalMap.empty
   ):
-    private var intTotalMap0: IntTotalMap | Null       = null
-    private var longTotalMap0: LongTotalMap | Null     = null
-    private var floatTotalMap0: FloatTotalMap | Null   = null
-    private var doubleTotalMap0: DoubleTotalMap | Null = null
-    private var totalMap0: InputMap | Null             = null
+    def this(resultMap: ResultMap | Null, inputMap: InputMap | Null) =
+      this(resultMap, inputMap, SchemaMapping.TotalMap.empty)
 
-    def intTotalMap: IntTotalMap | Null = intTotalMap0
-
-    def longTotalMap: LongTotalMap | Null = longTotalMap0
-
-    def floatTotalMap: FloatTotalMap | Null = floatTotalMap0
-
-    def doubleTotalMap: DoubleTotalMap | Null = doubleTotalMap0
-
-    def totalMap: InputMap | Null = totalMap0
-
+    @deprecated("unused", "0.3.9")
     def mapResult(result: Result[Any, DecodeError]): Result[Any, DecodeError] =
-      if intTotalMap == null && longTotalMap == null && floatTotalMap == null && doubleTotalMap == null && totalMap == null
-      then
-        val fn = resultMap
-        if fn == null then result
-        else result.flatMap(fn)
-      else
-        result match
-          case Result.Ok(value) =>
-            var mappedValue = value
-            var mapped      = false
-
-            val intFn = intTotalMap
-            if intFn != null && value.isInstanceOf[Int] then
-              mappedValue = intFn(value.asInstanceOf[Int])
-              mapped = true
-            else
-              val longFn = longTotalMap
-              if longFn != null && value.isInstanceOf[Long] then
-                mappedValue = longFn(value.asInstanceOf[Long])
-                mapped = true
-              else
-                val floatFn = floatTotalMap
-                if floatFn != null && value.isInstanceOf[Float] then
-                  mappedValue = floatFn(value.asInstanceOf[Float])
-                  mapped = true
-                else
-                  val doubleFn = doubleTotalMap
-                  if doubleFn != null && value.isInstanceOf[Double] then
-                    mappedValue = doubleFn(value.asInstanceOf[Double])
-                    mapped = true
-
-            if !mapped then
-              val anyFn = totalMap
-              if anyFn != null then
-                mappedValue = anyFn(value)
-                mapped = true
-
-            val fn = resultMap
-            if fn != null then fn(mappedValue)
-            else if mapped then okAny(mappedValue)
-            else result
-          case err @ Result.Err(_) => err
+      result match
+        case Result.Ok(value) =>
+          totalMaps match
+            case SchemaMapping.TotalMap.IntMap(fn) =>
+              okAny(fn(value.asInstanceOf[Int]))
+            case SchemaMapping.TotalMap.LongMap(fn) =>
+              okAny(fn(value.asInstanceOf[Long]))
+            case SchemaMapping.TotalMap.FloatMap(fn) =>
+              okAny(fn(value.asInstanceOf[Float]))
+            case SchemaMapping.TotalMap.DoubleMap(fn) =>
+              okAny(fn(value.asInstanceOf[Double]))
+            case SchemaMapping.TotalMap.AnyMap(fn) =>
+              okAny(fn(value))
+            case SchemaMapping.TotalMap.Empty =>
+              val fn = resultMap
+              if fn == null then result
+              else result.flatMap(fn)
+          end match
+        case err @ Result.Err(_) => err
 
     def mapInput(value: Any): Any =
       val fn = inputMap
       if fn == null then value
       else fn(value)
 
-    private def copyWith(
-        resultMap0: ResultMap | Null = resultMap,
-        inputMap0: InputMap | Null = inputMap,
-        intTotalMap1: IntTotalMap | Null = intTotalMap0,
-        longTotalMap1: LongTotalMap | Null = longTotalMap0,
-        floatTotalMap1: FloatTotalMap | Null = floatTotalMap0,
-        doubleTotalMap1: DoubleTotalMap | Null = doubleTotalMap0,
-        totalMap1: InputMap | Null = totalMap0
-    ): SchemaMapping =
-      val next = SchemaMapping(resultMap0, inputMap0)
-      next.intTotalMap0 = intTotalMap1
-      next.longTotalMap0 = longTotalMap1
-      next.floatTotalMap0 = floatTotalMap1
-      next.doubleTotalMap0 = doubleTotalMap1
-      next.totalMap0 = totalMap1
-      next
+    def copy(resultMap: ResultMap | Null, inputMap: InputMap | Null): SchemaMapping =
+      SchemaMapping(resultMap, inputMap, totalMaps)
 
     def withResultMap(f: ResultMap): SchemaMapping =
-      copyWith(
-        resultMap0 =
+      copy(
+        resultMap =
           if resultMap == null then f
           else value => resultMap.nn(value).flatMap(f)
       )
 
     def withInputMap(f: InputMap): SchemaMapping =
-      copyWith(
-        inputMap0 =
+      copy(
+        inputMap =
           if inputMap == null then f
           else value => inputMap.nn(f(value))
       )
@@ -290,23 +242,62 @@ private[scalanotation] object RawSchema:
     def withMapped(resultMap0: ResultMap, inputMap0: InputMap): SchemaMapping =
       withResultMap(resultMap0).withInputMap(inputMap0)
 
+    def withPureMap(f: InputMap): SchemaMapping =
+      if resultMap == null then
+        copy(totalMaps = totalMaps match
+          case SchemaMapping.TotalMap.Empty      => SchemaMapping.TotalMap.AnyMap(f)
+          case SchemaMapping.TotalMap.IntMap(fn) =>
+            SchemaMapping.TotalMap.IntMap(value => f(fn(value)))
+          case SchemaMapping.TotalMap.LongMap(fn) =>
+            SchemaMapping.TotalMap.LongMap(value => f(fn(value)))
+          case SchemaMapping.TotalMap.FloatMap(fn) =>
+            SchemaMapping.TotalMap.FloatMap(value => f(fn(value)))
+          case SchemaMapping.TotalMap.DoubleMap(fn) =>
+            SchemaMapping.TotalMap.DoubleMap(value => f(fn(value)))
+          case SchemaMapping.TotalMap.AnyMap(fn) =>
+            SchemaMapping.TotalMap.AnyMap(value => f(fn(value))))
+      else
+        val fn = resultMap
+        copy(resultMap =
+          value =>
+            fn.nn(value) match
+              case Result.Ok(mapped)   => okAny(f(mapped))
+              case err @ Result.Err(_) => err
+        )
+
     def withIntTotalMap(f: IntTotalMap): SchemaMapping =
-      copyWith(intTotalMap1 = f)
+      copy(totalMaps = SchemaMapping.TotalMap.IntMap(f))
 
     def withLongTotalMap(f: LongTotalMap): SchemaMapping =
-      copyWith(longTotalMap1 = f)
+      copy(totalMaps = SchemaMapping.TotalMap.LongMap(f))
 
     def withFloatTotalMap(f: FloatTotalMap): SchemaMapping =
-      copyWith(floatTotalMap1 = f)
+      copy(totalMaps = SchemaMapping.TotalMap.FloatMap(f))
 
     def withDoubleTotalMap(f: DoubleTotalMap): SchemaMapping =
-      copyWith(doubleTotalMap1 = f)
+      copy(totalMaps = SchemaMapping.TotalMap.DoubleMap(f))
 
     def withTotalMap(f: InputMap): SchemaMapping =
-      copyWith(totalMap1 = f)
+      copy(totalMaps = SchemaMapping.TotalMap.AnyMap(f))
 
   object SchemaMapping:
+    sealed abstract class TotalMap:
+      def isEmpty: Boolean = this eq TotalMap.Empty
+
+    object TotalMap:
+      case object Empty                              extends TotalMap
+      final case class IntMap(fn: IntTotalMap)       extends TotalMap
+      final case class LongMap(fn: LongTotalMap)     extends TotalMap
+      final case class FloatMap(fn: FloatTotalMap)   extends TotalMap
+      final case class DoubleMap(fn: DoubleTotalMap) extends TotalMap
+      final case class AnyMap(fn: InputMap)          extends TotalMap
+
+      val empty: TotalMap = Empty
+
     val empty: SchemaMapping = SchemaMapping()
+
+    def apply(resultMap: ResultMap | Null, inputMap: InputMap | Null): SchemaMapping =
+      new SchemaMapping(resultMap, inputMap)
 
   final class Key[T]()
   val IsValidNamedTupleSchema: Key[Result[Unit, DecodeError]] = Key()
@@ -389,7 +380,7 @@ private[scalanotation] object RawSchema:
       read: A => Expr,
       write: Expr => A
   ): RawSchema =
-    mapTotalAndInput(base)(
+    mapPureAndInput(base)(
       resultMap0 = value => read(value.asInstanceOf[A]),
       inputMap0 = value => write(value.asInstanceOf[Expr])
     )
@@ -646,7 +637,7 @@ private[scalanotation] object RawSchema:
         ),
         RouterCase(
           "NullConstant",
-          mapTotalAndInput(RawSchema.Null)(
+          mapPureAndInput(RawSchema.Null)(
             resultMap0 = _ => Expr.NullConstant,
             inputMap0 = value =>
               value.asInstanceOf[Expr] match
@@ -973,6 +964,13 @@ private[scalanotation] object RawSchema:
   ): RawSchema =
     base.withMapping(_.withInputMap(f))
 
+  def mapPure(
+      base: RawSchema
+  )(
+      f: InputMap
+  ): RawSchema =
+    base.withMapping(_.withPureMap(f))
+
   def mapResultAndInput(
       base: RawSchema
   )(
@@ -981,13 +979,13 @@ private[scalanotation] object RawSchema:
   ): RawSchema =
     base.withMapping(_.withMapped(resultMap0, inputMap0))
 
-  private def mapTotalAndInput(
+  def mapPureAndInput(
       base: RawSchema
   )(
       resultMap0: InputMap,
       inputMap0: InputMap
   ): RawSchema =
-    base.withMapping(_.withTotalMap(resultMap0).withInputMap(inputMap0))
+    base.withMapping(_.withPureMap(resultMap0).withInputMap(inputMap0))
 
   private def mapIntTotalAndInput(
       base: RawSchema

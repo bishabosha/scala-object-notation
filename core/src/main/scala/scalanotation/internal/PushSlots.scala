@@ -3,7 +3,7 @@ package scalanotation.internal
 import scalanotation.DecodeError
 import scalanotation.internal.RawSchema.Field
 import steps.result.Result
-import steps.result.Result.eval.raise
+import steps.result.Result.eval.{raise, ok}
 
 import scala.annotation.switch
 
@@ -207,54 +207,30 @@ private[scalanotation] abstract class PushSlots extends Internal.PoolHolder:
 
   /** applies a [[RawSchema.Mapped]] mapping to the live slot after a successful push */
   protected final def mapSlot(
-      mapping: RawSchema.SchemaMapping,
-      r: Result[Unit, DecodeError]
-  ): Result[Unit, DecodeError] =
-    if r.isErr then r
-    else if mapping.intTotalMap == null && mapping.longTotalMap == null
-      && mapping.floatTotalMap == null && mapping.doubleTotalMap == null && mapping.totalMap == null
-    then
-      val fn = mapping.resultMap
-      if fn == null then r
-      else
-        fn(pullAny()) match
-          case Result.Ok(value)    => pushRef(value); r
-          case err @ Result.Err(_) => err
-    else
-      var mappedTotal = false
-      (lastSlotKind: @switch) match
-        case SlotKind.Int =>
-          val fn = mapping.intTotalMap
-          if fn != null then
-            pushRef(fn(intSlot))
-            mappedTotal = true
-        case SlotKind.Long =>
-          val fn = mapping.longTotalMap
-          if fn != null then
-            pushRef(fn(longSlot))
-            mappedTotal = true
-        case SlotKind.Float =>
-          val fn = mapping.floatTotalMap
-          if fn != null then
-            pushRef(fn(floatSlot))
-            mappedTotal = true
-        case SlotKind.Double =>
-          val fn = mapping.doubleTotalMap
-          if fn != null then
-            pushRef(fn(doubleSlot))
-            mappedTotal = true
-        case _ => ()
-
-      if !mappedTotal then
-        val fn = mapping.totalMap
-        if fn != null then pushRef(fn(pullAny()))
-
-      val fn = mapping.resultMap
-      if fn == null then r
-      else
-        fn(pullAny()) match
-          case Result.Ok(value)    => pushRef(value); r
-          case err @ Result.Err(_) => err
+      mapping: RawSchema.SchemaMapping
+  ): Result[Unit, DecodeError] = Result.task {
+    mapping.totalMaps match
+      case RawSchema.SchemaMapping.TotalMap.IntMap(fn) =>
+        if lastSlotKind == SlotKind.Int then pushRef(fn(intSlot))
+        else pushRef(fn(pullAny().asInstanceOf[Int]))
+      case RawSchema.SchemaMapping.TotalMap.LongMap(fn) =>
+        if lastSlotKind == SlotKind.Long then pushRef(fn(longSlot))
+        else pushRef(fn(pullAny().asInstanceOf[Long]))
+      case RawSchema.SchemaMapping.TotalMap.FloatMap(fn) =>
+        if lastSlotKind == SlotKind.Float then pushRef(fn(floatSlot))
+        else pushRef(fn(pullAny().asInstanceOf[Float]))
+      case RawSchema.SchemaMapping.TotalMap.DoubleMap(fn) =>
+        if lastSlotKind == SlotKind.Double then pushRef(fn(doubleSlot))
+        else pushRef(fn(pullAny().asInstanceOf[Double]))
+      case RawSchema.SchemaMapping.TotalMap.AnyMap(fn) =>
+        pushRef(fn(pullAny()))
+      case RawSchema.SchemaMapping.TotalMap.Empty =>
+        val fn = mapping.resultMap
+        if fn == null then () // preserve the live slot as-is
+        else
+          val value1 = fn(pullAny()).ok
+          pushRef(value1)
+  }
 
   /** [[Result.eval.check]] with error decoration that allocates only on the error path */
   protected inline def checkOrRaise(inline r: Result[Unit, DecodeError])(
