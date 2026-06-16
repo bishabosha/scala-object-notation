@@ -775,13 +775,9 @@ private[scalanotation] object Tokenizer:
   def tokenize(input: String, debug: Boolean): Result[List[Token], DecodeError] =
     Tokenizer(input).tokenize(debug)
 
-  /** A scanner positioned at `offset` — used for non-buffering scout scans. */
-  private[internal] def startingAt(input: String, offset: Int): Tokenizer =
-    Tokenizer(input, offset, internNames = false, cacheNames = false)
-
-/** A bounded buffer over a streaming [[Tokenizer]]: at most two tokens (the current token plus a
-  * single lookahead) are buffered at any time, held in vectorized slots — parallel arrays with an
-  * unboxed Int kind slot and unboxed Int offset slots per token. Boxed [[Token]]s and
+/** A bounded buffer over a streaming [[Tokenizer]]: at most three tokens (the current token plus
+  * two lookahead tokens) are buffered at any time, held in vectorized slots — parallel arrays with
+  * an unboxed Int kind slot and unboxed Int offset slots per token. Boxed [[Token]]s and
   * [[DecodeError.Span]]s are only materialized when constructing a [[DecodeError]] (or for debug
   * output).
   */
@@ -797,16 +793,16 @@ private[scalanotation] abstract class TokenStream private[internal] (
   private val scanner =
     Tokenizer(input, 0, internNames = true, cacheNames = cacheNamesOnInit)
 
-  // vectorized slots: indices 0 and 1 hold the at-most-two buffered tokens
-  private val kinds  = new Array[Int](2)
-  private val starts = new Array[Int](2)
-  private val ends   = new Array[Int](2)
-  private val strs   = new Array[String | Null](2)
-  private val nums   = new Array[Long](2)
-  private val dbls   = new Array[Double](2)
+  // vectorized slots: a tiny ring holding current, first lookahead, and second lookahead
+  private val kinds  = new Array[Int](3)
+  private val starts = new Array[Int](3)
+  private val ends   = new Array[Int](3)
+  private val strs   = new Array[String | Null](3)
+  private val nums   = new Array[Long](3)
+  private val dbls   = new Array[Double](3)
 
-  private var cur      = 0
-  private var buffered = false // does slot (cur ^ 1) hold the single-token lookahead?
+  private var cur            = 0
+  private var lookaheadCount = 0
 
   if scanOnInit then scanIntoSlot(cur) // initialize the current token
 
@@ -817,8 +813,9 @@ private[scalanotation] abstract class TokenStream private[internal] (
     scanner.reset(newInput)
     strs(0) = null // release references to the previous input's strings
     strs(1) = null
+    strs(2) = null
     cur = 0
-    buffered = false
+    lookaheadCount = 0
     scanIntoSlot(cur)
 
   private def scanIntoSlot(slot: Int): Unit =
@@ -837,16 +834,27 @@ private[scalanotation] abstract class TokenStream private[internal] (
   protected def currentKind(): Int   = kinds(cur)
   protected def currentOffset(): Int = starts(cur)
 
+  private def slot(offset: Int): Int =
+    val next = cur + offset
+    if next >= 3 then next - 3 else next
+
+  private def ensureLookahead(count: Int): Unit =
+    while lookaheadCount < count do
+      lookaheadCount += 1
+      scanIntoSlot(slot(lookaheadCount))
+
   protected def peekKind(): Int =
-    if !buffered then
-      scanIntoSlot(cur ^ 1)
-      buffered = true
-    kinds(cur ^ 1)
+    ensureLookahead(1)
+    kinds(slot(1))
+
+  protected def peekSecondKind(): Int =
+    ensureLookahead(2)
+    kinds(slot(2))
 
   protected def advance(): Unit =
-    if buffered then
-      cur ^= 1
-      buffered = false
+    if lookaheadCount > 0 then
+      cur = slot(1)
+      lookaheadCount -= 1
     else if kinds(cur) != TokenKind.Eof then scanIntoSlot(cur)
 
   // payload accessors — happy path, unboxed where primitive. Int and Long take the sign decoded
@@ -869,19 +877,14 @@ private[scalanotation] abstract class TokenStream private[internal] (
   protected def currentSpan(): DecodeError.Span       = spanAt(starts(cur))
 
   protected def peekSpan(): DecodeError.Span =
-    peekKind() // ensure the lookahead slot is filled
-    spanAt(starts(cur ^ 1))
+    ensureLookahead(1)
+    spanAt(starts(slot(1)))
 
   protected def describeCurrent(): String = describeSlot(cur)
 
   protected def describePeek(): String =
-    peekKind() // ensure the lookahead slot is filled
-    describeSlot(cur ^ 1)
-
-  /** A fresh scanner positioned at the current token, for bounded-memory lookahead scans beyond the
-    * single buffered token. The main stream is unaffected.
-    */
-  protected def scoutFromCurrent(): Tokenizer = Tokenizer.startingAt(input, currentOffset())
+    ensureLookahead(1)
+    describeSlot(slot(1))
 
   private def describeSlot(slot: Int): String =
     def raw = input.substring(starts(slot), ends(slot))

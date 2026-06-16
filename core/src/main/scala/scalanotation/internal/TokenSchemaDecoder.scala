@@ -126,15 +126,24 @@ private[scalanotation] trait TokenSchemaDecoder extends TokenTupleDecoder:
       case RawSchema.RouterNumberMode.Raw     => RawSchema.RouterConstruct.RawNumber
 
   private def parenStartsRecord(): Boolean =
-    val scout = scoutFromCurrent()
-    scout.scanNext()
-    scout.scanNext()
-    scout.kind match
-      case TokenKind.Identifier | TokenKind.VectorId | TokenKind.EmptyTupleId | TokenKind.TupleId |
-          TokenKind.Plus | TokenKind.Minus =>
-        scout.scanNext()
-        scout.kind == TokenKind.Equals
-      case _ => false
+    val pre = asFieldNameStart(peekKind())
+    val post = peekSecondKind() - TokenKind.Equals
+    (pre ^ post) > 0
+    isFieldNameStart(peekKind()) && peekSecondKind() == TokenKind.Equals
+
+  private inline val FieldNameStartMask =
+    (1 << TokenKind.Identifier) |
+      (1 << TokenKind.VectorId) |
+      (1 << TokenKind.EmptyTupleId) |
+      (1 << TokenKind.TupleId) |
+      (1 << TokenKind.Plus) |
+      (1 << TokenKind.Minus)
+
+  private inline def isFieldNameStart(kind: Int): Boolean =
+    ((FieldNameStartMask >>> kind) & 1) != 0
+
+  private inline def asFieldNameStart(kind: Int): Int =
+    ((FieldNameStartMask >>> kind) & 1)
 
   protected final def decodeNamedTuple(
       schema: RawSchema.NamedTuple
