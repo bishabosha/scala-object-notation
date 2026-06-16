@@ -195,28 +195,6 @@ private[scalanotation] object RawSchema:
     def this(resultMap: ResultMap | Null, inputMap: InputMap | Null) =
       this(resultMap, inputMap, SchemaMapping.TotalMap.empty)
 
-    @deprecated("unused", "0.3.9")
-    def mapResult(result: Result[Any, DecodeError]): Result[Any, DecodeError] =
-      result match
-        case Result.Ok(value) =>
-          totalMaps match
-            case SchemaMapping.TotalMap.IntMap(fn) =>
-              okAny(fn(value.asInstanceOf[Int]))
-            case SchemaMapping.TotalMap.LongMap(fn) =>
-              okAny(fn(value.asInstanceOf[Long]))
-            case SchemaMapping.TotalMap.FloatMap(fn) =>
-              okAny(fn(value.asInstanceOf[Float]))
-            case SchemaMapping.TotalMap.DoubleMap(fn) =>
-              okAny(fn(value.asInstanceOf[Double]))
-            case SchemaMapping.TotalMap.AnyMap(fn) =>
-              okAny(fn(value))
-            case SchemaMapping.TotalMap.Empty =>
-              val fn = resultMap
-              if fn == null then result
-              else result.flatMap(fn)
-          end match
-        case err @ Result.Err(_) => err
-
     def mapInput(value: Any): Any =
       val fn = inputMap
       if fn == null then value
