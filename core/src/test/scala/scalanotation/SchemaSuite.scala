@@ -159,7 +159,6 @@ class SchemaSuite extends ScalanotationSuite:
     assertEquals(RawSchema.Boolean.describeSelf, "Boolean")
     assertEquals(RawSchema.Char.describeSelf, "Char")
     assertEquals(RawSchema.String.describeSelf, "String")
-    assertEquals(RawSchema.AnyExpr.describeSelf, "Any")
     assertEquals(RawSchema.Null.describeSelf, "Null")
     // empty named tuple
     assertEquals(

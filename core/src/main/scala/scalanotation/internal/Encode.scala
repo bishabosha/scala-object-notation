@@ -81,8 +81,6 @@ private[scalanotation] object Encode:
         value.asInstanceOf[ScalaOption[Any]] match
           case Some(innerValue) => writeExpr(option.inner, innerValue)
           case None             => Expr.NullConstant
-      case RawSchema.AnyExpr =>
-        value.asInstanceOf[Expr]
       case RawSchema.String =>
         Expr.StringConstant(value.asInstanceOf[String])
       case RawSchema.Char =>
@@ -171,8 +169,6 @@ private[scalanotation] object Encode:
       value.asInstanceOf[ScalaOption[Any]] match
         case Some(innerValue) => renderText(option.inner, innerValue, out, depth)
         case None             => out.append("null")
-    case RawSchema.AnyExpr =>
-      ExprRenderer.renderExpr(value.asInstanceOf[Expr], out, depth)(using format)
     case RawSchema.String =>
       ExprRenderer.renderStringLiteral(value.asInstanceOf[String], out)
     case RawSchema.Char =>
