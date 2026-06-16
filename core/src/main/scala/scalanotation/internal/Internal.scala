@@ -1,7 +1,6 @@
 package scalanotation.internal
 
 import scala.NamedTuple.AnyNamedTuple
-import scala.annotation.constructorOnly
 import scala.annotation.publicInBinary
 import scala.collection.mutable
 import scala.compiletime.uninitialized
@@ -64,11 +63,6 @@ private[internal] object Internal {
         n += 1
 
   class JumboNameSet:
-    @deprecated("Kept for binary compatibility; will be removed in a future version", "0.3.7")
-    @publicInBinary
-    private[JumboNameSet] def underlying: mutable.HashSet[String] =
-      mutable.HashSet.from(underlying0.keysIterator)
-
     private val underlying0: mutable.AnyRefMap[String, Unit] = mutable.AnyRefMap.empty[String, Unit]
 
   object JumboNameSet:
@@ -115,37 +109,6 @@ private[internal] object Internal {
   private[internal] abstract class PoolHolder:
     // TODO: should think how this could scale to making a global shared object.
     private[internal] val namesPool = LocalPool[JumboNameSet]()
-
-  /** Retained only for binary compatibility — superseded by the bounded, slot-based
-    * [[scalanotation.internal.TokenStream]].
-    */
-  @deprecated("superseded by scalanotation.internal.TokenStream", "0.3.6")
-  private[internal] open class TokenStream[T: PublicInternal.HasDefault as default](
-      @constructorOnly tokens: List[T]
-  ) extends PoolHolder {
-    private var curr: T       = uninitialized
-    private var rest: List[T] = tokens
-    advance() // initialize curr and rest
-
-    protected def currentToken(): T = curr
-
-    protected def peekToken(): T =
-      rest match
-        case t :: _ => t
-        case _      => default.Default
-
-    protected def currentAndRest: List[T] =
-      curr :: rest
-
-    protected def advance(): Unit =
-      rest match
-        case curr1 :: rest1 =>
-          curr = curr1
-          rest = rest1
-        case _ =>
-          curr = default.Default
-          rest = Nil
-  }
 }
 
 @publicInBinary
