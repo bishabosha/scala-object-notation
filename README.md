@@ -1,12 +1,13 @@
 # Scala Object Notation
 
-Scala Object Notation is subset of Scala programming language that can decode directly into data.
+Scala Object Notation is a small data-oriented subset of Scala syntax that can decode directly into
+typed Scala values.
 
 ## Example: Configuration
 
-Scala Object Notation supports writing a Scala source files in two modes:
-- a single one top-level `val` declaration, optionally preceded by a single package statement;
-- or a top-level expression.
+Scala Object Notation supports two input modes:
+- a single top-level `val` declaration, optionally preceded by a single package statement
+- a top-level expression
 
 ```scala
 package example.config
@@ -33,9 +34,9 @@ val conf = (
 
 Why Scala syntax?
 
-- they can be compiled and introspected as part of a program or decoded by external programs.
+- data files can be compiled and introspected as part of a program or decoded by external programs
 - structural data can be interpreted via a schema to richer types (via `Reader` and `Writer` type classes) or used as is.
-- config can be edited programatically and written back
+- config can be edited programmatically and written back
 - schema checking errors index to the position in the source file
 - named tuples have strict ordering and non-duplication requirements.
 
@@ -47,10 +48,14 @@ The supported syntax is deliberately small:
 
 - an optional single `package foo.bar` statement before a declaration
 - one top-level `val` declaration
-- named tuples for structured objects,
-- `Vector(...)` for sequences,
-- scala literal values
+- named tuples for structured objects: `(name = value, other = value)`
+- tuples: `EmptyTuple`, `Tuple(value)` for exactly one element, and `(a, b, ...)` for two or more elements
+- `Vector(...)` for sequences
+- Scala literal values
 - string concatenation
+
+Plain parenthesized grouping is not supported. `(value)` is rejected; use `Tuple(value)` for a
+singleton tuple.
 
 ## Quick Start: Direct Structural Decoding
 
@@ -167,11 +172,18 @@ enum Expr:
 
 it can also be directly decoded to from text:
 ```scala
-val decoded = Readers.readAs[scalanotation.Expr]("(ok = true, retries = 3)")
-assert(decoded == NamedTupleExpr(Vector("ok" -> BooleanConstant(true), ...)))
+import scalanotation.*
+import scalanotation.Expr.*
+import steps.result.Result
 
-val tuple = Readers.readAs[scalanotation.Expr]("""1 *: "two" *: Vector(3) *: EmptyTuple""")
-assert(tuple == TupleExpr(Vector(IntConstant(1), StringConstant("two"), ...)))
+val decoded = Readers.readAs[Expr]("(ok = true, retries = 3)")
+assert(decoded == Result.Ok(NamedTupleExpr(IndexedSeq("ok" -> BooleanConstant(true), "retries" -> IntConstant(3)))))
+
+val tuple = Readers.readAs[Expr]("""(1, "two", Vector(3))""")
+assert(tuple == Result.Ok(TupleExpr(IndexedSeq(IntConstant(1), StringConstant("two"), VectorExpr(IndexedSeq(IntConstant(3)))))))
+
+val singleton = Readers.readAs[Expr]("Tuple(1)")
+assert(singleton == Result.Ok(TupleExpr(IndexedSeq(IntConstant(1)))))
 ```
 
 ## Moving From Structural Config To Domain Types
@@ -543,6 +555,7 @@ Typed decoding is intentionally strict:
 - field count must match exactly
 - field order must match exactly
 - duplicate fields are rejected
+- singleton tuples must use `Tuple(value)`; `(value)` is not grouping syntax
 - only `Int` literals, plus `Double` literals when reading as `Float`, are promoted across numeric targets, and only when exact
 
 Errors include useful context:
@@ -558,6 +571,7 @@ the issue.
 The library supports decoding and writing for:
 
 - arbitrary Scala 3 named tuples, including deeply nested named tuple and `Vector` combinations
+- arbitrary Scala 3 tuples, including `EmptyTuple` and singleton tuple types
 - case classes, case objects, and enums via derivation
 - `String`, `Char`, `Int`, `Long`, `Float`, `Double`, `Boolean`, and `Null`
 - `Option[T]`
@@ -570,8 +584,9 @@ The library supports decoding and writing for:
 
 ## Why The Syntax Is Narrow
 
-Scala Object Notation is meant to stay import-free and data-oriented. That is why it does not
-support constructors (e.g. `Foo(1)`) or references (e.g. `Bar`).
+Scala Object Notation is meant to stay import-free and data-oriented. Apart from the built-in
+collection forms `Vector(...)` and `Tuple(...)`, it does not support constructors (e.g. `Foo(1)`) or
+references (e.g. `Bar`).
 
 Keeping the format narrow has a few benefits:
 - the document is clearly raw data, not executable code

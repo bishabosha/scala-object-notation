@@ -16,19 +16,19 @@ private[scalanotation] object TokenKind:
   final val FalseKw      = 4
   final val NullKw       = 5
   final val EmptyTupleId = 6
-  final val Keyword      = 7
-  final val Identifier   = 8
-  final val IntLit       = 9
-  final val LongLit      = 10
-  final val FloatLit     = 11
-  final val DoubleLit    = 12
-  final val StringLit    = 13
-  final val CharLit      = 14
-  final val Equals       = 15
-  final val Dot          = 16
-  final val Plus         = 17
-  final val Minus        = 18
-  final val StarColon    = 19
+  final val TupleId      = 7
+  final val Keyword      = 8
+  final val Identifier   = 9
+  final val IntLit       = 10
+  final val LongLit      = 11
+  final val FloatLit     = 12
+  final val DoubleLit    = 13
+  final val StringLit    = 14
+  final val CharLit      = 15
+  final val Equals       = 16
+  final val Dot          = 17
+  final val Plus         = 18
+  final val Minus        = 19
   final val Comma        = 20
   final val Semicolon    = 21
   final val LParen       = 22
@@ -46,6 +46,7 @@ private[scalanotation] enum Token:
   case FalseKw(span: DecodeError.Span)
   case NullKw(span: DecodeError.Span)
   case EmptyTupleId(span: DecodeError.Span)
+  case TupleId(span: DecodeError.Span)
   case Keyword(raw: String, span: DecodeError.Span)
   case Identifier(name: String, span: DecodeError.Span)
   case IntLit(raw: String, value: Int, span: DecodeError.Span)
@@ -58,7 +59,6 @@ private[scalanotation] enum Token:
   case Dot(span: DecodeError.Span)
   case Plus(span: DecodeError.Span)
   case Minus(span: DecodeError.Span)
-  case StarColon(span: DecodeError.Span)
   case Comma(span: DecodeError.Span)
   case Semicolon(span: DecodeError.Span)
   case LParen(span: DecodeError.Span)
@@ -242,6 +242,7 @@ private[scalanotation] final class Tokenizer private[internal] (
         else if sliceEquals(start, index, KW_null) then TokenKind.NullKw
         else if sliceEquals(start, index, KW_Vector) then TokenKind.VectorId
         else if sliceEquals(start, index, KW_EmptyTuple) then TokenKind.EmptyTupleId
+        else if sliceEquals(start, index, KW_Tuple) then TokenKind.TupleId
         else TokenKind.Identifier
     else
       // intern first (allocation-free on a hit), then classify the cached string: the hard
@@ -255,6 +256,7 @@ private[scalanotation] final class Tokenizer private[internal] (
         case KW_null       => kind = TokenKind.NullKw
         case KW_Vector     => kind = TokenKind.VectorId
         case KW_EmptyTuple => kind = TokenKind.EmptyTupleId
+        case KW_Tuple      => kind = TokenKind.TupleId
         case _             =>
           kind =
             if reservedIdentifierKeywords.contains(name) then TokenKind.Keyword
@@ -332,14 +334,12 @@ private[scalanotation] final class Tokenizer private[internal] (
         case '+' => kind = TokenKind.Plus
         case '-' => kind = TokenKind.Minus
         case _   => classifyOperatorIdentifier()
-    else if len == 2 && input.charAt(start) == '*' && input.charAt(start + 1) == ':' then
-      kind = TokenKind.StarColon
     else classifyOperatorIdentifier()
 
   private def classifyOperatorIdentifier(): Unit =
     if !internNames then
-      // scout: the fixed operators it cares about (`*:`) are already classified above; everything
-      // else collapses to one bucket, so neither keyword classification nor interning is needed
+      // Scouts only need to distinguish fixed punctuation from generic identifiers, so neither
+      // keyword classification nor interning is needed for operator identifiers.
       kind = TokenKind.Identifier
     else
       val op = internSlice(start, index)
@@ -615,6 +615,7 @@ private[scalanotation] object Tokenizer:
   private val KW_null       = "null"
   private val KW_Vector     = "Vector"
   private val KW_EmptyTuple = "EmptyTuple"
+  private val KW_Tuple      = "Tuple"
   private val KW_colon      = ":"
   private val KW_leftArrow  = "<-"
   private val KW_arrow      = "=>"
@@ -745,6 +746,7 @@ private[scalanotation] object Tokenizer:
       case TokenKind.FalseKw      => Token.FalseKw(span)
       case TokenKind.NullKw       => Token.NullKw(span)
       case TokenKind.EmptyTupleId => Token.EmptyTupleId(span)
+      case TokenKind.TupleId      => Token.TupleId(span)
       case TokenKind.Keyword      => Token.Keyword(scanner.str.nn, span)
       case TokenKind.Identifier   => Token.Identifier(scanner.str.nn, span)
       // no sign context here: the boxed token carries the positive interpretation, and a literal
@@ -761,7 +763,6 @@ private[scalanotation] object Tokenizer:
       case TokenKind.Dot       => Token.Dot(span)
       case TokenKind.Plus      => Token.Plus(span)
       case TokenKind.Minus     => Token.Minus(span)
-      case TokenKind.StarColon => Token.StarColon(span)
       case TokenKind.Comma     => Token.Comma(span)
       case TokenKind.Semicolon => Token.Semicolon(span)
       case TokenKind.LParen    => Token.LParen(span)
@@ -892,6 +893,7 @@ private[scalanotation] abstract class TokenStream private[internal] (
       case TokenKind.FalseKw      => "'false'"
       case TokenKind.NullKw       => "'null'"
       case TokenKind.EmptyTupleId => "'EmptyTuple'"
+      case TokenKind.TupleId      => "'Tuple'"
       case TokenKind.Keyword      => s"'${strs(slot)}'"
       case TokenKind.Identifier   => s"identifier '${strs(slot)}'"
       case TokenKind.IntLit       => s"integer literal '$raw'"
@@ -904,7 +906,6 @@ private[scalanotation] abstract class TokenStream private[internal] (
       case TokenKind.Dot          => "'.'"
       case TokenKind.Plus         => "'+'"
       case TokenKind.Minus        => "'-'"
-      case TokenKind.StarColon    => "'*:'"
       case TokenKind.Comma        => "','"
       case TokenKind.Semicolon    => "';'"
       case TokenKind.LParen       => "'('"

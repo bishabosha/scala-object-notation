@@ -118,7 +118,6 @@ class TokenizerSuite extends ScalanotationSuite:
       tokenLabels(symbolicIdentifiers.mkString(" ")),
       symbolicIdentifiers.map(name => s"<Identifier:$name>") :+ "eof"
     )
-    assertEquals(tokenLabels("*: EmptyTuple"), List("*:", "EmptyTuple", "eof"))
 
   test("treat Scala soft keywords as identifiers"):
     val softKeywords = List(
@@ -177,16 +176,18 @@ class TokenizerSuite extends ScalanotationSuite:
 
     assertEquals(parsed, expected)
 
-  test("parse Vector in identifier positions"):
+  test("parse soft syntax names in identifier positions"):
     val input =
-      """val Vector = (Vector = 99)
+      """val Tuple = (Vector = 99, Tuple = 100)
         |""".stripMargin
 
     val parsed = Readers.quick.readDecls(input)
 
     val expected = Expr.SourceFile(
       Map(
-        "Vector" -> Expr.NamedTupleExpr(IndexedSeq("Vector" -> Expr.IntConstant(99)))
+        "Tuple" -> Expr.NamedTupleExpr(
+          IndexedSeq("Vector" -> Expr.IntConstant(99), "Tuple" -> Expr.IntConstant(100))
+        )
       )
     )
 

@@ -102,11 +102,14 @@ private[internal] object Internal {
   inline def loop[A](inline body: Label[A] ?=> Unit): A = {
     boundary[A] {
       while true do body
-      ???
+      loop.never
     }
   }
   object loop {
-    inline def break[A](a: A)(using Label[A]): A = boundary.break(a)
+    def never: Nothing                                       = ???
+    inline def task(inline body: Label[Unit] ?=> Unit): Unit = loop[Unit](body)
+    inline def break[A](a: A)(using Label[A]): A             = boundary.break(a)
+    inline def break()(using Label[Unit]): Unit              = boundary.break()
   }
 
   private[internal] abstract class PoolHolder:

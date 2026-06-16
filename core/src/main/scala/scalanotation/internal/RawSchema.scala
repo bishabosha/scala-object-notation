@@ -184,7 +184,7 @@ private[scalanotation] object RawSchema:
   def describeTupleSlots(size: Int): String =
     size match
       case 0 => "EmptyTuple"
-      case 1 => "... *: EmptyTuple"
+      case 1 => "Tuple(...)"
       case _ => Iterator.fill(size)("...").mkString("(", ", ", ")")
 
   final case class SchemaMapping(

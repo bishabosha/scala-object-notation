@@ -224,19 +224,4 @@ private[scalanotation] object Encode:
       out: ExprRenderer.Output,
       depth: Int
   )(using format: TextFormat): Unit =
-    if isTupleLike(schema, value) then
-      out.append('(')
-      renderText(schema, value, out, depth)
-      out.append(')')
-    else renderText(schema, value, out, depth)
-
-  private def isTupleLike(schema: RawSchema, value: Any): Boolean =
-    schema match
-      case _: RawSchema.Tuple              => true
-      case _: RawSchema.TupleOf            => true
-      case RawSchema.Ref(_, target)        => isTupleLike(target(), value)
-      case RawSchema.Mapped(base, mapping) =>
-        isTupleLike(base, mapping.mapInput(value))
-      case router: RawSchema.Router =>
-        isTupleLike(selectedRouterCase(router, value).schema, value)
-      case _ => false
+    renderText(schema, value, out, depth)
