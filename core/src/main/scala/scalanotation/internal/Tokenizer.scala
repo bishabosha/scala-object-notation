@@ -104,9 +104,8 @@ private[scalanotation] final class Tokenizer private[internal] (
     kind = TokenKind.Eof
     str = null
 
-  /** Tokenize the rest of the input into boxed [[Token]]s — kept for binary compatibility with the
-    * eager tokenizer, and used for tests and debugging; the decode path streams tokens through
-    * [[TokenStream]] without materializing them.
+  /** Tokenize the rest of the input into boxed [[Token]]s for tests and debugging; the decode path
+    * streams tokens through [[TokenStream]] without materializing them.
     */
   def tokenize(debug: Boolean): Result[List[Token], DecodeError] =
     Result.catchException({ case e: TokenizeException =>
@@ -121,20 +120,6 @@ private[scalanotation] final class Tokenizer private[internal] (
         if debug then Console.err.println(token)
         done = kind == TokenKind.Eof
       tokens.result()
-
-  @deprecated("Kept for binary compatibility; will be removed in a future version", "0.3.6")
-  private class ParseException(val message: String, val span: DecodeError.Span)
-      extends Exception
-      with scala.util.control.NoStackTrace:
-    // retained only for binary compatibility with the eager tokenizer
-    // reference the outer scanner so the constructor keeps its original outer-pointer parameter
-    def offset: Int = ParseException.this.span.offset.max(Tokenizer.this.start)
-
-  @deprecated("Kept for binary compatibility; will be removed in a future version", "0.3.6")
-  private inline def __Token: Token.type =
-    // retained only for binary compatibility with the eager tokenizer
-    // (regenerates the `inline$Token` accessor)
-    Token
 
   // slots describing the most recently scanned token — unboxed in the happy path
   private[internal] var kind: Int          = TokenKind.Eof
