@@ -10,7 +10,7 @@ import steps.result.Result.eval.raise
 
 import scala.util.boundary.Label
 
-private[scalanotation] trait TokenDecoderParsing:
+private[scalanotation] trait BaseDecoders:
   self: TokenStream =>
 
   protected type Resulting[+A, +E] = Label[Result.Err[E]] ?=> A
@@ -48,95 +48,6 @@ private[scalanotation] trait TokenDecoderParsing:
       f(slots)
     if !slotsPooling || factory == null then useSlots(null)
     else slotsPool.withBorrowed(useSlots)
-
-  /** decodes a string (with `+` concatenation), pushing the value into [[stringSlot]] */
-  protected final def decodeString(): Result[Unit, DecodeError] =
-    Result.task {
-      decodeStringAtom().check
-      if currentKind() == TokenKind.Plus then
-        val builder = StringBuilder() ++= pullStringStrict()
-        while currentKind() == TokenKind.Plus do
-          advance()
-          decodeStringAtom().check
-          builder ++= pullStringStrict()
-        pushString(builder.result())
-    }
-
-  protected final def decodeStringAtom(): Result[Unit, DecodeError] = Result.task:
-    if currentKind() == TokenKind.StringLit then
-      pushString(currentStringValue())
-      advance()
-    else raise(expectedTypeAtCurrent(RawSchema.String))
-
-  protected final def decodeChar(): Result[Unit, DecodeError] = Result.task:
-    if currentKind() == TokenKind.CharLit then
-      pushChar(currentCharValue())
-      advance()
-    else raise(expectedTypeAtCurrent(RawSchema.Char))
-
-  protected final def decodeInt(): Result[Unit, DecodeError] = Result.task:
-    decodeSigned[Int](
-      literal = negative =>
-        currentKind() match
-          case TokenKind.IntLit => currentIntValue(negative)
-          case _                => raise(expectedTypeAtCurrent(RawSchema.Int)),
-      store = v => pushInt(v)
-    )
-
-  protected final def decodeLong(): Result[Unit, DecodeError] = Result.task:
-    decodeSigned[Long](
-      literal = negative =>
-        currentKind() match
-          case TokenKind.LongLit => currentLongValue(negative)
-          case TokenKind.IntLit  => currentIntValue(negative).toLong
-          case _                 => raise(expectedTypeAtCurrent(RawSchema.Long)),
-      store = v => pushLong(v)
-    )
-
-  protected final def decodeFloat(): Result[Unit, DecodeError] = Result.task:
-    decodeSigned[Float](
-      literal = negative =>
-        currentKind() match
-          case TokenKind.FloatLit =>
-            val magnitude = currentFloatValue()
-            if negative then -magnitude else magnitude
-          case TokenKind.IntLit =>
-            val value = currentIntValue(negative)
-            if NumericPromotions.isExactFloat(value) then value.toFloat
-            else raise(expectedTypeAtCurrent(RawSchema.Float))
-          case _ => raise(expectedTypeAtCurrent(RawSchema.Float)),
-      store = v => pushFloat(v)
-    )
-
-  protected final def decodeDouble(): Result[Unit, DecodeError] = Result.task:
-    decodeSigned[Double](
-      literal = negative =>
-        currentKind() match
-          case TokenKind.DoubleLit =>
-            val magnitude = currentDoubleValue()
-            if negative then -magnitude else magnitude
-          case TokenKind.IntLit => currentIntValue(negative).toDouble
-          case _                => raise(expectedTypeAtCurrent(RawSchema.Double)),
-      store = v => pushDouble(v)
-    )
-
-  protected final def decodeBoolean(): Result[Unit, DecodeError] =
-    Result.task:
-      currentKind() match
-        case TokenKind.TrueKw =>
-          advance()
-          pushBoolean(true)
-        case TokenKind.FalseKw =>
-          advance()
-          pushBoolean(false)
-        case _ =>
-          raise(expectedTypeAtCurrent(RawSchema.Boolean))
-
-  protected final def decodeNull(): Result[Unit, DecodeError] = Result.task:
-    if currentKind() == TokenKind.NullKw then
-      advance()
-      pushRef(null)
-    else raise(expectedTypeAtCurrent(RawSchema.Null))
 
   // The sign is passed into `literal` rather than multiplied in afterwards, so integer literals
   // are range-checked with the sign known — `-2147483648` is valid although its magnitude
@@ -369,24 +280,6 @@ private[scalanotation] trait TokenDecoderParsing:
     else
       raise(DecodeError.ExpectedType(schema.describeSelf, describeCurrent()).atToken(currentSpan()))
 
-    // parseNamedTupleStructureAfterOpen(schema, allowEmpty)(consumeFieldValue)
-    val parsed: NamedTupleParseResult =
-      parsePartialNamedTupleStructureInner(schema)(consumeFieldValue) match
-        case parsed: NamedTupleParseResult => parsed
-        case err: Result.Err[DecodeError]  =>
-          scala.util.boundary.break(err) // TODO: replace with Result.breakErr
-
-    if !allowEmpty && parsed.fieldCount == 0 then
-      raise(DecodeError.UnitValueNotAllowed().atToken(spanAt(parsed.closingOffset)))
-    parsed
-  }
-
-  protected inline def parseNamedTupleStructureAfterOpen(
-      schema: RawSchema,
-      allowEmpty: Boolean
-  )(
-      inline consumeFieldValue: Resulting[(String, Int, Int) => Unit, DecodeError]
-  ): Resulting[NamedTupleParseResult, DecodeError] = { lbl ?=>
     val parsed: NamedTupleParseResult =
       parsePartialNamedTupleStructureInner(schema)(consumeFieldValue) match
         case parsed: NamedTupleParseResult => parsed

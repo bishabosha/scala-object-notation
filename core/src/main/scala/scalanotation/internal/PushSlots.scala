@@ -70,10 +70,6 @@ private[scalanotation] abstract class PushSlots extends Internal.PoolHolder:
     anySlot = value
     lastSlotKind = SlotKind.Ref
 
-  protected final def pullRefStrict(): Any =
-    assert(lastSlotKind == SlotKind.Ref, "pullRefStrict called when lastSlotKind != Ref")
-    anySlot
-
   protected final def pushString(value: String): Unit =
     stringSlot = value
     lastSlotKind = SlotKind.String
@@ -86,52 +82,25 @@ private[scalanotation] abstract class PushSlots extends Internal.PoolHolder:
     charSlot = value
     lastSlotKind = SlotKind.Char
 
-  protected final def pullCharStrict(): Char =
-    assert(lastSlotKind == SlotKind.Char, "pullCharStrict called when lastSlotKind != Char")
-    charSlot
-
   protected final def pushInt(value: Int): Unit =
     intSlot = value
     lastSlotKind = SlotKind.Int
-
-  protected final def pullIntStrict(): Int =
-    assert(lastSlotKind == SlotKind.Int, "pullIntStrict called when lastSlotKind != Int")
-    intSlot
 
   protected final def pushLong(value: Long): Unit =
     longSlot = value
     lastSlotKind = SlotKind.Long
 
-  protected final def pullLongStrict(): Long =
-    assert(lastSlotKind == SlotKind.Long, "pullLongStrict called when lastSlotKind != Long")
-    longSlot
-
   protected final def pushFloat(value: Float): Unit =
     floatSlot = value
     lastSlotKind = SlotKind.Float
-
-  protected final def pullFloatStrict(): Float =
-    assert(lastSlotKind == SlotKind.Float, "pullFloatStrict called when lastSlotKind != Float")
-    floatSlot
 
   protected final def pushDouble(value: Double): Unit =
     doubleSlot = value
     lastSlotKind = SlotKind.Double
 
-  protected final def pullDoubleStrict(): Double =
-    assert(lastSlotKind == SlotKind.Double, "pullDoubleStrict called when lastSlotKind != Double")
-    doubleSlot
-
   protected final def pushBoolean(value: Boolean): Unit =
     booleanSlot = value
     lastSlotKind = SlotKind.Boolean
-
-  protected final def pullBooleanStrict(): Boolean =
-    assert(
-      lastSlotKind == SlotKind.Boolean,
-      "pullBooleanStrict called when lastSlotKind != Boolean"
-    )
-    booleanSlot
 
   /** pulls the most recent push as a single value, boxing the live typed slot if necessary */
   protected final def pullAny(): Any =
