@@ -78,32 +78,29 @@ class ExpressionSyntaxSuite extends ScalanotationSuite:
     assertEquals(parsed, expected)
     assertEquals(parsed.render, input)
 
-  test("read tuple cons literal expression"):
-    val input  = """1 *: "abc" *: EmptyTuple *: EmptyTuple"""
+  test("read singleton tuple literal expression"):
+    val input  = """Tuple("abc")"""
     val parsed = Readers.quick.read(input)
 
     assertEquals(
       parsed,
       Expr.TupleExpr(
         IndexedSeq(
-          Expr.IntConstant(1),
-          Expr.StringConstant("abc"),
+          Expr.StringConstant("abc")
+        )
+      )
+    )
+    assertEquals(parsed.render, input)
+    assertEquals(
+      Readers.quick.read("""Tuple(EmptyTuple)"""),
+      Expr.TupleExpr(
+        IndexedSeq(
           Expr.TupleExpr(IndexedSeq.empty)
         )
       )
     )
-    assertEquals(parsed.render, """(1, "abc", EmptyTuple)""")
     assertEquals(
-      Readers.quick.read("""(x = 1) *: Vector(2) *: EmptyTuple"""),
-      Expr.TupleExpr(
-        IndexedSeq(
-          Expr.NamedTupleExpr(IndexedSeq("x" -> Expr.IntConstant(1))),
-          Expr.VectorExpr(IndexedSeq(Expr.IntConstant(2)))
-        )
-      )
-    )
-    assertEquals(
-      Readers.quick.read("""(1, 2) *: EmptyTuple"""),
+      Readers.quick.read("""Tuple((1, 2))"""),
       Expr.TupleExpr(
         IndexedSeq(
           Expr.TupleExpr(
@@ -124,22 +121,16 @@ class ExpressionSyntaxSuite extends ScalanotationSuite:
         assertEquals(error.rootCause, DecodeError.ExpectedType("Int", "(..., ..., ...)"))
       case Result.Ok(value) => fail(s"Expected a decode failure, got $value")
 
-  test("parentheses group expressions"):
-    assertEquals(Readers.quick.read("(1)"), Expr.IntConstant(1))
-    assertEquals(Readers.quick.read("((1))"), Expr.IntConstant(1))
-    assertEquals(
-      Readers.quick.read("""("foo" + "bar") *: EmptyTuple"""),
-      Expr.TupleExpr(IndexedSeq(Expr.StringConstant("foobar")))
-    )
-    assertEquals(
-      Readers.quick.read("""(1 *: EmptyTuple) *: "abc" *: EmptyTuple"""),
-      Expr.TupleExpr(
-        IndexedSeq(
-          Expr.TupleExpr(IndexedSeq(Expr.IntConstant(1))),
-          Expr.StringConstant("abc")
-        )
-      )
-    )
+  test("reject parenthesized single expressions"):
+    Readers.readAs[Expr]("(1)") match
+      case Result.Err(error) =>
+        assertEquals(error.rootCause, DecodeError.ExpectedType("Tuple[...]", "(...)"))
+      case Result.Ok(value) => fail(s"Expected a decode failure, got $value")
+
+    Readers.readAs[Expr]("((1))") match
+      case Result.Err(error) =>
+        assertEquals(error.rootCause, DecodeError.ExpectedType("Tuple[...]", "(...)"))
+      case Result.Ok(value) => fail(s"Expected a decode failure, got $value")
 
   test("reject singleton comma tuple literal expressions"):
     val inputs = List("(1,)")

@@ -99,7 +99,7 @@ class SchemaSuite extends ScalanotationSuite:
     val expr = Expr.TupleExpr(
       IndexedSeq(Expr.TupleExpr(IndexedSeq(Expr.IntConstant(1))))
     )
-    assertEquals(Writers.write(expr), "(1 *: EmptyTuple) *: EmptyTuple")
+    assertEquals(Writers.write(expr), "Tuple(Tuple(1))")
     assertEquals(Readers.readAs[Expr](Writers.write(expr)), Result.Ok(expr))
 
   test("RawSchema.describeSelf"):
@@ -158,7 +158,7 @@ class SchemaSuite extends ScalanotationSuite:
     // Tuple schema
     assertEquals(
       RawSchema.Tuple(IArray(RawSchema.Int)).describeSelf,
-      "... *: EmptyTuple"
+      "Tuple(...)"
     )
     assertEquals(
       summon[Reader[(Int, String)]].schema.describeSelf,

@@ -29,12 +29,18 @@ object DecodeBenchmarkHelpers:
   type WithVec = (label: String, nums: Vector[Int])
   // Named tuple with an Array — same input shape as the vector benchmarks
   type WithIntArray = (label: String, nums: Array[Int])
+  type TupleSingle  = Int *: EmptyTuple
+  type TupleFlat    = (Int, String, Boolean, Long)
+  type TupleNested  = ((Int, String), (Boolean, Long), (Int, (String, Boolean)))
   val flatReader: Reader[Flat]                 = summon[Reader[Flat]]
   val flat2xReader: Reader[Flat2x]             = summon[Reader[Flat2x]]
   val nestedReader: Reader[Nested]             = summon[Reader[Nested]]
   val nested2xReader: Reader[Nested2x]         = summon[Reader[Nested2x]]
   val withVecReader: Reader[WithVec]           = summon[Reader[WithVec]]
   val withIntArrayReader: Reader[WithIntArray] = summon[Reader[WithIntArray]]
+  val tupleSingleReader: Reader[TupleSingle]   = summon[Reader[TupleSingle]]
+  val tupleFlatReader: Reader[TupleFlat]       = summon[Reader[TupleFlat]]
+  val tupleNestedReader: Reader[TupleNested]   = summon[Reader[TupleNested]]
   val exprReader: Reader[Expr]                 = summon[Reader[Expr]]
 
 @State(Scope.Thread)
@@ -68,6 +74,11 @@ class DecodeBenchmark:
   private val vecInput2x =
     s"(label = \"bench\", nums = Vector(${(1 to 100).map(_ * 1000).mkString(", ")}))"
 
+  private val tupleSingleInput      = """Tuple(1)"""
+  private val tupleCommaInput       = """(1, "two", true, 4L)"""
+  private val tupleNestedCommaInput =
+    """((1, "two"), (true, 4L), (5, ("six", false)))"""
+
   // Declaration form inputs
   private val declFlatInput   = """val data = (x = 1, y = -2, label = "hello")"""
   private val declFlatInput2x =
@@ -85,6 +96,9 @@ class DecodeBenchmark:
   private given Reader[Nested2x]     = nested2xReader
   private given Reader[WithVec]      = withVecReader
   private given Reader[WithIntArray] = withIntArrayReader
+  private given Reader[TupleSingle]  = tupleSingleReader
+  private given Reader[TupleFlat]    = tupleFlatReader
+  private given Reader[TupleNested]  = tupleNestedReader
   private given Reader[Expr]         = exprReader
 
   @Benchmark def flat: Any   = Readers.readAs[Flat](flatInput)
@@ -95,6 +109,10 @@ class DecodeBenchmark:
   @Benchmark def exprNested2x: Any  = Readers.readAs[Expr](nestedInput2x)
   @Benchmark def exprWithVec: Any   = Readers.readAs[Expr](vecInput)
   @Benchmark def exprWithVec2x: Any = Readers.readAs[Expr](vecInput2x)
+
+  @Benchmark def exprTupleSingle: Any      = Readers.readAs[Expr](tupleSingleInput)
+  @Benchmark def exprTupleComma: Any       = Readers.readAs[Expr](tupleCommaInput)
+  @Benchmark def exprTupleNestedComma: Any = Readers.readAs[Expr](tupleNestedCommaInput)
 
   @Benchmark def flatClass: Any   = Readers.readAs[FlatClass](flatInput)
   @Benchmark def nestedClass: Any = Readers.readAs[NestedClass](nestedInput)
@@ -107,6 +125,10 @@ class DecodeBenchmark:
 
   @Benchmark def withIntArray: Any   = Readers.readAs[WithIntArray](vecInput)
   @Benchmark def withIntArray2x: Any = Readers.readAs[WithIntArray](vecInput2x)
+
+  @Benchmark def tupleSingle: Any      = Readers.readAs[TupleSingle](tupleSingleInput)
+  @Benchmark def tupleComma: Any       = Readers.readAs[TupleFlat](tupleCommaInput)
+  @Benchmark def tupleNestedComma: Any = Readers.readAs[TupleNested](tupleNestedCommaInput)
 
   @Benchmark def declFlat: Any =
     Readers.readDeclAs[Flat](declFlatInput, rootName = "data")

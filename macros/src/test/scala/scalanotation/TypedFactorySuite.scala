@@ -137,7 +137,7 @@ class TypedFactorySuite extends munit.FunSuite:
     assertReads[Mixed]("""(1, "two", true, 1.5f, 2.25, 3L)""")(
       Result.Ok((1, "two", true, 1.5f, 2.25, 3L))
     )
-    assertReads[Int *: String *: EmptyTuple]("""1 *: "two" *: EmptyTuple""")(
+    assertReads[Int *: String *: EmptyTuple]("""(1, "two")""")(
       Result.Ok(1 *: "two" *: EmptyTuple)
     )
     assertReads[(x: Int, label: String)]("""(x = 5, label = "five")""")(

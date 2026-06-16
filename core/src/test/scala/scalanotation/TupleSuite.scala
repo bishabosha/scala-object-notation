@@ -119,42 +119,42 @@ class TupleSuite extends ScalanotationSuite:
     )
     assertEquals(Readers.readAs[Data](rendered), Result.Ok(value))
 
-  test("tuple decodes support EmptyTuple and cons syntax"):
+  test("tuple decodes support EmptyTuple and singleton syntax"):
     assertEquals(Readers.readAs[EmptyTuple]("EmptyTuple"), Result.Ok(EmptyTuple))
     assertEquals(Writers.write(EmptyTuple), "EmptyTuple")
 
     val singleton: Int *: EmptyTuple = 1 *: EmptyTuple
     assertEquals(
-      Readers.readAs[Int *: EmptyTuple]("1 *: EmptyTuple"),
+      Readers.readAs[Int *: EmptyTuple]("Tuple(1)"),
       Result.Ok(singleton)
     )
-    assertEquals(Writers.write(singleton), "1 *: EmptyTuple")
+    assertEquals(Writers.write(singleton), "Tuple(1)")
     assertEquals(
       Writers.write(Expr.TupleExpr(IndexedSeq(Expr.TupleExpr(IndexedSeq(Expr.IntConstant(1)))))),
-      "(1 *: EmptyTuple) *: EmptyTuple"
+      "Tuple(Tuple(1))"
     )
     assertEquals(
       Writers.write((1 *: EmptyTuple) *: EmptyTuple),
-      "(1 *: EmptyTuple) *: EmptyTuple"
-    )
-
-    assertEquals(
-      Readers.readAs[(String, Int)]("""("foo" + "bar") *: 7 *: EmptyTuple"""),
-      Result.Ok(("foobar", 7))
+      "Tuple(Tuple(1))"
     )
     assertEquals(
       Readers.readAs[(String, Int)]("""("foo" + "bar", 7)"""),
       Result.Ok(("foobar", 7))
     )
-    Readers.readAs[String *: EmptyTuple](""""foo" + "bar" *: EmptyTuple""") match
-      case Result.Err(error) =>
-        assertEquals(error.rootCause, DecodeError.ExpectedType("'*:'", "'+'"))
-      case Result.Ok(value) => fail(s"Expected a decode failure, got $value")
     assertEquals(
       Readers.readAs[(Int *: EmptyTuple, String)](
-        """(1 *: EmptyTuple) *: "abc" *: EmptyTuple"""
+        """(Tuple(1), "abc")"""
       ),
       Result.Ok((1 *: EmptyTuple, "abc"))
+    )
+
+  test("nested tuple decodes support comma syntax"):
+    type Data = ((Int, String), (Boolean, Long), (Int, (String, Boolean)))
+    val expected: Data = ((1, "two"), (true, 4L), (5, ("six", false)))
+
+    assertEquals(
+      Readers.readAs[Data]("""((1, "two"), (true, 4L), (5, ("six", false)))"""),
+      Result.Ok(expected)
     )
 
   test("parenthesized single values are not tuple decodes"):
@@ -178,9 +178,14 @@ class TupleSuite extends ScalanotationSuite:
       case Result.Err(error) =>
         assertEquals(
           error.rootCause,
-          DecodeError.ExpectedType("... *: EmptyTuple", "(...)")
+          DecodeError.ExpectedType("Tuple(...)", "(...)")
         )
       case Result.Ok(value) => fail(s"Expected a decode failure, got $value")
+
+    assertEquals(
+      Readers.readAs[Int *: EmptyTuple]("Tuple(1)")(using singletonReader),
+      Result.Ok(1 *: EmptyTuple)
+    )
 
     Readers.readAs[Int *: EmptyTuple]("(1, 2)")(using singletonReader) match
       case Result.Err(error) =>
@@ -201,6 +206,6 @@ class TupleSuite extends ScalanotationSuite:
     assertEquals(summon[Writer[EmptyTuple]].schema.describeSelf, "EmptyTuple")
     assertEquals(summon[ReadWriter[EmptyTuple]].schema.describeSelf, "EmptyTuple")
 
-    assertEquals(summon[Reader[Int *: EmptyTuple]].schema.describeSelf, "... *: EmptyTuple")
-    assertEquals(summon[Writer[Int *: EmptyTuple]].schema.describeSelf, "... *: EmptyTuple")
-    assertEquals(summon[ReadWriter[Int *: EmptyTuple]].schema.describeSelf, "... *: EmptyTuple")
+    assertEquals(summon[Reader[Int *: EmptyTuple]].schema.describeSelf, "Tuple(...)")
+    assertEquals(summon[Writer[Int *: EmptyTuple]].schema.describeSelf, "Tuple(...)")
+    assertEquals(summon[ReadWriter[Int *: EmptyTuple]].schema.describeSelf, "Tuple(...)")
