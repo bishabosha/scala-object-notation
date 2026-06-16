@@ -66,37 +66,10 @@ private[scalanotation] trait TokenSchemaDecoder extends TokenTupleDecoder:
 
   protected final def decodeRouter(schema: RawSchema.Router): Result[Unit, DecodeError] =
     Result.task:
-      if schema.read == null then missingReadCapability(schema)
-      if currentKind() == TokenKind.LParen then
-        if parenStartsRecord() then
-          val index = schema.read.nn.route(RawSchema.RouterConstruct.Record)
-          if index < 0 || index >= schema.cases.length then
-            if schema eq RawSchema.ExprRouterSchema then
-              raise(DecodeError.ExpectedExpression(describeCurrent()).atToken(currentSpan()))
-            else
-              raise(
-                DecodeError
-                  .ExpectedType(schema.describeSelf, describeCurrent())
-                  .atToken(currentSpan())
-              )
-          decodeBase(schema.cases(index).schema).check
-        else decodeParenthesizedRouterExpression(schema).check
-      else
-        val construct = currentRouterConstruct(schema.numberMode)
-        if construct == null then
-          raise(DecodeError.ExpectedExpression(describeCurrent()).atToken(currentSpan()))
-        else
-          val index = schema.read.nn.route(construct)
-          if index < 0 || index >= schema.cases.length then
-            if schema eq RawSchema.ExprRouterSchema then
-              raise(DecodeError.ExpectedExpression(describeCurrent()).atToken(currentSpan()))
-            else
-              raise(
-                DecodeError
-                  .ExpectedType(schema.describeSelf, describeCurrent())
-                  .atToken(currentSpan())
-              )
-          decodeBase(schema.cases(index).schema).check
+      val construct = currentRouterConstruct(schema.numberMode)
+      if construct == null then
+        raise(DecodeError.ExpectedExpression(describeCurrent()).atToken(currentSpan()))
+      else decodeRouterCase(schema, construct).check
       decodeRouterTupleConsTail(schema).check
 
   private def currentRouterConstruct(
@@ -104,8 +77,7 @@ private[scalanotation] trait TokenSchemaDecoder extends TokenTupleDecoder:
   ): RawSchema.RouterConstruct | Null =
     currentKind() match
       case TokenKind.LParen =>
-        if parenStartsRecord() then RawSchema.RouterConstruct.Record
-        else null
+        RawSchema.RouterConstruct.Tuple
       case TokenKind.EmptyTupleId => RawSchema.RouterConstruct.Tuple
       case TokenKind.VectorId     => RawSchema.RouterConstruct.Vector
       case TokenKind.StringLit    => RawSchema.RouterConstruct.String
@@ -136,84 +108,41 @@ private[scalanotation] trait TokenSchemaDecoder extends TokenTupleDecoder:
             RawSchema.RouterConstruct.RawNumber
       case _ => RawSchema.RouterConstruct.RawNumber
 
-  private def decodeParenthesizedRouterExpression(
-      schema: RawSchema.Router
+  private def decodeRouterCase(
+      schema: RawSchema.Router,
+      construct: RawSchema.RouterConstruct
   ): Result[Unit, DecodeError] =
     Result.task:
-      if currentKind() == TokenKind.LParen then advance()
-      else raise(DecodeError.ExpectedExpression(describeCurrent()).atToken(currentSpan()))
-      if currentKind() == TokenKind.RParen then
-        raise(DecodeError.UnitValueNotAllowed().atToken(currentSpan()))
+      if schema.read == null then missingReadCapability(schema)
+      val index = schema.read.nn.route(construct)
+      if index < 0 || index >= schema.cases.length then
+        if schema eq RawSchema.ExprRouterSchema then
+          raise(DecodeError.ExpectedExpression(describeCurrent()).atToken(currentSpan()))
+        else
+          raise(
+            DecodeError
+              .ExpectedType(schema.describeSelf, describeCurrent())
+              .atToken(currentSpan())
+          )
+      decodeBase(schema.cases(index).schema).check
 
-      def decodeRouterWithCons(): Result[Unit, DecodeError] = {
-        val old = routerTupleConsEnabled
-        routerTupleConsEnabled = true
-        try decodeRouter(schema)
-        finally routerTupleConsEnabled = old
-      }
-
-      decodeRouterWithCons().check
-      currentKind() match
-        case TokenKind.Comma =>
-          val tupleIndex = schema.read.nn.route(RawSchema.RouterConstruct.Tuple)
-          if tupleIndex < 0 || tupleIndex >= schema.cases.length then
-            raise(
-              DecodeError
-                .ExpectedType(schema.describeSelf, describeCurrent())
-                .atToken(currentSpan())
-            )
-          schema.cases(tupleIndex).schema match
-            case tupleOf: RawSchema.TupleOf =>
-              if tupleOf.read == null then missingReadCapability(tupleOf)
-              val read         = tupleOf.read.nn
-              val state0       = addSlot(read)(read.init())
-              def parseOuter() = Result.task {
-                pushRef(
-                  parseTupleCommaTailLike(
-                    state0,
-                    startCount = 1,
-                    expectedSlots = VariableTupleSlots
-                  )(
-                    _ => decodeBase(tupleOf.element),
-                    (state, _) => addSlot(read)(state)
-                  )
-                )
-              }
-              parseOuter().check
-              val state1 = pullAny().asInstanceOf[read.State]
-              var state2 = state1
-              if routerTupleConsEnabled && currentKind() == TokenKind.StarColon then
-                val inner = read.finish(state1)
-                pushRef(inner)
-                val outer = addSlot(read)(read.init())
-
-                def parseInner() = Result.task {
-                  pushRef(
-                    parseTupleConsTailLike(
-                      outer,
-                      startIndex = 1,
-                      expectedSlots = VariableTupleSlots
-                    )(
-                      _ => decodeBaseInTupleElement(tupleOf.element),
-                      (state, _) => addSlot(read)(state),
-                      peekKind() != TokenKind.StarColon
-                    )
-                  )
-                }
-
-                parseInner().check
-                state2 = pullAny().asInstanceOf[read.State]
-              pushRef(read.finish(state2))
-            case other =>
-              raise(
-                DecodeError
-                  .ExpectedType(other.describeSelf, describeCurrent())
-                  .atToken(currentSpan())
-              )
-        case TokenKind.RParen =>
-          advance()
-        case _ =>
-          raise(DecodeError.ExpectedRParen(describeCurrent()).atToken(currentSpan()))
+  private def decodeBaseAsRouterConstruct(
+      schema: RawSchema,
+      construct: RawSchema.RouterConstruct
+  ): Result[Unit, DecodeError] =
+    schema match
+      case mapped: RawSchema.Mapped =>
+        mapSlot(mapped.mapping, decodeBaseAsRouterConstruct(mapped.base, construct))
+      case RawSchema.Ref(_, target) =>
+        decodeBaseAsRouterConstruct(target(), construct)
+      case router: RawSchema.Router =>
+        decodeRouterCase(router, construct)
+      case RawSchema.AnyExpr =>
+        RawSchema.ExprRouterSchema match
+          case router: RawSchema.Router => decodeRouterCase(router, construct)
+          case other                    => decodeBase(other)
+      case other =>
+        decodeBase(other)
 
   private def decodeRouterTupleConsTail(
       schema: RawSchema.Router
@@ -541,39 +470,17 @@ private[scalanotation] trait TokenSchemaDecoder extends TokenTupleDecoder:
   protected final def decodeTupleOf(schema: RawSchema.TupleOf): Result[Unit, DecodeError] =
     withRead(schema, _.read) { read =>
       Result.task:
-        var state = read.init()
+        var state       = read.init()
+        var finishTuple = true
         currentKind() match
           case TokenKind.EmptyTupleId =>
             advance()
-          case TokenKind.LParen
-              if !parenStartsRecord()
-                && (parenthesizedTupleSeparators() & SeparatorComma) != 0 =>
-            if currentKind() == TokenKind.LParen then advance()
-            else
-              raise(
-                DecodeError
-                  .ExpectedType(schema.describeSelf, describeCurrent())
-                  .atToken(currentSpan())
-              )
-            if currentKind() == TokenKind.RParen then
-              raise(DecodeError.UnitValueNotAllowed().atToken(currentSpan()))
-            decodeBase(schema.element).check
-            val stateAfterFirst = addSlot(read)(state)
-            state = parseTupleCommaTailLike(
-              stateAfterFirst,
-              startCount = 1,
-              expectedSlots = VariableTupleSlots
-            )(
-              _ => decodeBase(schema.element),
-              (state, _) => addSlot(read)(state)
-            )
+          case TokenKind.LParen if parenStartsRecord() =>
+            decodeBaseAsRouterConstruct(schema.element, RawSchema.RouterConstruct.Record).check
             if routerTupleConsEnabled && currentKind() == TokenKind.StarColon then
-              val inner = read.finish(state)
-              val outer = read.init()
-              pushRef(inner)
-              val outer1 = addSlot(read)(outer)
+              val stateAfterFirst = addSlot(read)(read.init())
               state = parseTupleConsTailLike(
-                outer1,
+                stateAfterFirst,
                 startIndex = 1,
                 expectedSlots = VariableTupleSlots
               )(
@@ -581,6 +488,78 @@ private[scalanotation] trait TokenSchemaDecoder extends TokenTupleDecoder:
                 (state, _) => addSlot(read)(state),
                 peekKind() != TokenKind.StarColon
               )
+            else finishTuple = false
+          case TokenKind.LParen =>
+            advance()
+            if currentKind() == TokenKind.RParen then
+              raise(DecodeError.UnitValueNotAllowed().atToken(currentSpan()))
+            decodeBase(schema.element).check
+            currentKind() match
+              case TokenKind.Comma =>
+                val stateAfterFirst = addSlot(read)(read.init())
+                state = parseTupleCommaTailLike(
+                  stateAfterFirst,
+                  startCount = 1,
+                  expectedSlots = VariableTupleSlots
+                )(
+                  _ => decodeBase(schema.element),
+                  (state, _) => addSlot(read)(state)
+                )
+                if routerTupleConsEnabled && currentKind() == TokenKind.StarColon then
+                  val inner = read.finish(state)
+                  pushRef(inner)
+                  val stateAfterInner = addSlot(read)(read.init())
+                  state = parseTupleConsTailLike(
+                    stateAfterInner,
+                    startIndex = 1,
+                    expectedSlots = VariableTupleSlots
+                  )(
+                    _ => decodeBaseInTupleElement(schema.element),
+                    (state, _) => addSlot(read)(state),
+                    peekKind() != TokenKind.StarColon
+                  )
+              case TokenKind.StarColon =>
+                val stateAfterFirst = addSlot(read)(read.init())
+                state = parseTupleConsTailLike(
+                  stateAfterFirst,
+                  startIndex = 1,
+                  expectedSlots = VariableTupleSlots
+                )(
+                  _ => decodeBaseInTupleElement(schema.element),
+                  (state, _) => addSlot(read)(state),
+                  peekKind() != TokenKind.StarColon
+                )
+                if currentKind() == TokenKind.RParen then advance()
+                else raise(DecodeError.ExpectedRParen(describeCurrent()).atToken(currentSpan()))
+                if routerTupleConsEnabled && currentKind() == TokenKind.StarColon then
+                  val inner = read.finish(state)
+                  pushRef(inner)
+                  val stateAfterInner = addSlot(read)(read.init())
+                  state = parseTupleConsTailLike(
+                    stateAfterInner,
+                    startIndex = 1,
+                    expectedSlots = VariableTupleSlots
+                  )(
+                    _ => decodeBaseInTupleElement(schema.element),
+                    (state, _) => addSlot(read)(state),
+                    peekKind() != TokenKind.StarColon
+                  )
+              case TokenKind.RParen =>
+                advance()
+                if routerTupleConsEnabled && currentKind() == TokenKind.StarColon then
+                  val stateAfterFirst = addSlot(read)(read.init())
+                  state = parseTupleConsTailLike(
+                    stateAfterFirst,
+                    startIndex = 1,
+                    expectedSlots = VariableTupleSlots
+                  )(
+                    _ => decodeBaseInTupleElement(schema.element),
+                    (state, _) => addSlot(read)(state),
+                    peekKind() != TokenKind.StarColon
+                  )
+                else finishTuple = false
+              case _ =>
+                raise(DecodeError.ExpectedRParen(describeCurrent()).atToken(currentSpan()))
           case _ =>
             decodeBaseInTupleElement(schema.element).check
             val stateAfterFirst = addSlot(read)(state)
@@ -593,7 +572,7 @@ private[scalanotation] trait TokenSchemaDecoder extends TokenTupleDecoder:
               (state, _) => addSlot(read)(state),
               peekKind() != TokenKind.StarColon
             )
-        pushRef(read.finish(state))
+        if finishTuple then pushRef(read.finish(state))
     }
 
   protected final def decodeDict(schema: RawSchema.Dict): Result[Unit, DecodeError] =
