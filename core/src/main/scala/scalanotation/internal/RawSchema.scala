@@ -168,6 +168,10 @@ private[scalanotation] object RawSchema:
     def apply(value: Int): Any
 
   @FunctionalInterface
+  trait LongTotalMap:
+    def apply(value: Long): Any
+
+  @FunctionalInterface
   trait FloatTotalMap:
     def apply(value: Float): Any
 
@@ -188,17 +192,24 @@ private[scalanotation] object RawSchema:
       inputMap: InputMap | Null = null
   ):
     private var intTotalMap0: IntTotalMap | Null       = null
+    private var longTotalMap0: LongTotalMap | Null     = null
     private var floatTotalMap0: FloatTotalMap | Null   = null
     private var doubleTotalMap0: DoubleTotalMap | Null = null
+    private var totalMap0: InputMap | Null             = null
 
     def intTotalMap: IntTotalMap | Null = intTotalMap0
+
+    def longTotalMap: LongTotalMap | Null = longTotalMap0
 
     def floatTotalMap: FloatTotalMap | Null = floatTotalMap0
 
     def doubleTotalMap: DoubleTotalMap | Null = doubleTotalMap0
 
+    def totalMap: InputMap | Null = totalMap0
+
     def mapResult(result: Result[Any, DecodeError]): Result[Any, DecodeError] =
-      if intTotalMap == null && floatTotalMap == null && doubleTotalMap == null then
+      if intTotalMap == null && longTotalMap == null && floatTotalMap == null && doubleTotalMap == null && totalMap == null
+      then
         val fn = resultMap
         if fn == null then result
         else result.flatMap(fn)
@@ -213,15 +224,26 @@ private[scalanotation] object RawSchema:
               mappedValue = intFn(value.asInstanceOf[Int])
               mapped = true
             else
-              val floatFn = floatTotalMap
-              if floatFn != null && value.isInstanceOf[Float] then
-                mappedValue = floatFn(value.asInstanceOf[Float])
+              val longFn = longTotalMap
+              if longFn != null && value.isInstanceOf[Long] then
+                mappedValue = longFn(value.asInstanceOf[Long])
                 mapped = true
               else
-                val doubleFn = doubleTotalMap
-                if doubleFn != null && value.isInstanceOf[Double] then
-                  mappedValue = doubleFn(value.asInstanceOf[Double])
+                val floatFn = floatTotalMap
+                if floatFn != null && value.isInstanceOf[Float] then
+                  mappedValue = floatFn(value.asInstanceOf[Float])
                   mapped = true
+                else
+                  val doubleFn = doubleTotalMap
+                  if doubleFn != null && value.isInstanceOf[Double] then
+                    mappedValue = doubleFn(value.asInstanceOf[Double])
+                    mapped = true
+
+            if !mapped then
+              val anyFn = totalMap
+              if anyFn != null then
+                mappedValue = anyFn(value)
+                mapped = true
 
             val fn = resultMap
             if fn != null then fn(mappedValue)
@@ -238,13 +260,17 @@ private[scalanotation] object RawSchema:
         resultMap0: ResultMap | Null = resultMap,
         inputMap0: InputMap | Null = inputMap,
         intTotalMap1: IntTotalMap | Null = intTotalMap0,
+        longTotalMap1: LongTotalMap | Null = longTotalMap0,
         floatTotalMap1: FloatTotalMap | Null = floatTotalMap0,
-        doubleTotalMap1: DoubleTotalMap | Null = doubleTotalMap0
+        doubleTotalMap1: DoubleTotalMap | Null = doubleTotalMap0,
+        totalMap1: InputMap | Null = totalMap0
     ): SchemaMapping =
       val next = SchemaMapping(resultMap0, inputMap0)
       next.intTotalMap0 = intTotalMap1
+      next.longTotalMap0 = longTotalMap1
       next.floatTotalMap0 = floatTotalMap1
       next.doubleTotalMap0 = doubleTotalMap1
+      next.totalMap0 = totalMap1
       next
 
     def withResultMap(f: ResultMap): SchemaMapping =
@@ -267,11 +293,17 @@ private[scalanotation] object RawSchema:
     def withIntTotalMap(f: IntTotalMap): SchemaMapping =
       copyWith(intTotalMap1 = f)
 
+    def withLongTotalMap(f: LongTotalMap): SchemaMapping =
+      copyWith(longTotalMap1 = f)
+
     def withFloatTotalMap(f: FloatTotalMap): SchemaMapping =
       copyWith(floatTotalMap1 = f)
 
     def withDoubleTotalMap(f: DoubleTotalMap): SchemaMapping =
       copyWith(doubleTotalMap1 = f)
+
+    def withTotalMap(f: InputMap): SchemaMapping =
+      copyWith(totalMap1 = f)
 
   object SchemaMapping:
     val empty: SchemaMapping = SchemaMapping()
@@ -357,8 +389,8 @@ private[scalanotation] object RawSchema:
       read: A => Expr,
       write: Expr => A
   ): RawSchema =
-    mapResultAndInput(base)(
-      resultMap0 = value => okAny(read(value.asInstanceOf[A])),
+    mapTotalAndInput(base)(
+      resultMap0 = value => read(value.asInstanceOf[A]),
       inputMap0 = value => write(value.asInstanceOf[Expr])
     )
 
@@ -367,6 +399,15 @@ private[scalanotation] object RawSchema:
       write: Expr => Int
   ): RawSchema =
     mapIntTotalAndInput(RawSchema.Int)(
+      resultMap0 = read,
+      inputMap0 = value => write(value.asInstanceOf[Expr])
+    )
+
+  private def exprMappedLongPrimitive(
+      read: LongTotalMap,
+      write: Expr => Long
+  ): RawSchema =
+    mapLongTotalAndInput(RawSchema.Long)(
       resultMap0 = read,
       inputMap0 = value => write(value.asInstanceOf[Expr])
     )
@@ -388,18 +429,6 @@ private[scalanotation] object RawSchema:
       resultMap0 = read,
       inputMap0 = value => write(value.asInstanceOf[Expr])
     )
-
-  private object ExprIntTotalMap extends IntTotalMap:
-    def apply(value: Int): Any =
-      Expr.IntConstant(value)
-
-  private object ExprFloatTotalMap extends FloatTotalMap:
-    def apply(value: Float): Any =
-      Expr.FloatConstant(value)
-
-  private object ExprDoubleTotalMap extends DoubleTotalMap:
-    def apply(value: Double): Any =
-      Expr.DoubleConstant(value)
 
   private object ExprTupleRead extends VectorRead:
     type State = ArrayBuffer[Expr]
@@ -426,17 +455,16 @@ private[scalanotation] object RawSchema:
         case other                    => invalidExprRouterInput("TupleExpr", other)
 
   private object ExprVectorRead extends VectorRead:
-    type State = ArrayBuffer[Expr]
+    type State = collection.mutable.Builder[Expr, IArray[Expr]]
 
     def init(): State =
-      ArrayBuffer.empty[Expr]
+      IArray.newBuilder[Expr]
 
     def add(state: State, elem: Any): State =
-      state += elem.asInstanceOf[Expr]
-      state
+      state.addOne(elem.asInstanceOf[Expr])
 
     def finish(state: State): Any =
-      Expr.VectorExpr(state.toIndexedSeq)
+      Expr.VectorExpr(state.result())
 
   private object ExprVectorWrite extends VectorWrite:
     def size(value: Any): Int =
@@ -450,17 +478,16 @@ private[scalanotation] object RawSchema:
         case other                     => invalidExprRouterInput("VectorExpr", other)
 
   private object ExprNamedTupleRead extends DictRead:
-    type State = ArrayBuffer[(String, Expr)]
+    type State = collection.mutable.Builder[(String, Expr), IArray[(String, Expr)]]
 
     def init(): State =
-      ArrayBuffer.empty[(String, Expr)]
+      IArray.newBuilder[(String, Expr)]
 
     def add(state: State, key: String, elem: Any): State =
-      state += ((key, elem.asInstanceOf[Expr]))
-      state
+      state.addOne((key, elem.asInstanceOf[Expr]))
 
     def finish(state: State): Any =
-      Expr.NamedTupleExpr(state.toIndexedSeq)
+      Expr.NamedTupleExpr(state.result())
 
   private object ExprNamedTupleWrite extends DictWrite:
     def size(value: Any): Int =
@@ -569,7 +596,7 @@ private[scalanotation] object RawSchema:
         RouterCase(
           "IntConstant",
           exprMappedIntPrimitive(
-            ExprIntTotalMap,
+            Expr.IntConstant(_),
             {
               case Expr.IntConstant(value) => value
               case other                   => invalidExprRouterInput("IntConstant", other)
@@ -578,8 +605,7 @@ private[scalanotation] object RawSchema:
         ),
         RouterCase(
           "LongConstant",
-          exprMappedPrimitive[Long](
-            RawSchema.Long,
+          exprMappedLongPrimitive(
             Expr.LongConstant(_),
             {
               case Expr.LongConstant(value) => value
@@ -590,7 +616,7 @@ private[scalanotation] object RawSchema:
         RouterCase(
           "FloatConstant",
           exprMappedFloatPrimitive(
-            ExprFloatTotalMap,
+            Expr.FloatConstant(_),
             {
               case Expr.FloatConstant(value) => value
               case other                     => invalidExprRouterInput("FloatConstant", other)
@@ -600,7 +626,7 @@ private[scalanotation] object RawSchema:
         RouterCase(
           "DoubleConstant",
           exprMappedDoublePrimitive(
-            ExprDoubleTotalMap,
+            Expr.DoubleConstant(_),
             {
               case Expr.DoubleConstant(value) => value
               case other                      => invalidExprRouterInput("DoubleConstant", other)
@@ -620,8 +646,8 @@ private[scalanotation] object RawSchema:
         ),
         RouterCase(
           "NullConstant",
-          mapResultAndInput(RawSchema.Null)(
-            resultMap0 = _ => okAny(Expr.NullConstant),
+          mapTotalAndInput(RawSchema.Null)(
+            resultMap0 = _ => Expr.NullConstant,
             inputMap0 = value =>
               value.asInstanceOf[Expr] match
                 case Expr.NullConstant => null
@@ -955,6 +981,14 @@ private[scalanotation] object RawSchema:
   ): RawSchema =
     base.withMapping(_.withMapped(resultMap0, inputMap0))
 
+  private def mapTotalAndInput(
+      base: RawSchema
+  )(
+      resultMap0: InputMap,
+      inputMap0: InputMap
+  ): RawSchema =
+    base.withMapping(_.withTotalMap(resultMap0).withInputMap(inputMap0))
+
   private def mapIntTotalAndInput(
       base: RawSchema
   )(
@@ -962,6 +996,14 @@ private[scalanotation] object RawSchema:
       inputMap0: InputMap
   ): RawSchema =
     base.withMapping(_.withIntTotalMap(resultMap0).withInputMap(inputMap0))
+
+  private def mapLongTotalAndInput(
+      base: RawSchema
+  )(
+      resultMap0: LongTotalMap,
+      inputMap0: InputMap
+  ): RawSchema =
+    base.withMapping(_.withLongTotalMap(resultMap0).withInputMap(inputMap0))
 
   private def mapFloatTotalAndInput(
       base: RawSchema
