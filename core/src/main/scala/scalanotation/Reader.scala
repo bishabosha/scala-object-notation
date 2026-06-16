@@ -95,7 +95,9 @@ object Reader extends ReaderLowPriority, CommonTypeClassCompanion[Reader]:
     fromSchema(schema)
 
   def mapped[A, B](base: Reader[A])(transform: A => B): Reader[B] =
-    mappedResult(base)(value => Result.Ok(transform(value)))
+    fromSchema(
+      RawSchema.mapPure(base.schema)(value => transform(value.asInstanceOf[A]))
+    )
 
   def mappedResult[A, B](base: Reader[A])(
       transform: A => Result[B, DecodeError]

@@ -12,7 +12,10 @@ private[scalanotation] trait TokenSchemaDecoder extends TokenTupleDecoder:
   protected final def decodeBase(schema: RawSchema): Result[Unit, DecodeError] =
     schema match
       case mapped: RawSchema.Mapped =>
-        mapSlot(mapped.mapping, decodeBase(mapped.base))
+        Result.task {
+          decodeBase(mapped.base).check
+          mapSlot(mapped.mapping).check
+        }
       case RawSchema.Ref(_, target) =>
         decodeBase(target())
       case router: RawSchema.Router =>
@@ -126,7 +129,7 @@ private[scalanotation] trait TokenSchemaDecoder extends TokenTupleDecoder:
       case RawSchema.RouterNumberMode.Raw     => RawSchema.RouterConstruct.RawNumber
 
   private def parenStartsRecord(): Boolean =
-    val pre = asFieldNameStart(peekKind())
+    val pre  = asFieldNameStart(peekKind())
     val post = peekSecondKind() - TokenKind.Equals
     (pre ^ post) > 0
     isFieldNameStart(peekKind()) && peekSecondKind() == TokenKind.Equals
@@ -308,7 +311,10 @@ private[scalanotation] trait TokenSchemaDecoder extends TokenTupleDecoder:
   ): Result[Unit, DecodeError] =
     schema match
       case mapped: RawSchema.Mapped =>
-        mapSlot(mapped.mapping, decodePartialNamedTuple(mapped.base, alreadySeenField))
+        Result.task {
+          decodePartialNamedTuple(mapped.base, alreadySeenField).check
+          mapSlot(mapped.mapping).check
+        }
       case namedTuple: RawSchema.NamedTuple =>
         decodePartialNamedTuple(namedTuple, alreadySeenField)
       case RawSchema.Null =>
