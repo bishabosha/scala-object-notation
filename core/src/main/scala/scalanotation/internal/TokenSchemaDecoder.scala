@@ -38,8 +38,6 @@ private[scalanotation] trait TokenSchemaDecoder extends TokenTupleDecoder:
         decodeDict(sc)
       case sc: RawSchema.Option =>
         decodeOption(sc)
-      case RawSchema.AnyExpr =>
-        decodeBase(RawSchema.ExprRouterSchema)
       case RawSchema.String =>
         decodeString()
       case RawSchema.Char =>

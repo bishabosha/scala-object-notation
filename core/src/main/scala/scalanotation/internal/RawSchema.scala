@@ -61,7 +61,6 @@ private[scalanotation] enum RawSchema:
   case Ref(name: String, target: () => RawSchema)
   case Option(inner: RawSchema)
   case Mapped(base: RawSchema, mapping: RawSchema.SchemaMapping)
-  case AnyExpr
   case String
   case Char
   case Int
@@ -144,7 +143,6 @@ private[scalanotation] enum RawSchema:
         if cases.isEmpty then "Nothing"
         else cases.iterator.map(_.name).mkString("Router[", " | ", "]")
       case RawSchema.Ref(name, _)   => name
-      case RawSchema.AnyExpr        => "Any"
       case RawSchema.String         => "String"
       case RawSchema.Char           => "Char"
       case RawSchema.Int            => "Int"
