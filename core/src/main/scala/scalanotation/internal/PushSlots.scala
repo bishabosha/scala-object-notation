@@ -211,8 +211,8 @@ private[scalanotation] abstract class PushSlots extends Internal.PoolHolder:
       r: Result[Unit, DecodeError]
   ): Result[Unit, DecodeError] =
     if r.isErr then r
-    else if mapping.intTotalMap == null && mapping.floatTotalMap == null && mapping.doubleTotalMap == null
-      && mapping.totalMap == null
+    else if mapping.intTotalMap == null && mapping.longTotalMap == null
+      && mapping.floatTotalMap == null && mapping.doubleTotalMap == null && mapping.totalMap == null
     then
       val fn = mapping.resultMap
       if fn == null then r
@@ -227,6 +227,11 @@ private[scalanotation] abstract class PushSlots extends Internal.PoolHolder:
           val fn = mapping.intTotalMap
           if fn != null then
             pushRef(fn(intSlot))
+            mappedTotal = true
+        case SlotKind.Long =>
+          val fn = mapping.longTotalMap
+          if fn != null then
+            pushRef(fn(longSlot))
             mappedTotal = true
         case SlotKind.Float =>
           val fn = mapping.floatTotalMap

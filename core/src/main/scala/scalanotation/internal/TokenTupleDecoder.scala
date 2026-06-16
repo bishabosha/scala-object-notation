@@ -370,14 +370,12 @@ private[scalanotation] trait TokenTupleDecoder
       case _                              => false
 
   // bit flags of parenthesizedTupleSeparators — packed into an Int so no tuple is boxed per decode
-  protected final val SeparatorComma               = 1
-  protected final val SeparatorStarColon           = 2
-  protected final val SeparatorFollowedByStarColon = 4
+  protected final val SeparatorComma     = 1
+  protected final val SeparatorStarColon = 2
 
   /** Scans ahead (without buffering) from the current '(' to its matching ')' to discover which
-    * separators the parenthesized tuple uses, plus whether the balanced group is immediately
-    * followed by `*:`, returned as a bitmask. Uses a scout scanner so the bounded token buffer of
-    * the stream is preserved; no tokens are materialized.
+    * separators the parenthesized tuple uses, returned as a bitmask. Uses a scout scanner so the
+    * bounded token buffer of the stream is preserved; no tokens are materialized.
     */
   protected final def parenthesizedTupleSeparators(): Int =
     var depth      = 0
@@ -401,7 +399,4 @@ private[scalanotation] trait TokenTupleDecoder
         case TokenKind.Eof =>
           done = true
         case _ => ()
-    if sawOpen && scout.kind == TokenKind.RParen then
-      scout.scanNext()
-      if scout.kind == TokenKind.StarColon then separators |= SeparatorFollowedByStarColon
     separators
