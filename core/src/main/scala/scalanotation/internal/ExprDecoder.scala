@@ -84,8 +84,6 @@ private[scalanotation] class ExprDecoder extends PushSlots:
             val r = decodeBase(sc.inner, other)
             if r.isOk then pushRef(Some(pullAny()))
             r
-      case RawSchema.AnyExpr =>
-        decodeBase(RawSchema.ExprRouterSchema, expr)
       case RawSchema.String =>
         expr match
           case Expr.StringConstant(value) =>
