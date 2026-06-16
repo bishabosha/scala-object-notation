@@ -157,9 +157,9 @@ private[scalanotation] trait TokenDecoderParsing extends TokenDecoderSupport:
       case TokenKind.Identifier   => currentName()
       case TokenKind.VectorId     => "Vector"
       case TokenKind.EmptyTupleId => "EmptyTuple"
+      case TokenKind.TupleId      => "Tuple"
       case TokenKind.Plus         => "+"
       case TokenKind.Minus        => "-"
-      case TokenKind.StarColon    => "*:"
       case _                      =>
         raise(DecodeError.ExpectedIdentifier(describeCurrent()).atToken(currentSpan()))
     advance()
@@ -184,9 +184,9 @@ private[scalanotation] trait TokenDecoderParsing extends TokenDecoderSupport:
         case TokenKind.Identifier   => currentName()
         case TokenKind.VectorId     => "Vector"
         case TokenKind.EmptyTupleId => "EmptyTuple"
+        case TokenKind.TupleId      => "Tuple"
         case TokenKind.Plus         => "+"
         case TokenKind.Minus        => "-"
-        case TokenKind.StarColon    => "*:"
         case _                      =>
           raise(DecodeError.ExpectedFieldName(describeCurrent()).atToken(currentSpan()))
       advance()
