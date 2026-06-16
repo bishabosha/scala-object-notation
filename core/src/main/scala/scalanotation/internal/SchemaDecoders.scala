@@ -6,7 +6,7 @@ import steps.result.Result
 import steps.result.Result.eval.check
 import steps.result.Result.eval.raise
 
-private[scalanotation] trait TokenSchemaDecoder extends TokenDecoderParsing:
+private[scalanotation] trait SchemaDecoders extends BaseDecoders:
   self: TokenStream =>
 
   protected final def decodeBase(schema: RawSchema): Result[Unit, DecodeError] =
@@ -430,15 +430,15 @@ private[scalanotation] trait TokenSchemaDecoder extends TokenDecoderParsing:
   }
 
   protected final def decodeVector(schema: RawSchema.Vector): Result[Unit, DecodeError] =
-    Result.task {
-      if schema.read == null then missingReadCapability(schema)
-      val read   = schema.read.nn
-      var values = read.init()
-      parseVectorStructure(schema) { indexInVector =>
-        checkOrRaise(decodeBase(schema.element))(_.atPath(s"[$indexInVector]"))
-        values = addSlot(read)(values)
+    withRead(schema, _.read) { read =>
+      Result.task {
+        var values = read.init()
+        parseVectorStructure(schema) { indexInVector =>
+          checkOrRaise(decodeBase(schema.element))(_.atPath(s"[$indexInVector]"))
+          values = addSlot(read)(values)
+        }
+        pushRef(read.finish(values))
       }
-      pushRef(read.finish(values))
     }
 
   protected final def decodeTupleOf(schema: RawSchema.TupleOf): Result[Unit, DecodeError] =
@@ -458,20 +458,23 @@ private[scalanotation] trait TokenSchemaDecoder extends TokenDecoderParsing:
 
   protected final def decodeDict(schema: RawSchema.Dict): Result[Unit, DecodeError] =
     namesPool.withBorrowed { seenNames =>
-      Result.task {
-        if schema.read == null then missingReadCapability(schema)
-        val read   = schema.read.nn
-        var state  = read.init()
-        val parsed = parseNamedTupleStructure(schema, allowEmpty = false) { (name, nameOffset, _) =>
-          if seenNames.alreadySeen(name) then
-            raise(DecodeError.DuplicateField(name).atPath(s".${name}").atToken(spanAt(nameOffset)))
-          checkOrRaise(decodeBase(schema.element))(_.atPath(s".${name}"))
-          state = addSlot(read)(state, name)
+      withRead(schema, _.read) { read =>
+        Result.task {
+          var state  = read.init()
+          val parsed = parseNamedTupleStructure(schema, allowEmpty = false) {
+            (name, nameOffset, _) =>
+              if seenNames.alreadySeen(name) then
+                raise(
+                  DecodeError.DuplicateField(name).atPath(s".${name}").atToken(spanAt(nameOffset))
+                )
+              checkOrRaise(decodeBase(schema.element))(_.atPath(s".${name}"))
+              state = addSlot(read)(state, name)
+          }
+          val _ = parsed.closingOffset
+          val _ = parsed.fieldName
+          val _ = parsed.fieldCount
+          pushRef(read.finish(state))
         }
-        val _ = parsed.closingOffset
-        val _ = parsed.fieldName
-        val _ = parsed.fieldCount
-        pushRef(read.finish(state))
       }
     }
 
@@ -484,3 +487,92 @@ private[scalanotation] trait TokenSchemaDecoder extends TokenDecoderParsing:
         decodeBase(schema.inner).check
         pushRef(Some(pullAny()))
     }
+
+    /** decodes a string (with `+` concatenation), pushing the value into [[stringSlot]] */
+  protected final def decodeString(): Result[Unit, DecodeError] =
+    Result.task {
+      decodeStringAtom().check
+      if currentKind() == TokenKind.Plus then
+        val builder = StringBuilder() ++= pullStringStrict()
+        while currentKind() == TokenKind.Plus do
+          advance()
+          decodeStringAtom().check
+          builder ++= pullStringStrict()
+        pushString(builder.result())
+    }
+
+  protected final def decodeStringAtom(): Result[Unit, DecodeError] = Result.task:
+    if currentKind() == TokenKind.StringLit then
+      pushString(currentStringValue())
+      advance()
+    else raise(expectedTypeAtCurrent(RawSchema.String))
+
+  protected final def decodeChar(): Result[Unit, DecodeError] = Result.task:
+    if currentKind() == TokenKind.CharLit then
+      pushChar(currentCharValue())
+      advance()
+    else raise(expectedTypeAtCurrent(RawSchema.Char))
+
+  protected final def decodeInt(): Result[Unit, DecodeError] = Result.task:
+    decodeSigned[Int](
+      literal = negative =>
+        currentKind() match
+          case TokenKind.IntLit => currentIntValue(negative)
+          case _                => raise(expectedTypeAtCurrent(RawSchema.Int)),
+      store = v => pushInt(v)
+    )
+
+  protected final def decodeLong(): Result[Unit, DecodeError] = Result.task:
+    decodeSigned[Long](
+      literal = negative =>
+        currentKind() match
+          case TokenKind.LongLit => currentLongValue(negative)
+          case TokenKind.IntLit  => currentIntValue(negative).toLong
+          case _                 => raise(expectedTypeAtCurrent(RawSchema.Long)),
+      store = v => pushLong(v)
+    )
+
+  protected final def decodeFloat(): Result[Unit, DecodeError] = Result.task:
+    decodeSigned[Float](
+      literal = negative =>
+        currentKind() match
+          case TokenKind.FloatLit =>
+            val magnitude = currentFloatValue()
+            if negative then -magnitude else magnitude
+          case TokenKind.IntLit =>
+            val value = currentIntValue(negative)
+            if NumericPromotions.isExactFloat(value) then value.toFloat
+            else raise(expectedTypeAtCurrent(RawSchema.Float))
+          case _ => raise(expectedTypeAtCurrent(RawSchema.Float)),
+      store = v => pushFloat(v)
+    )
+
+  protected final def decodeDouble(): Result[Unit, DecodeError] = Result.task:
+    decodeSigned[Double](
+      literal = negative =>
+        currentKind() match
+          case TokenKind.DoubleLit =>
+            val magnitude = currentDoubleValue()
+            if negative then -magnitude else magnitude
+          case TokenKind.IntLit => currentIntValue(negative).toDouble
+          case _                => raise(expectedTypeAtCurrent(RawSchema.Double)),
+      store = v => pushDouble(v)
+    )
+
+  protected final def decodeBoolean(): Result[Unit, DecodeError] =
+    Result.task:
+      currentKind() match
+        case TokenKind.TrueKw =>
+          advance()
+          pushBoolean(true)
+        case TokenKind.FalseKw =>
+          advance()
+          pushBoolean(false)
+        case _ =>
+          raise(expectedTypeAtCurrent(RawSchema.Boolean))
+
+  protected final def decodeNull(): Result[Unit, DecodeError] = Result.task:
+    if currentKind() == TokenKind.NullKw then
+      advance()
+      pushRef(null)
+    else raise(expectedTypeAtCurrent(RawSchema.Null))
