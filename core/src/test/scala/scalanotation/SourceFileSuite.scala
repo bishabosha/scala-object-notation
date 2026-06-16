@@ -53,7 +53,9 @@ class SourceFileSuite extends ScalanotationSuite:
   test("reject package statement before top-level expression"):
     assertEquals(
       Readers.readAs[Expr]("package foo.bar\n(x = 1)").map(_ => ()),
-      Result.Err(DecodeError.ExpectedExpression("'package'").atToken(DecodeError.Span(0, 1, 1)))
+      Result.Err(
+        DecodeError.ExpectedType("any expression", "'package'").atToken(DecodeError.Span(0, 1, 1))
+      )
     )
 
   test("reject missing or unexpected package statement"):
