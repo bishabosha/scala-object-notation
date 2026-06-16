@@ -6,6 +6,7 @@
 //| ]
 package build
 
+import scala.math.Ordered.orderingToOrdered
 import com.github.lolgab.mill.mima.Mima
 import mill.*
 import mill.api.Task.Simple
@@ -152,19 +153,45 @@ object demo extends ScalaObjectNotationModule:
 
   def mainClass = Some("scalableconfig.Main")
 
-object bench      extends Cross[BenchModule]("HEAD", "0.3.6", "0.3.5")
+val benchTestVersions = Seq("HEAD", "0.3.7", "0.3.6", "0.3.5")
+case class BenchTestVersion(version: String):
+  def displayName: String = version match
+    case "HEAD"              => "head"
+    case s"$maj.$min.$patch" => s"$version+"
+
+given Ordering[BenchTestVersion]:
+  def compare(x: BenchTestVersion, y: BenchTestVersion): Int = (x, y) match
+    case (BenchTestVersion(x0), BenchTestVersion(y0)) if x0 == y0                             => 0
+    case (BenchTestVersion("HEAD"), _)                                                        => 1
+    case (_, BenchTestVersion("HEAD"))                                                        => -1
+    case (BenchTestVersion(s"$majX.$minX.$patchX"), BenchTestVersion(s"$majY.$minY.$patchY")) =>
+      (majX.toInt, minX.toInt, patchX.toInt).compare((majY.toInt, minY.toInt, patchY.toInt))
+    case (BenchTestVersion(str0), BenchTestVersion(str1)) => str0.compare(str1)
+
+object bench      extends Cross[BenchModule](benchTestVersions)
 trait BenchModule extends Cross.Module[String], ScalaObjectNotationModule, JmhModule:
   def jmhCoreVersion = "1.37"
   // HEAD additionally gets the macros module, for benchmarks of macro-derived typed factories
+
+  val crossVersion = BenchTestVersion(crossValue)
+
   override def moduleDeps =
     if crossValue == "HEAD" then Seq(core, macros) else Seq.empty
   override def mvnDeps = super.mvnDeps() ++ (
     if crossValue == "HEAD" then Seq.empty
-    else Seq(mvn"io.github.bishabosha::scala-object-notation::${crossValue}")
+    else
+      val macroDep = {
+        if crossVersion >= BenchTestVersion("0.3.7") then
+          Seq(mvn"io.github.bishabosha::scala-object-notation-macros::${crossValue}")
+        else Seq.empty
+      }
+      Seq(mvn"io.github.bishabosha::scala-object-notation::${crossValue}") ++ macroDep
   )
-  // benchmarks using HEAD-only API live in src-head, which older crosses cannot compile
-  def headSources      = Task.Sources(moduleDir / "src-head" / "main" / "scala")
+  def versionDirNames: Seq[String] =
+    benchTestVersions.map(BenchTestVersion(_)).filter(v => v <= crossVersion).map(_.displayName)
+  def versionSources =
+    Task.Sources(versionDirNames.map(dir => moduleDir / s"src-$dir" / "main" / "scala")*)
   override def sources = Task {
-    super.sources() ++ (if crossValue == "HEAD" then headSources() else Seq.empty)
+    super.sources() ++ versionSources()
   }
   def runJmhMem(args: String*) = runJmh(("-prof" +: "gc" +: args.toSeq)*)
