@@ -37,7 +37,12 @@ object ReadWriter extends CommonTypeClassCompanion[ReadWriter]:
     fromSchema(schema)
 
   def mapped[A, B](base: ReadWriter[A])(read: A => B)(write: B => A): ReadWriter[B] =
-    mappedResult(base)(value => Result.Ok(read(value)))(write)
+    fromSchema(
+      RawSchema.mapPureAndInput(base.schema)(
+        resultMap0 = value => read(value.asInstanceOf[A]),
+        inputMap0 = value => write(value.asInstanceOf[B])
+      )
+    )
 
   def mappedResult[A, B](base: ReadWriter[A])(
       read: A => Result[B, DecodeError]

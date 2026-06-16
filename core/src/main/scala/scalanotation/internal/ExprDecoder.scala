@@ -48,7 +48,10 @@ private[scalanotation] class ExprDecoder extends PushSlots:
   ): Result[Unit, DecodeError] =
     schema match
       case mapped: RawSchema.Mapped =>
-        mapSlot(mapped.mapping, decodeBase(mapped.base, expr))
+        Result.task {
+          decodeBase(mapped.base, expr).check
+          mapSlot(mapped.mapping).check
+        }
       case RawSchema.Ref(_, target) =>
         decodeBase(target(), expr)
       case router: RawSchema.Router =>
@@ -365,7 +368,10 @@ private[scalanotation] class ExprDecoder extends PushSlots:
       case RawSchema.PartialNamedTuple(base, _) =>
         decodePartialNamedTuple(base, alreadySeenField, expr)
       case mapped: RawSchema.Mapped =>
-        mapSlot(mapped.mapping, decodePartialNamedTuple(mapped.base, alreadySeenField, expr))
+        Result.task {
+          decodePartialNamedTuple(mapped.base, alreadySeenField, expr).check
+          mapSlot(mapped.mapping).check
+        }
       case namedTuple: RawSchema.NamedTuple =>
         decodePartialNamedTuple(namedTuple, alreadySeenField, expr)
       case RawSchema.Null =>

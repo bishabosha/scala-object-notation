@@ -13,6 +13,7 @@ import scala.compiletime.testing.typeCheckErrors
 class SchemaSuite extends ScalanotationSuite:
   test("schema mappings only appear on mapped schemas"):
     final case class UserId(value: Int)
+    final case class UserLabel(value: String)
 
     assertEquals(summon[Reader[Int]].schema, RawSchema.Int)
     assertEquals(summon[Writer[Int]].schema, RawSchema.Int)
@@ -21,11 +22,26 @@ class SchemaSuite extends ScalanotationSuite:
     mappedReader.schema match
       case RawSchema.Mapped(base, mapping) =>
         assertEquals(base, RawSchema.Int)
-        assert(mapping.resultMap != null)
+        assertEquals(mapping.resultMap, null)
+        mapping.totalMaps match
+          case RawSchema.SchemaMapping.TotalMap.AnyMap(_) => ()
+          case other => fail(s"Expected a pure mapped reader schema, got $other")
         assertEquals(mapping.inputMap, null)
         assertEquals(mappedReader.schema.describeSelf, "Int")
       case other =>
         fail(s"Expected a mapped reader schema, got $other")
+
+    val chainedReader = summon[Reader[Int]].map(UserId(_)).map(id => UserLabel(id.value.toString))
+    chainedReader.schema match
+      case RawSchema.Mapped(base, mapping) =>
+        assertEquals(base, RawSchema.Int)
+        assertEquals(mapping.resultMap, null)
+        mapping.totalMaps match
+          case RawSchema.SchemaMapping.TotalMap.AnyMap(_) => ()
+          case other => fail(s"Expected a composed pure mapped reader schema, got $other")
+      case other =>
+        fail(s"Expected a mapped reader schema, got $other")
+    assertEquals(Readers.readAs[UserLabel]("1")(using chainedReader), Result.Ok(UserLabel("1")))
 
     val mappedWriter = summon[Writer[Int]].contramap[UserId](_.value)
     mappedWriter.schema match
@@ -41,7 +57,10 @@ class SchemaSuite extends ScalanotationSuite:
     mappedReadWriter.schema match
       case RawSchema.Mapped(base, mapping) =>
         assertEquals(base, RawSchema.Int)
-        assert(mapping.resultMap != null)
+        assertEquals(mapping.resultMap, null)
+        mapping.totalMaps match
+          case RawSchema.SchemaMapping.TotalMap.AnyMap(_) => ()
+          case other => fail(s"Expected a pure mapped read-writer schema, got $other")
         assert(mapping.inputMap != null)
       case other =>
         fail(s"Expected a mapped read-writer schema, got $other")
@@ -49,10 +68,39 @@ class SchemaSuite extends ScalanotationSuite:
     Reader.forNull(UserId(1)).schema match
       case RawSchema.Mapped(base, mapping) =>
         assertEquals(base, RawSchema.Null)
-        assert(mapping.resultMap != null)
+        assertEquals(mapping.resultMap, null)
+        mapping.totalMaps match
+          case RawSchema.SchemaMapping.TotalMap.AnyMap(_) => ()
+          case other => fail(s"Expected a pure mapped nullary schema, got $other")
         assertEquals(mapping.inputMap, null)
       case other =>
         fail(s"Expected a mapped nullary schema, got $other")
+
+  test("mapping an already mapped ReadWriter composes read and write"):
+    final case class UserId(value: Int)
+    final case class UserLabel(value: String)
+
+    val idReadWriter =
+      summon[ReadWriter[Int]].bimap(value => UserId(value + 10))(id => id.value - 10)
+    val labelReadWriter =
+      idReadWriter.bimap(id => UserLabel(id.value.toString))(label => UserId(label.value.toInt))
+
+    labelReadWriter.schema match
+      case RawSchema.Mapped(base, mapping) =>
+        assertEquals(base, RawSchema.Int)
+        assertEquals(mapping.resultMap, null)
+        mapping.totalMaps match
+          case RawSchema.SchemaMapping.TotalMap.AnyMap(_) => ()
+          case other => fail(s"Expected a composed pure mapped read-writer schema, got $other")
+        assert(mapping.inputMap != null)
+      case other =>
+        fail(s"Expected a mapped read-writer schema, got $other")
+
+    assertEquals(
+      Readers.readAs[UserLabel]("5")(using labelReadWriter.reader),
+      Result.Ok(UserLabel("15"))
+    )
+    assertEquals(Writers.write(UserLabel("15"))(using labelReadWriter.writer), "5")
 
   test("Null is a primitive schema and decodes to null"):
     assertEquals(summon[Reader[Null]].schema, RawSchema.Null)
