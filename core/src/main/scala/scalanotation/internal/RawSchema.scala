@@ -53,6 +53,8 @@ private[scalanotation] enum RawSchema:
       write: RawSchema.DictWrite | Null = null
   )
   case Router(
+      name: String,
+      selfKind: String,
       cases: IArray[RawSchema.RouterCase],
       read: RawSchema.RouterRead | Null,
       write: RawSchema.RouterWrite | Null,
@@ -138,10 +140,7 @@ private[scalanotation] enum RawSchema:
       case _: RawSchema.Vector      => "Vector[...]"
       case _: RawSchema.TupleOf     => "Tuple[...]"
       case _: RawSchema.Dict        => "AnyNamedTuple"
-      case router: RawSchema.Router =>
-        val cases = router.cases
-        if cases.isEmpty then "Nothing"
-        else cases.iterator.map(_.name).mkString("Router[", " | ", "]")
+      case router: RawSchema.Router => router.selfKind
       case RawSchema.Ref(name, _)   => name
       case RawSchema.String         => "String"
       case RawSchema.Char           => "Char"
@@ -513,6 +512,8 @@ private[scalanotation] object RawSchema:
   lazy val ExprRouterSchema: RawSchema =
     lazy val self: RawSchema = RawSchema.Ref("Expr", () => ExprRouterSchema)
     RawSchema.Router(
+      name = "Expr",
+      selfKind = "any expression",
       IArray(
         RouterCase(
           "NamedTupleExpr",
