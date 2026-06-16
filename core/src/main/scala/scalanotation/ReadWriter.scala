@@ -223,6 +223,30 @@ object ReadWriter extends CommonTypeClassCompanion[ReadWriter]:
         )
       )
 
+    given [Path <: String, K, V, Col[X, Y] <: scala.collection.Map[X, Y]]
+      => NotGiven[K =:= String]
+      => (entry: AtPath[Path + "[]", (K, V)])
+      => (factory: scala.collection.Factory[(K, V), Col[K, V]])
+      => AtPath[Path, Col[K, V]] =
+      liftAtPath[Path, Col[K, V]](
+        fromSchema[Col[K, V]](
+          RawSchema.mapPureAndInput(
+            RawSchema.Vector(
+              entry.typeclass.schema,
+              RawSchema.VectorRead.FromReaderBuilder(PublicInternal.BuildVector[(K, V)]),
+              RawSchema.VectorWrite.from[Vector[(K, V)], (K, V)](_.length, _.iterator)
+            )
+          )(
+            resultMap0 = value =>
+              buildMapFromEntries(
+                value.asInstanceOf[Vector[(K, V)]],
+                factory
+              ),
+            inputMap0 = value => mapEntries(value.asInstanceOf[Col[K, V]])
+          )
+        )
+      )
+
   override object Builders extends ReadWriterBuilders[false]:
     val thisBuilder: this.type = this
     override type ThisBuilder = thisBuilder.type

@@ -8,6 +8,7 @@ import scalanotation.internal.RawSchema
 import steps.result.Result
 
 import scala.collection.mutable
+import scala.collection.immutable.ListMap
 import scala.compiletime.testing.typeCheckErrors
 
 class CollectionDecodingSuite extends ScalanotationSuite:
@@ -201,6 +202,70 @@ class CollectionDecodingSuite extends ScalanotationSuite:
       decoded.getOrElse(fail(s"Expected successful parse, got $decoded"))
     )
   }
+
+  test("round-trip arbitrary immutable map keys as vector tuple pairs"):
+    type Data = ListMap[Int, String]
+
+    summon[ReadWriter[Data]].schema match
+      case RawSchema.Mapped(base, mapping) =>
+        assert(mapping.inputMap != null)
+        mapping.totalMaps match
+          case RawSchema.SchemaMapping.TotalMap.AnyMap(_) => ()
+          case other => fail(s"Expected a pure mapped arbitrary map schema, got $other")
+        base match
+          case vector: RawSchema.Vector =>
+            assert(vector.read != null)
+            assert(vector.write != null)
+            vector.element match
+              case RawSchema.Tuple(slots, _, _) =>
+                assertEquals(slots.length, 2)
+                assertEquals(slots(0), RawSchema.Int)
+                assertEquals(slots(1), RawSchema.String)
+              case other =>
+                fail(s"Expected a tuple pair element schema, got ${other.describeSelf}")
+          case other =>
+            fail(s"Expected a vector base schema, got ${other.describeSelf}")
+      case other =>
+        fail(s"Expected a mapped arbitrary map schema, got ${other.describeSelf}")
+
+    val value: Data = ListMap(1 -> "one", 2 -> "two")
+    val rendered    = Writers.write(value)
+    val expr        = Writers.writeExpr(value)
+
+    assertEquals(rendered, """Vector((1, "one"), (2, "two"))""")
+    assertEquals(Readers.readAs[Data](rendered), Result.Ok(value))
+    assertEquals(expr.decodeAs[Data], Result.Ok(value))
+
+  test("round-trip arbitrary mutable map keys as vector tuple pairs"):
+    type Data = mutable.LinkedHashMap[Int, String]
+
+    val value: Data = mutable.LinkedHashMap(2 -> "two", 1 -> "one")
+    val rendered    = Writers.write(value)
+    val decoded     = Readers.readAs[Data](rendered)
+
+    assertEquals(rendered, """Vector((2, "two"), (1, "one"))""")
+    decoded match
+      case Result.Ok(map) =>
+        assert(map.isInstanceOf[mutable.LinkedHashMap[?, ?]])
+        assertEquals(map.toVector, value.toVector)
+      case Result.Err(error) =>
+        fail(s"Expected successful parse, got $error")
+
+  test("string-key maps keep named tuple dict syntax"):
+    type Data = mutable.LinkedHashMap[String, Int]
+
+    summon[ReadWriter[Data]].schema match
+      case dict: RawSchema.Dict =>
+        assert(dict.read != null)
+        assert(dict.write != null)
+      case other =>
+        fail(s"Expected a dict schema, got ${other.describeSelf}")
+
+    val value    = mutable.LinkedHashMap("x" -> 1, "y" -> 2)
+    val rendered = Writers.write(value)
+
+    assertEquals(rendered, "(x = 1, y = 2)")
+    assertEquals(Readers.readAs[Data](rendered).map(_.toVector), Result.Ok(value.toVector))
 
   test("decode a dict with far more keys than the intern table holds"):
     // the intern table is only active in batched mode (one-shot decodes bypass it). With far more
