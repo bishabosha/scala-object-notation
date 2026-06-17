@@ -28,18 +28,22 @@ private[scalanotation] trait CommonTypeClassCompanion[TC[_]]:
       )
     )
 
-  protected final def buildMapFromEntries[K, V, Col[X, Y] <: scala.collection.Map[X, Y]](
-      entries: Vector[(K, V)],
-      factory: scala.collection.Factory[(K, V), Col[K, V]]
-  ): Col[K, V] =
-    val builder = factory.newBuilder
-    builder.addAll(entries)
-    builder.result()
+  protected final def pairSeqSchema(
+      pairSchema: RawSchema,
+      read: RawSchema.PairSeqRead | Null,
+      write: RawSchema.PairSeqWrite | Null
+  ): RawSchema =
+    val (key, value) = pairSchemas(pairSchema)
+    RawSchema.PairSeq(key, value, read, write)
 
-  protected final def mapEntries[K, V, Col[X, Y] <: scala.collection.Map[X, Y]](
-      value: Col[K, V]
-  ): Vector[(K, V)] =
-    Vector.from(value.iterator)
+  private def pairSchemas(pairSchema: RawSchema): (RawSchema, RawSchema) =
+    pairSchema match
+      case RawSchema.Tuple(slots, _, _) if slots.length == 2 =>
+        slots(0) -> slots(1)
+      case other =>
+        throw IllegalArgumentException(
+          s"Expected pair tuple schema for map entries, got ${other.describeSelf}"
+        )
 
   trait CommonDerivationBuilders[
       RejectAllOptionalProducts <: Boolean,

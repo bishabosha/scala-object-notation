@@ -174,6 +174,20 @@ private[scalanotation] abstract class PushSlots extends Internal.PoolHolder:
       case SlotKind.Boolean => read.addBoolean(state, key, booleanSlot)
       case _                => read.add(state, key, anySlot)
 
+  /** adds the live value slot to a key/value sequence builder state */
+  protected final def addSlot(
+      read: RawSchema.PairSeqRead
+  )(state: read.State, key: Any): read.State =
+    (lastSlotKind: @switch) match
+      case SlotKind.String  => read.addString(state, key, stringSlot)
+      case SlotKind.Char    => read.addChar(state, key, charSlot)
+      case SlotKind.Int     => read.addInt(state, key, intSlot)
+      case SlotKind.Long    => read.addLong(state, key, longSlot)
+      case SlotKind.Float   => read.addFloat(state, key, floatSlot)
+      case SlotKind.Double  => read.addDouble(state, key, doubleSlot)
+      case SlotKind.Boolean => read.addBoolean(state, key, booleanSlot)
+      case _                => read.add(state, key, anySlot)
+
   /** applies a [[RawSchema.Mapped]] mapping to the live slot after a successful push */
   protected final def mapSlot(
       mapping: RawSchema.SchemaMapping

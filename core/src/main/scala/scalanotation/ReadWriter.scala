@@ -230,19 +230,10 @@ object ReadWriter extends CommonTypeClassCompanion[ReadWriter]:
       => AtPath[Path, Col[K, V]] =
       liftAtPath[Path, Col[K, V]](
         fromSchema[Col[K, V]](
-          RawSchema.mapPureAndInput(
-            RawSchema.Vector(
-              entry.typeclass.schema,
-              RawSchema.VectorRead.FromReaderBuilder(PublicInternal.BuildVector[(K, V)]),
-              RawSchema.VectorWrite.from[Vector[(K, V)], (K, V)](_.length, _.iterator)
-            )
-          )(
-            resultMap0 = value =>
-              buildMapFromEntries(
-                value.asInstanceOf[Vector[(K, V)]],
-                factory
-              ),
-            inputMap0 = value => mapEntries(value.asInstanceOf[Col[K, V]])
+          pairSeqSchema(
+            entry.typeclass.schema,
+            RawSchema.PairSeqRead.FromFactory[K, V, Col](factory),
+            RawSchema.PairSeqWrite.from[Col[K, V], K, V](_.size, _.iterator)
           )
         )
       )

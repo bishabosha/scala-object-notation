@@ -70,6 +70,8 @@ private[scalanotation] class ExprDecoder() extends PushSlots with SharedHelpers:
         decodeVector(sc, expr)
       case sc: RawSchema.TupleOf =>
         decodeTupleOf(sc, expr)
+      case sc: RawSchema.PairSeq =>
+        decodePairSeq(sc, expr)
       case sc: RawSchema.Dict =>
         decodeDict(sc, expr)
       case sc: RawSchema.Option =>
@@ -206,6 +208,36 @@ private[scalanotation] class ExprDecoder() extends PushSlots with SharedHelpers:
             pushRef(read.finish(values))
           case other =>
             raise(DecodeError.ExpectedType(schema.describeSelf, describeExpr(other)))
+
+  private def decodePairSeq(
+      schema: RawSchema.PairSeq,
+      expr: Expr
+  ): Result[Unit, DecodeError] = Result.task:
+    expr match
+      case Expr.VectorExpr(elements) =>
+        if schema.read == null then missingReadCapability(schema)
+        val read  = schema.read.nn
+        var state = read.init()
+        var index = 0
+        while index < elements.length do
+          elements(index) match
+            case Expr.TupleExpr(pair) =>
+              if pair.length != 2 then
+                raise(DecodeError.FieldCountMismatch(2, pair.length).atPath(s"[$index]"))
+              checkOrRaise(decodeBase(schema.key, pair(0)))(_.atPath(s"[$index][0]"))
+              val key = pullAny()
+              checkOrRaise(decodeBase(schema.value, pair(1)))(_.atPath(s"[$index][1]"))
+              state = addSlot(read)(state, key)
+            case other =>
+              raise(
+                DecodeError
+                  .ExpectedType(RawSchema.describeTupleSlots(2), describe(other))
+                  .atPath(s"[$index]")
+              )
+          index += 1
+        pushRef(read.finish(state))
+      case other =>
+        raise(DecodeError.ExpectedType(schema.describeSelf, describe(other)))
 
   private def decodeTuple(
       schema: RawSchema.Tuple,

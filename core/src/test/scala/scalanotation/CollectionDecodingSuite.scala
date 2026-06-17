@@ -207,26 +207,13 @@ class CollectionDecodingSuite extends ScalanotationSuite:
     type Data = ListMap[Int, String]
 
     summon[ReadWriter[Data]].schema match
-      case RawSchema.Mapped(base, mapping) =>
-        assert(mapping.inputMap != null)
-        mapping.totalMaps match
-          case RawSchema.SchemaMapping.TotalMap.AnyMap(_) => ()
-          case other => fail(s"Expected a pure mapped arbitrary map schema, got $other")
-        base match
-          case vector: RawSchema.Vector =>
-            assert(vector.read != null)
-            assert(vector.write != null)
-            vector.element match
-              case RawSchema.Tuple(slots, _, _) =>
-                assertEquals(slots.length, 2)
-                assertEquals(slots(0), RawSchema.Int)
-                assertEquals(slots(1), RawSchema.String)
-              case other =>
-                fail(s"Expected a tuple pair element schema, got ${other.describeSelf}")
-          case other =>
-            fail(s"Expected a vector base schema, got ${other.describeSelf}")
+      case pairSeq: RawSchema.PairSeq =>
+        assert(pairSeq.read != null)
+        assert(pairSeq.write != null)
+        assertEquals(pairSeq.key, RawSchema.Int)
+        assertEquals(pairSeq.value, RawSchema.String)
       case other =>
-        fail(s"Expected a mapped arbitrary map schema, got ${other.describeSelf}")
+        fail(s"Expected a pair sequence schema, got ${other.describeSelf}")
 
     val value: Data = ListMap(1 -> "one", 2 -> "two")
     val rendered    = Writers.write(value)

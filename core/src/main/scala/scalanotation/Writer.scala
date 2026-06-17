@@ -228,12 +228,10 @@ object Writer extends WriterLowPriority, CommonTypeClassCompanion[Writer]:
       => AtPath[Path, Col[K, V]] =
       liftAtPath[Path, Col[K, V]](
         fromSchema[Col[K, V]](
-          RawSchema.mapInput(
-            RawSchema.Vector(
-              entry.typeclass.schema,
-              read = null,
-              RawSchema.VectorWrite.from[Vector[(K, V)], (K, V)](_.length, _.iterator)
-            )
-          )(value => mapEntries(value.asInstanceOf[Col[K, V]]))
+          pairSeqSchema(
+            entry.typeclass.schema,
+            read = null,
+            RawSchema.PairSeqWrite.from[Col[K, V], K, V](_.size, _.iterator)
+          )
         )
       )

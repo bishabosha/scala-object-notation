@@ -34,6 +34,8 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
         decodeVector(sc)
       case sc: RawSchema.TupleOf =>
         decodeTupleOf(sc)
+      case sc: RawSchema.PairSeq =>
+        decodePairSeq(sc)
       case sc: RawSchema.Dict =>
         decodeDict(sc)
       case sc: RawSchema.Option =>
@@ -455,6 +457,56 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
           (state, _) => addSlot(read)(state)
         )
         pushRef(read.finish(state1))
+    }
+
+  protected final def decodePairSeq(schema: RawSchema.PairSeq): Result[Unit, DecodeError] =
+    withRead(schema, _.read) { read =>
+      Result.task:
+        var state = read.init()
+        parseVectorStructure(schema) { index =>
+          val tupleOffset = currentOffset()
+          if currentKind() == TokenKind.LParen then advance()
+          else
+            raise(
+              DecodeError
+                .ExpectedType(RawSchema.describeTupleSlots(2), describeCurrent())
+                .atToken(currentSpan())
+            )
+
+          if currentKind() == TokenKind.RParen then
+            raise(DecodeError.FieldCountMismatch(2, 0).atToken(currentSpan()))
+
+          checkOrRaise(decodeBase(schema.key))(_.atPath(s"[$index][0]"))
+          val key = pullAny()
+
+          currentKind() match
+            case TokenKind.Comma =>
+              advance()
+            case TokenKind.RParen =>
+              raise(DecodeError.FieldCountMismatch(2, 1).atToken(spanAt(tupleOffset)))
+            case _ =>
+              raise(DecodeError.ExpectedRParen(describeCurrent()).atToken(currentSpan()))
+
+          if currentKind() == TokenKind.RParen then
+            raise(DecodeError.FieldCountMismatch(2, 1).atToken(currentSpan()))
+
+          checkOrRaise(decodeBase(schema.value))(_.atPath(s"[$index][1]"))
+          state = addSlot(read)(state, key)
+
+          currentKind() match
+            case TokenKind.RParen =>
+              advance()
+            case TokenKind.Comma =>
+              advance()
+              currentKind() match
+                case TokenKind.RParen =>
+                  advance()
+                case _ =>
+                  raise(DecodeError.FieldCountMismatch(2, 3).atToken(currentSpan()))
+            case _ =>
+              raise(DecodeError.ExpectedRParen(describeCurrent()).atToken(currentSpan()))
+        }
+        pushRef(read.finish(state))
     }
 
   protected final def decodeDict(schema: RawSchema.Dict): Result[Unit, DecodeError] =
