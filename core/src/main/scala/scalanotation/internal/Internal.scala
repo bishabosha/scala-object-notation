@@ -7,6 +7,8 @@ import scala.compiletime.uninitialized
 import scala.deriving.Mirror
 import scala.reflect.ClassTag
 import scala.util.boundary
+import scala.annotation.threadUnsafe
+import BuilderSlotsPool.given
 
 @publicInBinary
 private[internal] object Internal {
@@ -109,6 +111,22 @@ private[internal] object Internal {
   private[internal] abstract class PoolHolder:
     // TODO: should think how this could scale to making a global shared object.
     private[internal] val namesPool = LocalPool[JumboNameSet]()
+
+    private[internal] def slotsPooling: Boolean
+
+    // pooled builder slots for product-like schemas with a slots factory; borrow/release pairs nest,
+    // so a reentrant decode inside a field value borrows a fresh instance. Lazy: a one-shot decoder
+    // skips the slots path and must not pay for the pool either.
+    @threadUnsafe
+    private[internal] lazy val slotsPool = Internal.LocalPool[scalanotation.BuilderSlots]()
+
+    private[internal] inline def withBorrowSlots[T](
+        factory: scalanotation.TypedFactory.OfProduct[?] | Null
+    )(inline f: (scalanotation.BuilderSlots | Null) => T): T =
+      def useSlots(slots: scalanotation.BuilderSlots | Null): T =
+        f(slots)
+      if !slotsPooling || factory == null then useSlots(null)
+      else slotsPool.withBorrowed(useSlots)
 }
 
 @publicInBinary
