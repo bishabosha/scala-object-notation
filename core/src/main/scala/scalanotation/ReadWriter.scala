@@ -70,7 +70,7 @@ object ReadWriter extends CommonTypeClassCompanion[ReadWriter]:
     fromSchema(
       RawSchema.Tuple(
         IArray.from(slots.iterator.map(_.schema)),
-        RawSchema.TupleRead.FromReaderBuilder(builder),
+        builder,
         RawSchema.TupleWrite.from(size, elementValue)
       )
     )
@@ -84,7 +84,7 @@ object ReadWriter extends CommonTypeClassCompanion[ReadWriter]:
     fromSchema(
       RawSchema.Vector(
         element.schema,
-        RawSchema.VectorRead.FromReaderBuilder(builder),
+        builder,
         RawSchema.VectorWrite.from(size, iterator)
       )
     )
@@ -98,7 +98,7 @@ object ReadWriter extends CommonTypeClassCompanion[ReadWriter]:
     fromSchema(
       RawSchema.TupleOf(
         element.schema,
-        RawSchema.VectorRead.FromReaderBuilder(builder),
+        builder,
         RawSchema.VectorWrite.from(size, iterator)
       )
     )
@@ -112,7 +112,7 @@ object ReadWriter extends CommonTypeClassCompanion[ReadWriter]:
     fromSchema(
       RawSchema.Dict(
         element.schema,
-        RawSchema.DictRead.FromReaderBuilder(builder),
+        builder,
         RawSchema.DictWrite.from(size, iterator)
       )
     )
@@ -128,7 +128,7 @@ object ReadWriter extends CommonTypeClassCompanion[ReadWriter]:
       RawSchema.PairSeq(
         key.schema,
         element.schema,
-        RawSchema.PairSeqRead.FromReaderBuilder(builder),
+        builder,
         RawSchema.PairSeqWrite.from(size, iterator)
       )
     )
@@ -183,7 +183,7 @@ object ReadWriter extends CommonTypeClassCompanion[ReadWriter]:
       fromSchema[T](
         RawSchema.Tuple(
           IArray.from(slots),
-          RawSchema.TupleRead.FromReaderBuilder(PublicInternal.BuildTupleSlots[T]),
+          PublicInternal.BuildTupleSlots[T],
           RawSchema.TupleWrite.productLike
         )
       )
@@ -235,7 +235,7 @@ object ReadWriter extends CommonTypeClassCompanion[ReadWriter]:
         fromSchema[Vector[T]](
           RawSchema.Vector(
             wrapped.typeclass.schema,
-            RawSchema.VectorRead.FromReaderBuilder(PublicInternal.BuildVector[T]),
+            PublicInternal.BuildVector[T],
             RawSchema.VectorWrite.from[Vector[T], T](_.length, _.iterator)
           )
         )
@@ -249,7 +249,7 @@ object ReadWriter extends CommonTypeClassCompanion[ReadWriter]:
         fromSchema[Col[T]](
           RawSchema.Vector(
             wrapped.typeclass.schema,
-            RawSchema.VectorRead.FromReaderBuilder(PublicInternal.SeqFactoryVector[T, Col]),
+            PublicInternal.SeqFactoryVector[T, Col],
             RawSchema.VectorWrite.from[Col[T], T](_.size, _.iterator)
           )
         )
@@ -289,7 +289,7 @@ object ReadWriter extends CommonTypeClassCompanion[ReadWriter]:
         fromSchema[Col[String, T]](
           RawSchema.Dict(
             wrapped.typeclass.schema,
-            RawSchema.DictRead.FromReaderBuilder(PublicInternal.MapFactoryDict[T, Col]),
+            PublicInternal.MapFactoryDict[T, Col],
             RawSchema.DictWrite.from[Col[String, T], T](_.size, _.iterator)
           )
         )
@@ -304,7 +304,7 @@ object ReadWriter extends CommonTypeClassCompanion[ReadWriter]:
         fromSchema[Col[K, V]](
           pairSeqSchema(
             entry.typeclass.schema,
-            RawSchema.PairSeqRead.FromReaderBuilder(PublicInternal.MapFactoryPairSeq[K, V, Col]),
+            PublicInternal.MapFactoryPairSeq[K, V, Col],
             RawSchema.PairSeqWrite.from[Col[K, V], K, V](_.size, _.iterator)
           )
         )

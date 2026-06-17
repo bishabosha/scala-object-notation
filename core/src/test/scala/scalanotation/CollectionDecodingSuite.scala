@@ -136,8 +136,8 @@ class CollectionDecodingSuite extends ScalanotationSuite:
     sc.schema match
       case vector: RawSchema.Vector =>
         vector.read match
-          case read: RawSchema.VectorRead.FromReaderBuilder[?, ?, ?] =>
-            assert(read.builder.isInstanceOf[PublicInternal.BuildIntArray])
+          case _: PublicInternal.BuildIntArray =>
+            ()
           case _ =>
             fail(s"Expected a vector reader builder, got ${vector.read}")
       case _ =>
@@ -163,8 +163,8 @@ class CollectionDecodingSuite extends ScalanotationSuite:
     sc.schema match
       case vector: RawSchema.Vector =>
         vector.read match
-          case read: RawSchema.VectorRead.FromReaderBuilder[?, ?, ?] =>
-            assert(read.builder.isInstanceOf[PublicInternal.BuildIntArray])
+          case _: PublicInternal.BuildIntArray =>
+            ()
           case _ =>
             fail(s"Expected a vector reader builder, got ${vector.read}")
       case _ =>
@@ -190,8 +190,8 @@ class CollectionDecodingSuite extends ScalanotationSuite:
     sc.schema match
       case vector: RawSchema.Vector =>
         vector.read match
-          case read: RawSchema.VectorRead.FromReaderBuilder[?, ?, ?] =>
-            assertEquals(read.builder.getClass.getSimpleName, "SeqFactoryVector")
+          case read: PublicInternal.SeqFactoryVector[?, ?] =>
+            assertEquals(read.getClass.getSimpleName, "SeqFactoryVector")
           case _ =>
             fail(s"Expected a vector reader builder, got ${vector.read}")
       case _ =>
@@ -218,8 +218,8 @@ class CollectionDecodingSuite extends ScalanotationSuite:
     sc.schema match
       case vector: RawSchema.Vector =>
         vector.read match
-          case read: RawSchema.VectorRead.FromReaderBuilder[?, ?, ?] =>
-            assert(read.builder.isInstanceOf[PublicInternal.BuildVector[?]])
+          case _: PublicInternal.BuildVector[?] =>
+            ()
           case _ =>
             fail(s"Expected a vector reader builder, got ${vector.read}")
       case _ =>
@@ -246,8 +246,8 @@ class CollectionDecodingSuite extends ScalanotationSuite:
     sc.schema match
       case dict: RawSchema.Dict =>
         dict.read match
-          case read: RawSchema.DictRead.FromReaderBuilder[?, ?, ?] =>
-            assertEquals(read.builder.getClass.getSimpleName, "MapFactoryDict")
+          case read: PublicInternal.MapFactoryDict[?, ?] =>
+            assertEquals(read.getClass.getSimpleName, "MapFactoryDict")
           case _ =>
             fail(s"Expected a dict reader builder, got ${dict.read}")
       case _ =>
@@ -301,26 +301,31 @@ class CollectionDecodingSuite extends ScalanotationSuite:
         fail(s"Expected successful parse, got $error")
 
   test("pair sequence readers can build primitive open-addressed tables statefully"):
-    object PrimitiveHashTableRead extends RawSchema.PairSeqRead:
-      type State = PrimitiveIntTableBuilder
+    object PrimitiveHashTableRead
+        extends Reader.PairSeqBuilder[Int, Int, PrimitiveIntTableBuilder, PrimitiveIntTable]:
+      def init(): PrimitiveIntTableBuilder = new PrimitiveIntTableBuilder
 
-      def init(): State = new PrimitiveIntTableBuilder
-
-      def addKey(state: State, key: Any): State =
+      def addKey(state: PrimitiveIntTableBuilder, key: Int): PrimitiveIntTableBuilder =
         fail(s"Expected an Int key slot, got $key")
 
-      override def addIntKey(state: State, key: Int): State =
+      override def addIntKey(
+          state: PrimitiveIntTableBuilder,
+          key: Int
+      ): PrimitiveIntTableBuilder =
         state.stageKey(key)
         state
 
-      def addValue(state: State, elem: Any): State =
+      def addValue(state: PrimitiveIntTableBuilder, elem: Int): PrimitiveIntTableBuilder =
         fail(s"Expected an Int value slot, got $elem")
 
-      override def addIntValue(state: State, elem: Int): State =
+      override def addIntValue(
+          state: PrimitiveIntTableBuilder,
+          elem: Int
+      ): PrimitiveIntTableBuilder =
         state.addValue(elem)
         state
 
-      def finish(state: State): Any =
+      def finish(state: PrimitiveIntTableBuilder): PrimitiveIntTable =
         state.result()
 
     given Reader[PrimitiveIntTable] = Reader.fromSchema(
@@ -381,13 +386,20 @@ class CollectionDecodingSuite extends ScalanotationSuite:
       def finish(repr: IntListState): IntList =
         IntList(repr.values.result(), repr.addIntCalls)
 
-    given ReadWriter[IntList] =
+    val readWriter =
       ReadWriter.vector(
         summon[ReadWriter[Int]],
         IntListBuilder,
         _.values.length,
         _.values.iterator
       )
+    given ReadWriter[IntList] = readWriter
+
+    readWriter.schema match
+      case vector: RawSchema.Vector =>
+        assert(vector.read.asInstanceOf[AnyRef] eq IntListBuilder)
+      case other =>
+        fail(s"Expected a vector schema, got ${other.describeSelf}")
 
     val value = IntList(Vector(1, 2, 3), addIntCalls = 0)
 
@@ -423,12 +435,19 @@ class CollectionDecodingSuite extends ScalanotationSuite:
       def finish(repr: PrimitiveIntTableBuilder): PrimitiveIntTable =
         repr.result()
 
-    given Reader[PrimitiveIntTable] =
+    val reader =
       Reader.pairSeq(
         summon[Reader[Int]],
         summon[Reader[Int]],
         PrimitiveMapBuilder
       )
+    given Reader[PrimitiveIntTable] = reader
+
+    reader.schema match
+      case pairSeq: RawSchema.PairSeq =>
+        assert(pairSeq.read.asInstanceOf[AnyRef] eq PrimitiveMapBuilder)
+      case other =>
+        fail(s"Expected a pair sequence schema, got ${other.describeSelf}")
 
     Readers.readAs[PrimitiveIntTable]("Vector((1, 10), (9, 90))") match
       case Result.Ok(decoded) =>

@@ -23,6 +23,22 @@ private[scalanotation] trait ReaderLowPriority:
     readWriter.reader
 
 object Reader extends ReaderLowPriority, CommonTypeClassCompanion[Reader]:
+  @FunctionalInterface
+  trait IntMap[+A]:
+    def apply(value: Int): A
+
+  @FunctionalInterface
+  trait LongMap[+A]:
+    def apply(value: Long): A
+
+  @FunctionalInterface
+  trait FloatMap[+A]:
+    def apply(value: Float): A
+
+  @FunctionalInterface
+  trait DoubleMap[+A]:
+    def apply(value: Double): A
+
   trait VectorBuilder[Elem, Repr, A]:
     def init(): Repr
     def add(repr: Repr, elem: Elem): Repr
@@ -134,6 +150,26 @@ object Reader extends ReaderLowPriority, CommonTypeClassCompanion[Reader]:
 
   export Builders.{derived, ofFields, singleton, ofCases}
 
+  def int[A](f: IntMap[A]): Reader[A] =
+    fromSchema(
+      RawSchema.mapIntTotal(RawSchema.Int)(f)
+    )
+
+  def long[A](f: LongMap[A]): Reader[A] =
+    fromSchema(
+      RawSchema.mapLongTotal(RawSchema.Long)(f)
+    )
+
+  def float[A](f: FloatMap[A]): Reader[A] =
+    fromSchema(
+      RawSchema.mapFloatTotal(RawSchema.Float)(f)
+    )
+
+  def double[A](f: DoubleMap[A]): Reader[A] =
+    fromSchema(
+      RawSchema.mapDoubleTotal(RawSchema.Double)(f)
+    )
+
   def forNull[T](value: T): Reader[T] =
     summon[Reader[Null]].map(_ => value)
 
@@ -144,7 +180,7 @@ object Reader extends ReaderLowPriority, CommonTypeClassCompanion[Reader]:
     fromSchema(
       RawSchema.Tuple(
         IArray.from(slots.iterator.map(_.schema)),
-        RawSchema.TupleRead.FromReaderBuilder(builder),
+        builder,
         write = null
       )
     )
@@ -156,7 +192,7 @@ object Reader extends ReaderLowPriority, CommonTypeClassCompanion[Reader]:
     fromSchema(
       RawSchema.Vector(
         element.schema,
-        RawSchema.VectorRead.FromReaderBuilder(builder),
+        builder,
         write = null
       )
     )
@@ -168,7 +204,7 @@ object Reader extends ReaderLowPriority, CommonTypeClassCompanion[Reader]:
     fromSchema(
       RawSchema.TupleOf(
         element.schema,
-        RawSchema.VectorRead.FromReaderBuilder(builder),
+        builder,
         write = null
       )
     )
@@ -180,7 +216,7 @@ object Reader extends ReaderLowPriority, CommonTypeClassCompanion[Reader]:
     fromSchema(
       RawSchema.Dict(
         element.schema,
-        RawSchema.DictRead.FromReaderBuilder(builder),
+        builder,
         write = null
       )
     )
@@ -194,7 +230,7 @@ object Reader extends ReaderLowPriority, CommonTypeClassCompanion[Reader]:
       RawSchema.PairSeq(
         key.schema,
         element.schema,
-        RawSchema.PairSeqRead.FromReaderBuilder(builder),
+        builder,
         write = null
       )
     )
@@ -246,7 +282,7 @@ object Reader extends ReaderLowPriority, CommonTypeClassCompanion[Reader]:
       fromSchema[T](
         RawSchema.Tuple(
           IArray.from(slots),
-          RawSchema.TupleRead.FromReaderBuilder(PublicInternal.BuildTupleSlots[T]),
+          PublicInternal.BuildTupleSlots[T],
           write = null
         )
       )
@@ -298,7 +334,7 @@ object Reader extends ReaderLowPriority, CommonTypeClassCompanion[Reader]:
         fromSchema[Vector[T]](
           RawSchema.Vector(
             wrapped.typeclass.schema,
-            RawSchema.VectorRead.FromReaderBuilder(PublicInternal.BuildVector[T]),
+            PublicInternal.BuildVector[T],
             write = null
           )
         )
@@ -312,7 +348,7 @@ object Reader extends ReaderLowPriority, CommonTypeClassCompanion[Reader]:
         fromSchema[Col[T]](
           RawSchema.Vector(
             wrapped.typeclass.schema,
-            RawSchema.VectorRead.FromReaderBuilder(PublicInternal.SeqFactoryVector[T, Col]),
+            PublicInternal.SeqFactoryVector[T, Col],
             write = null
           )
         )
@@ -352,7 +388,7 @@ object Reader extends ReaderLowPriority, CommonTypeClassCompanion[Reader]:
         fromSchema[Col[String, T]](
           RawSchema.Dict(
             wrapped.typeclass.schema,
-            RawSchema.DictRead.FromReaderBuilder(PublicInternal.MapFactoryDict[T, Col]),
+            PublicInternal.MapFactoryDict[T, Col],
             write = null
           )
         )
@@ -367,7 +403,7 @@ object Reader extends ReaderLowPriority, CommonTypeClassCompanion[Reader]:
         fromSchema[Col[K, V]](
           pairSeqSchema(
             entry.typeclass.schema,
-            RawSchema.PairSeqRead.FromReaderBuilder(PublicInternal.MapFactoryPairSeq[K, V, Col]),
+            PublicInternal.MapFactoryPairSeq[K, V, Col],
             write = null
           )
         )

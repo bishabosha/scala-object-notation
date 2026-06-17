@@ -19,8 +19,8 @@ class TupleSuite extends ScalanotationSuite:
       case tuple: RawSchema.Tuple =>
         assertEquals(tuple.slots.length, 4)
         tuple.read match
-          case read: RawSchema.TupleRead.FromReaderBuilder[?, ?] =>
-            assert(read.builder.isInstanceOf[PublicInternal.BuildTupleSlots[?]])
+          case _: PublicInternal.BuildTupleSlots[?] =>
+            ()
           case _ =>
             fail(s"Expected a tuple reader builder, got ${tuple.read}")
       case other =>
@@ -169,7 +169,7 @@ class TupleSuite extends ScalanotationSuite:
     val singletonReader = Reader.fromSchema[Int *: EmptyTuple](
       RawSchema.Tuple(
         IArray(RawSchema.Int),
-        RawSchema.TupleRead.FromReaderBuilder(PublicInternal.BuildTuple[Int *: EmptyTuple]),
+        PublicInternal.BuildTuple[Int *: EmptyTuple],
         write = null
       )
     )

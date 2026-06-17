@@ -165,23 +165,17 @@ private[scalanotation] enum RawSchema:
         base.describeSelf
 
 private[scalanotation] object RawSchema:
-  type ResultMap = Any => Result[Any, DecodeError]
-  type InputMap  = Any => Any
-  @FunctionalInterface
-  trait IntTotalMap:
-    def apply(value: Int): Any
-
-  @FunctionalInterface
-  trait LongTotalMap:
-    def apply(value: Long): Any
-
-  @FunctionalInterface
-  trait FloatTotalMap:
-    def apply(value: Float): Any
-
-  @FunctionalInterface
-  trait DoubleTotalMap:
-    def apply(value: Double): Any
+  type ResultMap   = Any => Result[Any, DecodeError]
+  type InputMap    = Any => Any
+  type TupleRead   = Reader.TupleBuilder[?, ?]
+  type VectorRead  = Reader.VectorBuilder[?, ?, ?]
+  type DictRead    = Reader.DictBuilder[?, ?, ?]
+  type PairSeqRead = Reader.PairSeqBuilder[
+    ?,
+    ?,
+    ?,
+    ?
+  ]
 
   private final val UnsupportedRouterCase = -1
 
@@ -241,16 +235,16 @@ private[scalanotation] object RawSchema:
               case err @ Result.Err(_) => err
         )
 
-    def withIntTotalMap(f: IntTotalMap): SchemaMapping =
+    def withIntMap(f: Reader.IntMap[Any]): SchemaMapping =
       copy(totalMaps = SchemaMapping.TotalMap.IntMap(f))
 
-    def withLongTotalMap(f: LongTotalMap): SchemaMapping =
+    def withLongMap(f: Reader.LongMap[Any]): SchemaMapping =
       copy(totalMaps = SchemaMapping.TotalMap.LongMap(f))
 
-    def withFloatTotalMap(f: FloatTotalMap): SchemaMapping =
+    def withFloatMap(f: Reader.FloatMap[Any]): SchemaMapping =
       copy(totalMaps = SchemaMapping.TotalMap.FloatMap(f))
 
-    def withDoubleTotalMap(f: DoubleTotalMap): SchemaMapping =
+    def withDoubleMap(f: Reader.DoubleMap[Any]): SchemaMapping =
       copy(totalMaps = SchemaMapping.TotalMap.DoubleMap(f))
 
     def withTotalMap(f: InputMap): SchemaMapping =
@@ -259,10 +253,10 @@ private[scalanotation] object RawSchema:
   object SchemaMapping:
     enum TotalMap:
       case Empty
-      case IntMap(fn: IntTotalMap)
-      case LongMap(fn: LongTotalMap)
-      case FloatMap(fn: FloatTotalMap)
-      case DoubleMap(fn: DoubleTotalMap)
+      case IntMap(fn: Reader.IntMap[Any])
+      case LongMap(fn: Reader.LongMap[Any])
+      case FloatMap(fn: Reader.FloatMap[Any])
+      case DoubleMap(fn: Reader.DoubleMap[Any])
       case AnyMap(fn: InputMap)
 
       def isEmpty: Boolean = this eq TotalMap.Empty
@@ -359,7 +353,7 @@ private[scalanotation] object RawSchema:
     )
 
   private def exprMappedIntPrimitive(
-      read: IntTotalMap,
+      read: Reader.IntMap[Any],
       write: Expr => Int
   ): RawSchema =
     mapIntTotalAndInput(RawSchema.Int)(
@@ -368,7 +362,7 @@ private[scalanotation] object RawSchema:
     )
 
   private def exprMappedLongPrimitive(
-      read: LongTotalMap,
+      read: Reader.LongMap[Any],
       write: Expr => Long
   ): RawSchema =
     mapLongTotalAndInput(RawSchema.Long)(
@@ -377,7 +371,7 @@ private[scalanotation] object RawSchema:
     )
 
   private def exprMappedFloatPrimitive(
-      read: FloatTotalMap,
+      read: Reader.FloatMap[Any],
       write: Expr => Float
   ): RawSchema =
     mapFloatTotalAndInput(RawSchema.Float)(
@@ -386,7 +380,7 @@ private[scalanotation] object RawSchema:
     )
 
   private def exprMappedDoublePrimitive(
-      read: DoubleTotalMap,
+      read: Reader.DoubleMap[Any],
       write: Expr => Double
   ): RawSchema =
     mapDoubleTotalAndInput(RawSchema.Double)(
@@ -394,17 +388,17 @@ private[scalanotation] object RawSchema:
       inputMap0 = value => write(value.asInstanceOf[Expr])
     )
 
-  private object ExprTupleRead extends VectorRead:
-    type State = ArrayBuffer[Expr]
+  private object ExprTupleRead
+      extends Reader.VectorBuilder[Expr, ArrayBuffer[Expr], Expr.TupleExpr]:
 
-    def init(): State =
+    def init(): ArrayBuffer[Expr] =
       ArrayBuffer.empty[Expr]
 
-    def add(state: State, elem: Any): State =
-      state += elem.asInstanceOf[Expr]
+    def add(state: ArrayBuffer[Expr], elem: Expr): ArrayBuffer[Expr] =
+      state += elem
       state
 
-    def finish(state: State): Any =
+    def finish(state: ArrayBuffer[Expr]): Expr.TupleExpr =
       Expr.TupleExpr(state.toIndexedSeq)
 
   private object ExprTupleWrite extends VectorWrite:
@@ -418,16 +412,23 @@ private[scalanotation] object RawSchema:
         case Expr.TupleExpr(elements) => elements.iterator
         case other                    => invalidExprRouterInput("TupleExpr", other)
 
-  private object ExprVectorRead extends VectorRead:
-    type State = collection.mutable.Builder[Expr, IArray[Expr]]
+  private object ExprVectorRead
+      extends Reader.VectorBuilder[
+        Expr,
+        collection.mutable.Builder[Expr, IArray[Expr]],
+        Expr.VectorExpr
+      ]:
 
-    def init(): State =
+    def init(): collection.mutable.Builder[Expr, IArray[Expr]] =
       IArray.newBuilder[Expr]
 
-    def add(state: State, elem: Any): State =
-      state.addOne(elem.asInstanceOf[Expr])
+    def add(
+        state: collection.mutable.Builder[Expr, IArray[Expr]],
+        elem: Expr
+    ): collection.mutable.Builder[Expr, IArray[Expr]] =
+      state.addOne(elem)
 
-    def finish(state: State): Any =
+    def finish(state: collection.mutable.Builder[Expr, IArray[Expr]]): Expr.VectorExpr =
       Expr.VectorExpr(state.result())
 
   private object ExprVectorWrite extends VectorWrite:
@@ -441,16 +442,26 @@ private[scalanotation] object RawSchema:
         case Expr.VectorExpr(elements) => elements.iterator
         case other                     => invalidExprRouterInput("VectorExpr", other)
 
-  private object ExprNamedTupleRead extends DictRead:
-    type State = collection.mutable.Builder[(String, Expr), IArray[(String, Expr)]]
+  private object ExprNamedTupleRead
+      extends Reader.DictBuilder[
+        Expr,
+        collection.mutable.Builder[(String, Expr), IArray[(String, Expr)]],
+        Expr.NamedTupleExpr
+      ]:
 
-    def init(): State =
+    def init(): collection.mutable.Builder[(String, Expr), IArray[(String, Expr)]] =
       IArray.newBuilder[(String, Expr)]
 
-    def add(state: State, key: String, elem: Any): State =
-      state.addOne((key, elem.asInstanceOf[Expr]))
+    def add(
+        state: collection.mutable.Builder[(String, Expr), IArray[(String, Expr)]],
+        key: String,
+        elem: Expr
+    ): collection.mutable.Builder[(String, Expr), IArray[(String, Expr)]] =
+      state.addOne((key, elem))
 
-    def finish(state: State): Any =
+    def finish(
+        state: collection.mutable.Builder[(String, Expr), IArray[(String, Expr)]]
+    ): Expr.NamedTupleExpr =
       Expr.NamedTupleExpr(state.result())
 
   private object ExprNamedTupleWrite extends DictWrite:
@@ -740,62 +751,6 @@ private[scalanotation] object RawSchema:
     val singleton: NamedTupleWrite = new:
       def fieldValue(value: Any, index: Int): Any = ()
 
-  trait TupleRead:
-    type State
-    def init(size: Int): State
-    def initPooled(size: Int, pooled: scalanotation.BuilderSlots | Null): State =
-      init(size)
-    def add(state: State, index: Int, elem: Any): State
-
-    // typed adds: the defaults box and delegate to `add`
-    def addString(state: State, index: Int, elem: String): State   = add(state, index, elem)
-    def addChar(state: State, index: Int, elem: Char): State       = add(state, index, elem)
-    def addInt(state: State, index: Int, elem: Int): State         = add(state, index, elem)
-    def addLong(state: State, index: Int, elem: Long): State       = add(state, index, elem)
-    def addFloat(state: State, index: Int, elem: Float): State     = add(state, index, elem)
-    def addDouble(state: State, index: Int, elem: Double): State   = add(state, index, elem)
-    def addBoolean(state: State, index: Int, elem: Boolean): State = add(state, index, elem)
-
-    def finish(state: State): Any
-
-    /** Optional low-boxing finalizer: when non-null, a pooling decoder fills its
-      * [[scalanotation.BuilderSlots]] with typed values instead of threading [[State]], and
-      * finalizes via [[scalanotation.TypedFactory.OfProduct.fromSlots]].
-      */
-    def slotsFactory: TypedFactory.OfProduct[?] | Null = null
-
-  object TupleRead:
-    final case class FromReaderBuilder[Repr, A](
-        builder: Reader.TupleBuilder[Repr, A]
-    ) extends TupleRead:
-      type State = Repr
-
-      override def slotsFactory: TypedFactory.OfProduct[?] | Null = builder.slotsFactory
-
-      def init(size: Int): State = builder.init(size)
-      override def initPooled(size: Int, pooled: scalanotation.BuilderSlots | Null): State =
-        builder.initPooled(size, pooled)
-
-      def add(state: State, index: Int, elem: Any): State =
-        builder.add(state, index, elem)
-
-      override def addString(state: State, index: Int, elem: String): State =
-        builder.addString(state, index, elem)
-      override def addChar(state: State, index: Int, elem: Char): State =
-        builder.addChar(state, index, elem)
-      override def addInt(state: State, index: Int, elem: Int): State =
-        builder.addInt(state, index, elem)
-      override def addLong(state: State, index: Int, elem: Long): State =
-        builder.addLong(state, index, elem)
-      override def addFloat(state: State, index: Int, elem: Float): State =
-        builder.addFloat(state, index, elem)
-      override def addDouble(state: State, index: Int, elem: Double): State =
-        builder.addDouble(state, index, elem)
-      override def addBoolean(state: State, index: Int, elem: Boolean): State =
-        builder.addBoolean(state, index, elem)
-
-      def finish(state: State): Any = builder.finish(state)
-
   trait TupleWrite:
     def size(value: Any): Int
     def elementValue(value: Any, index: Int): Any
@@ -822,50 +777,6 @@ private[scalanotation] object RawSchema:
     def from[T](select: T => Int): SumWrite = new:
       def caseIndex(value: Any): Int = select(value.asInstanceOf[T])
 
-  trait VectorRead:
-    type State
-    def init(): State
-    def add(state: State, elem: Any): State
-
-    // typed adds: the defaults box and delegate to `add`
-    def addString(state: State, elem: String): State   = add(state, elem)
-    def addChar(state: State, elem: Char): State       = add(state, elem)
-    def addInt(state: State, elem: Int): State         = add(state, elem)
-    def addLong(state: State, elem: Long): State       = add(state, elem)
-    def addFloat(state: State, elem: Float): State     = add(state, elem)
-    def addDouble(state: State, elem: Double): State   = add(state, elem)
-    def addBoolean(state: State, elem: Boolean): State = add(state, elem)
-
-    def finish(state: State): Any
-
-  object VectorRead:
-    final case class FromReaderBuilder[Elem, Repr, A](
-        builder: Reader.VectorBuilder[Elem, Repr, A]
-    ) extends VectorRead:
-      type State = Repr
-
-      def init(): State = builder.init()
-
-      def add(state: State, elem: Any): State =
-        builder.add(state, elem.asInstanceOf[Elem])
-
-      override def addString(state: State, elem: String): State =
-        builder.addString(state, elem)
-      override def addChar(state: State, elem: Char): State =
-        builder.addChar(state, elem)
-      override def addInt(state: State, elem: Int): State =
-        builder.addInt(state, elem)
-      override def addLong(state: State, elem: Long): State =
-        builder.addLong(state, elem)
-      override def addFloat(state: State, elem: Float): State =
-        builder.addFloat(state, elem)
-      override def addDouble(state: State, elem: Double): State =
-        builder.addDouble(state, elem)
-      override def addBoolean(state: State, elem: Boolean): State =
-        builder.addBoolean(state, elem)
-
-      def finish(state: State): Any = builder.finish(state)
-
   trait VectorWrite:
     def size(value: Any): Int
     def iterator(value: Any): Iterator[Any]
@@ -876,138 +787,6 @@ private[scalanotation] object RawSchema:
 
       def iterator(value: Any): Iterator[Any] =
         iterator0(value.asInstanceOf[A]).asInstanceOf[Iterator[Any]]
-
-  trait DictRead:
-    type State
-    def init(): State
-    def add(state: State, key: String, elem: Any): State
-
-    // typed adds: the defaults box and delegate to `add`
-    def addString(state: State, key: String, elem: String): State   = add(state, key, elem)
-    def addChar(state: State, key: String, elem: Char): State       = add(state, key, elem)
-    def addInt(state: State, key: String, elem: Int): State         = add(state, key, elem)
-    def addLong(state: State, key: String, elem: Long): State       = add(state, key, elem)
-    def addFloat(state: State, key: String, elem: Float): State     = add(state, key, elem)
-    def addDouble(state: State, key: String, elem: Double): State   = add(state, key, elem)
-    def addBoolean(state: State, key: String, elem: Boolean): State = add(state, key, elem)
-
-    def finish(state: State): Any
-
-  object DictRead:
-    final case class FromReaderBuilder[Elem, Repr, A](
-        builder: Reader.DictBuilder[Elem, Repr, A]
-    ) extends DictRead:
-      type State = Repr
-
-      def init(): State = builder.init()
-
-      def add(state: State, key: String, elem: Any): State =
-        builder.add(state, key, elem.asInstanceOf[Elem])
-
-      override def addString(state: State, key: String, elem: String): State =
-        builder.addString(state, key, elem)
-      override def addChar(state: State, key: String, elem: Char): State =
-        builder.addChar(state, key, elem)
-      override def addInt(state: State, key: String, elem: Int): State =
-        builder.addInt(state, key, elem)
-      override def addLong(state: State, key: String, elem: Long): State =
-        builder.addLong(state, key, elem)
-      override def addFloat(state: State, key: String, elem: Float): State =
-        builder.addFloat(state, key, elem)
-      override def addDouble(state: State, key: String, elem: Double): State =
-        builder.addDouble(state, key, elem)
-      override def addBoolean(state: State, key: String, elem: Boolean): State =
-        builder.addBoolean(state, key, elem)
-
-      def finish(state: State): Any = builder.finish(state)
-
-  trait PairSeqRead:
-    type State
-    def init(): State
-    def addKey(state: State, key: Any): State
-    def addValue(state: State, elem: Any): State
-
-    // The decoder pushes keys and values separately so a stateful builder can store primitive
-    // keys without forcing an intermediate tuple or Any value.
-    def addStringKey(state: State, key: String): State   = addKey(state, key)
-    def addCharKey(state: State, key: Char): State       = addKey(state, key)
-    def addIntKey(state: State, key: Int): State         = addKey(state, key)
-    def addLongKey(state: State, key: Long): State       = addKey(state, key)
-    def addFloatKey(state: State, key: Float): State     = addKey(state, key)
-    def addDoubleKey(state: State, key: Double): State   = addKey(state, key)
-    def addBooleanKey(state: State, key: Boolean): State = addKey(state, key)
-
-    def addStringValue(state: State, elem: String): State   = addValue(state, elem)
-    def addCharValue(state: State, elem: Char): State       = addValue(state, elem)
-    def addIntValue(state: State, elem: Int): State         = addValue(state, elem)
-    def addLongValue(state: State, elem: Long): State       = addValue(state, elem)
-    def addFloatValue(state: State, elem: Float): State     = addValue(state, elem)
-    def addDoubleValue(state: State, elem: Double): State   = addValue(state, elem)
-    def addBooleanValue(state: State, elem: Boolean): State = addValue(state, elem)
-
-    def finish(state: State): Any
-
-  object PairSeqRead:
-    final case class FromReaderBuilder[Key, Elem, Repr, A](
-        builder: Reader.PairSeqBuilder[Key, Elem, Repr, A]
-    ) extends PairSeqRead:
-      type State = Repr
-
-      def init(): State = builder.init()
-
-      def addKey(state: State, key: Any): State =
-        builder.addKey(state, key.asInstanceOf[Key])
-
-      override def addStringKey(state: State, key: String): State =
-        builder.addStringKey(state, key)
-      override def addCharKey(state: State, key: Char): State =
-        builder.addCharKey(state, key)
-      override def addIntKey(state: State, key: Int): State =
-        builder.addIntKey(state, key)
-      override def addLongKey(state: State, key: Long): State =
-        builder.addLongKey(state, key)
-      override def addFloatKey(state: State, key: Float): State =
-        builder.addFloatKey(state, key)
-      override def addDoubleKey(state: State, key: Double): State =
-        builder.addDoubleKey(state, key)
-      override def addBooleanKey(state: State, key: Boolean): State =
-        builder.addBooleanKey(state, key)
-
-      def addValue(state: State, elem: Any): State =
-        builder.addValue(state, elem.asInstanceOf[Elem])
-
-      override def addStringValue(state: State, elem: String): State =
-        builder.addStringValue(state, elem)
-      override def addCharValue(state: State, elem: Char): State =
-        builder.addCharValue(state, elem)
-      override def addIntValue(state: State, elem: Int): State =
-        builder.addIntValue(state, elem)
-      override def addLongValue(state: State, elem: Long): State =
-        builder.addLongValue(state, elem)
-      override def addFloatValue(state: State, elem: Float): State =
-        builder.addFloatValue(state, elem)
-      override def addDoubleValue(state: State, elem: Double): State =
-        builder.addDoubleValue(state, elem)
-      override def addBooleanValue(state: State, elem: Boolean): State =
-        builder.addBooleanValue(state, elem)
-
-      def finish(state: State): Any = builder.finish(state)
-
-    final case class FromFactory[Key, Elem, Col[X, Y] <: scala.collection.Map[X, Y]](
-        factory: scala.collection.Factory[(Key, Elem), Col[Key, Elem]]
-    ) extends PairSeqRead:
-      type State = PublicInternal.MapFactoryPairSeq.State[Key, Elem, Col]
-      private val builder = PublicInternal.MapFactoryPairSeq[Key, Elem, Col](using factory)
-
-      def init(): State = builder.init()
-
-      def addKey(state: State, key: Any): State =
-        builder.addKey(state, key.asInstanceOf[Key])
-
-      def addValue(state: State, elem: Any): State =
-        builder.addValue(state, elem.asInstanceOf[Elem])
-
-      def finish(state: State): Any = builder.finish(state)
 
   trait PairSeqWrite:
     def size(value: Any): Int
@@ -1053,6 +832,34 @@ private[scalanotation] object RawSchema:
   ): RawSchema =
     base.withMapping(_.withPureMap(f))
 
+  def mapIntTotal(
+      base: RawSchema
+  )(
+      resultMap0: Reader.IntMap[Any]
+  ): RawSchema =
+    base.withMapping(_.withIntMap(resultMap0))
+
+  def mapLongTotal(
+      base: RawSchema
+  )(
+      resultMap0: Reader.LongMap[Any]
+  ): RawSchema =
+    base.withMapping(_.withLongMap(resultMap0))
+
+  def mapFloatTotal(
+      base: RawSchema
+  )(
+      resultMap0: Reader.FloatMap[Any]
+  ): RawSchema =
+    base.withMapping(_.withFloatMap(resultMap0))
+
+  def mapDoubleTotal(
+      base: RawSchema
+  )(
+      resultMap0: Reader.DoubleMap[Any]
+  ): RawSchema =
+    base.withMapping(_.withDoubleMap(resultMap0))
+
   def mapResultAndInput(
       base: RawSchema
   )(
@@ -1072,31 +879,31 @@ private[scalanotation] object RawSchema:
   private def mapIntTotalAndInput(
       base: RawSchema
   )(
-      resultMap0: IntTotalMap,
+      resultMap0: Reader.IntMap[Any],
       inputMap0: InputMap
   ): RawSchema =
-    base.withMapping(_.withIntTotalMap(resultMap0).withInputMap(inputMap0))
+    base.withMapping(_.withIntMap(resultMap0).withInputMap(inputMap0))
 
   private def mapLongTotalAndInput(
       base: RawSchema
   )(
-      resultMap0: LongTotalMap,
+      resultMap0: Reader.LongMap[Any],
       inputMap0: InputMap
   ): RawSchema =
-    base.withMapping(_.withLongTotalMap(resultMap0).withInputMap(inputMap0))
+    base.withMapping(_.withLongMap(resultMap0).withInputMap(inputMap0))
 
   private def mapFloatTotalAndInput(
       base: RawSchema
   )(
-      resultMap0: FloatTotalMap,
+      resultMap0: Reader.FloatMap[Any],
       inputMap0: InputMap
   ): RawSchema =
-    base.withMapping(_.withFloatTotalMap(resultMap0).withInputMap(inputMap0))
+    base.withMapping(_.withFloatMap(resultMap0).withInputMap(inputMap0))
 
   private def mapDoubleTotalAndInput(
       base: RawSchema
   )(
-      resultMap0: DoubleTotalMap,
+      resultMap0: Reader.DoubleMap[Any],
       inputMap0: InputMap
   ): RawSchema =
-    base.withMapping(_.withDoubleTotalMap(resultMap0).withInputMap(inputMap0))
+    base.withMapping(_.withDoubleMap(resultMap0).withInputMap(inputMap0))
