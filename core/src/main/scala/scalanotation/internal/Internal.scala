@@ -303,6 +303,44 @@ private[scalanotation] object PublicInternal {
     def finish(repr: mutable.Builder[(String, Elem), Col[String, Elem]]): Col[String, Elem] =
       repr.result()
 
+  object MapFactoryPairSeq:
+    final class State[Key, Elem, Col[X, Y] <: scala.collection.Map[X, Y]](
+        val builder: mutable.Builder[(Key, Elem), Col[Key, Elem]]
+    ):
+      var key: Any = null
+
+    def apply[Key, Elem, Col[X, Y] <: scala.collection.Map[X, Y]](
+        using factory: scala.collection.Factory[(Key, Elem), Col[Key, Elem]]
+    ): MapFactoryPairSeq[Key, Elem, Col] =
+      new MapFactoryPairSeq[Key, Elem, Col]
+
+  class MapFactoryPairSeq[Key, Elem, Col[X, Y] <: scala.collection.Map[X, Y]](
+      using factory: scala.collection.Factory[(Key, Elem), Col[Key, Elem]]
+  ) extends Reader.PairSeqBuilder[Key, Elem, MapFactoryPairSeq.State[Key, Elem, Col], Col[
+        Key,
+        Elem
+      ]]:
+    def init(): MapFactoryPairSeq.State[Key, Elem, Col] =
+      new MapFactoryPairSeq.State(factory.newBuilder)
+
+    def addKey(
+        repr: MapFactoryPairSeq.State[Key, Elem, Col],
+        key: Key
+    ): MapFactoryPairSeq.State[Key, Elem, Col] =
+      repr.key = key
+      repr
+
+    def addValue(
+        repr: MapFactoryPairSeq.State[Key, Elem, Col],
+        elem: Elem
+    ): MapFactoryPairSeq.State[Key, Elem, Col] =
+      repr.builder.addOne((repr.key.asInstanceOf[Key], elem))
+      repr.key = null
+      repr
+
+    def finish(repr: MapFactoryPairSeq.State[Key, Elem, Col]): Col[Key, Elem] =
+      repr.builder.result()
+
   class BuildArray[Elem: ClassTag]
       extends Reader.VectorBuilder[Elem, mutable.Builder[Elem, Array[Elem]], Array[Elem]]:
     def init(): mutable.Builder[Elem, Array[Elem]] = Array.newBuilder[Elem]
