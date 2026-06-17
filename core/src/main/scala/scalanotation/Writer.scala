@@ -144,6 +144,15 @@ object Writer extends WriterLowPriority, CommonTypeClassCompanion[Writer]:
       )
     )
 
+  def router[A](
+      name: String,
+      selfKind: String
+  )(
+      cases: Writer[A] => Iterable[RouterSchema.WriteCase[A]],
+      write: RouterSchema.Write[A]
+  ): Writer[A] =
+    RouterSchema.writer(name, selfKind)(cases, write)
+
   object configured:
     inline def derived[T](using mirror: Mirror.Of[T], config: Configured[T]): Writer[T] =
       fromSchema(Configured.applyToSchema(Writer.derived[T].schema, config))
