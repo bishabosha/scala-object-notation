@@ -4,6 +4,9 @@ import munit.FunSuite
 import org.virtuslab.yaml.Node
 import org.virtuslab.yaml.Tag
 import scalanotation.*
+import steps.result.Result
+
+import FormatSchemas.given
 
 class MainSuite extends FunSuite:
   test("render json export"):
@@ -28,7 +31,7 @@ class MainSuite extends FunSuite:
         )
         .get
     )
-    val expected = ujson.Obj(
+    val expected: ujson.Value = ujson.Obj(
       "x"     -> ujson.Arr(1, 2),
       "y"     -> ujson.Null,
       "ok"    -> ujson.Bool(true),
@@ -99,3 +102,63 @@ class MainSuite extends FunSuite:
     assertEquals(byName("b").tag, Tag.boolean)
     assertEquals(byName("s").tag, Tag.str)
     assertEquals(byName("n").tag, Tag.nullTag)
+
+  test("ujson values decode through the recursive router schema"):
+    val input =
+      """(
+        |  items = Vector(1, "two", null),
+        |  tuple = Tuple(true),
+        |  ok = false
+        |)
+        |""".stripMargin
+
+    val expected: ujson.Value = ujson.Obj(
+      "items" -> ujson.Arr(1, "two", ujson.Null),
+      "tuple" -> ujson.Arr(true),
+      "ok"    -> ujson.Bool(false)
+    )
+
+    assertEquals(Readers.readAs[ujson.Value](input), Result.Ok(expected))
+    assertEquals(Readers.readAs[ujson.Value](Writers.write(expected)), Result.Ok(expected))
+
+  test("yaml nodes decode through the recursive router schema"):
+    val input =
+      """(
+        |  items = Vector(1, "two", null),
+        |  tuple = Tuple(true),
+        |  ok = false
+        |)
+        |""".stripMargin
+
+    Readers.readAs[Node](input) match
+      case Result.Ok(node: Node.MappingNode) =>
+        val byName = node.mappings.collect { case (Node.ScalarNode(name, _), value) =>
+          name -> value
+        }.toMap
+        assertEquals(byName("items").tag, Tag.seq)
+        assertEquals(byName("tuple").tag, Tag.seq)
+        assertEquals(byName("ok").tag, Tag.boolean)
+        assertEquals(Readers.readAs[Node](Writers.write(node: Node)), Result.Ok(node: Node))
+      case other =>
+        fail(s"Expected a YAML mapping node, got $other")
+
+  test("format adapters derive external typeclasses from scalanotation ReadWriter"):
+    final case class Service(port: Int, label: String)
+
+    given sonServiceReadWriter: ReadWriter[Service]                     = ReadWriter.derived
+    given upickleServiceReadWriter: upickle.default.ReadWriter[Service] =
+      FormatSchemas.upickleReadWriter[Service]
+
+    val value = Service(8080, "dev")
+    val json  = upickle.default.writeJs(value)
+    assertEquals(
+      json,
+      ujson.Obj("port" -> ujson.Num(8080), "label" -> ujson.Str("dev"))
+    )
+    assertEquals(upickle.default.read[Service](json), value)
+
+    val yamlEncoder = FormatSchemas.yamlEncoder[Service]
+    val yamlDecoder = FormatSchemas.yamlDecoder[Service]
+    val yamlNode    = yamlEncoder.asNode(value)
+
+    assertEquals(yamlDecoder.construct(yamlNode), Right(value))

@@ -7,10 +7,138 @@ import scalanotation.internal.PublicInternal
 import scalanotation.internal.RawSchema
 import steps.result.Result
 
+import scala.collection.immutable.ListMap
 import scala.collection.mutable
 import scala.compiletime.testing.typeCheckErrors
 
 class SchemaSuite extends ScalanotationSuite:
+  private enum MiniNode:
+    case Obj(fields: ListMap[String, MiniNode])
+    case Arr(values: Vector[MiniNode])
+    case Str(value: String)
+    case IntNum(value: Int)
+    case Bool(value: Boolean)
+    case Null
+
+  private object MiniNode:
+    type FieldsBuilder = mutable.Builder[(String, MiniNode), ListMap[String, MiniNode]]
+    type ValuesBuilder = mutable.Builder[MiniNode, Vector[MiniNode]]
+
+    object ObjBuilder extends Reader.DictBuilder[MiniNode, FieldsBuilder, MiniNode]:
+      def init(): FieldsBuilder =
+        ListMap.newBuilder[String, MiniNode]
+
+      def add(repr: FieldsBuilder, key: String, elem: MiniNode): FieldsBuilder =
+        repr.addOne(key -> elem)
+
+      def finish(repr: FieldsBuilder): MiniNode =
+        MiniNode.Obj(repr.result())
+
+    object ArrBuilder extends Reader.VectorBuilder[MiniNode, ValuesBuilder, MiniNode]:
+      def init(): ValuesBuilder =
+        Vector.newBuilder[MiniNode]
+
+      def add(repr: ValuesBuilder, elem: MiniNode): ValuesBuilder =
+        repr.addOne(elem)
+
+      def finish(repr: ValuesBuilder): MiniNode =
+        MiniNode.Arr(repr.result())
+
+    object Routing extends RouterSchema.Read:
+      override def onRecord(): Int  = 0
+      override def onTuple(): Int   = 1
+      override def onVector(): Int  = 2
+      override def onString(): Int  = 3
+      override def onInt(): Int     = 4
+      override def onBoolean(): Int = 5
+      override def onNull(): Int    = 6
+
+    object Select extends RouterSchema.Write[MiniNode]:
+      def caseIndex(value: MiniNode): Int =
+        value match
+          case MiniNode.Obj(_)    => 0
+          case MiniNode.Arr(_)    => 2
+          case MiniNode.Str(_)    => 3
+          case MiniNode.IntNum(_) => 4
+          case MiniNode.Bool(_)   => 5
+          case MiniNode.Null      => 6
+
+    given ReadWriter[MiniNode] =
+      ReadWriter.router[MiniNode]("MiniNode", "mini dynamic node")(
+        cases = self =>
+          List(
+            RouterSchema.Case(
+              "Obj",
+              ReadWriter.dict[MiniNode, MiniNode, FieldsBuilder](
+                self,
+                ObjBuilder,
+                {
+                  case MiniNode.Obj(fields) => fields.size
+                  case other                => fail(s"Expected Obj, got $other")
+                },
+                {
+                  case MiniNode.Obj(fields) => fields.iterator
+                  case other                => fail(s"Expected Obj, got $other")
+                }
+              )
+            ),
+            RouterSchema.Case(
+              "TupleArr",
+              ReadWriter.tupleOf[MiniNode, MiniNode, ValuesBuilder](
+                self,
+                ArrBuilder,
+                {
+                  case MiniNode.Arr(values) => values.length
+                  case other                => fail(s"Expected Arr, got $other")
+                },
+                {
+                  case MiniNode.Arr(values) => values.iterator
+                  case other                => fail(s"Expected Arr, got $other")
+                }
+              )
+            ),
+            RouterSchema.Case(
+              "VectorArr",
+              ReadWriter.vector[MiniNode, MiniNode, ValuesBuilder](
+                self,
+                ArrBuilder,
+                {
+                  case MiniNode.Arr(values) => values.length
+                  case other                => fail(s"Expected Arr, got $other")
+                },
+                {
+                  case MiniNode.Arr(values) => values.iterator
+                  case other                => fail(s"Expected Arr, got $other")
+                }
+              )
+            ),
+            RouterSchema.Case(
+              "Str",
+              summon[ReadWriter[String]].bimap(MiniNode.Str(_)) {
+                case MiniNode.Str(value) => value
+                case other               => fail(s"Expected Str, got $other")
+              }
+            ),
+            RouterSchema.Case(
+              "IntNum",
+              summon[ReadWriter[Int]].bimap(MiniNode.IntNum(_)) {
+                case MiniNode.IntNum(value) => value
+                case other                  => fail(s"Expected IntNum, got $other")
+              }
+            ),
+            RouterSchema.Case(
+              "Bool",
+              summon[ReadWriter[Boolean]].bimap(MiniNode.Bool(_)) {
+                case MiniNode.Bool(value) => value
+                case other                => fail(s"Expected Bool, got $other")
+              }
+            ),
+            RouterSchema.Case("Null", ReadWriter.forNull(MiniNode.Null))
+          ),
+        read = Routing,
+        write = Select
+      )
+
   test("schema mappings only appear on mapped schemas"):
     final case class UserId(value: Int)
     final case class UserLabel(value: String)
@@ -149,6 +277,47 @@ class SchemaSuite extends ScalanotationSuite:
     )
     assertEquals(Writers.write(expr), "Tuple(Tuple(1))")
     assertEquals(Readers.readAs[Expr](Writers.write(expr)), Result.Ok(expr))
+
+  test("public RouterSchema builds recursive dynamic read-writers"):
+    import MiniNode.*
+
+    val expected = Obj(
+      ListMap(
+        "items" -> Arr(Vector(IntNum(1), Str("two"), Null)),
+        "tuple" -> Arr(Vector(Bool(true))),
+        "ok"    -> Bool(false)
+      )
+    )
+
+    val input =
+      """(
+        |  items = Vector(1, "two", null),
+        |  tuple = Tuple(true),
+        |  ok = false
+        |)
+        |""".stripMargin
+
+    assertEquals(Readers.readAs[MiniNode](input), Result.Ok(expected))
+    assertEquals(
+      Writers.write(expected),
+      """(items = Vector(1, "two", null), tuple = Vector(true), ok = false)"""
+    )
+    assertEquals(Writers.writeExpr(expected).decodeAs[MiniNode], Result.Ok(expected))
+
+    summon[ReadWriter[MiniNode]].schema match
+      case router: RawSchema.Router =>
+        assertEquals(router.numberMode, RawSchema.RouterNumberMode.Bounded)
+        assertEquals(
+          router.read.nn.route(RawSchema.RouterConstruct.Tuple),
+          1
+        )
+        router.cases(0).schema match
+          case RawSchema.Dict(RawSchema.Ref("MiniNode", target), _, _) =>
+            assert(target() eq router)
+          case other =>
+            fail(s"Expected a recursive dict case, got ${other.describeSelf}")
+      case other =>
+        fail(s"Expected a router schema, got ${other.describeSelf}")
 
   test("RawSchema.describeSelf"):
     // primitive schemas
