@@ -83,6 +83,30 @@ object Reader extends ReaderLowPriority, CommonTypeClassCompanion[Reader]:
     def addBoolean(repr: Repr, key: String, elem: Boolean): Repr =
       add(repr, key, elem.asInstanceOf[Elem])
 
+  trait PairSeqBuilder[Key, Elem, Repr, A]:
+    def init(): Repr
+    def addKey(repr: Repr, key: Key): Repr
+    def addValue(repr: Repr, elem: Elem): Repr
+    def finish(repr: Repr): A
+
+    // typed key/value adds, called independently by the decoder while each primitive slot is
+    // still live. The defaults box and delegate to the generic methods.
+    def addStringKey(repr: Repr, key: String): Repr   = addKey(repr, key.asInstanceOf[Key])
+    def addCharKey(repr: Repr, key: Char): Repr       = addKey(repr, key.asInstanceOf[Key])
+    def addIntKey(repr: Repr, key: Int): Repr         = addKey(repr, key.asInstanceOf[Key])
+    def addLongKey(repr: Repr, key: Long): Repr       = addKey(repr, key.asInstanceOf[Key])
+    def addFloatKey(repr: Repr, key: Float): Repr     = addKey(repr, key.asInstanceOf[Key])
+    def addDoubleKey(repr: Repr, key: Double): Repr   = addKey(repr, key.asInstanceOf[Key])
+    def addBooleanKey(repr: Repr, key: Boolean): Repr = addKey(repr, key.asInstanceOf[Key])
+
+    def addStringValue(repr: Repr, elem: String): Repr   = addValue(repr, elem.asInstanceOf[Elem])
+    def addCharValue(repr: Repr, elem: Char): Repr       = addValue(repr, elem.asInstanceOf[Elem])
+    def addIntValue(repr: Repr, elem: Int): Repr         = addValue(repr, elem.asInstanceOf[Elem])
+    def addLongValue(repr: Repr, elem: Long): Repr       = addValue(repr, elem.asInstanceOf[Elem])
+    def addFloatValue(repr: Repr, elem: Float): Repr     = addValue(repr, elem.asInstanceOf[Elem])
+    def addDoubleValue(repr: Repr, elem: Double): Repr   = addValue(repr, elem.asInstanceOf[Elem])
+    def addBooleanValue(repr: Repr, elem: Boolean): Repr = addValue(repr, elem.asInstanceOf[Elem])
+
   private final class Instance[T](val schema: RawSchema) extends Reader[T]
 
   private[scalanotation] def fromSchema[T](schema0: RawSchema): Reader[T] =
@@ -112,6 +136,68 @@ object Reader extends ReaderLowPriority, CommonTypeClassCompanion[Reader]:
 
   def forNull[T](value: T): Reader[T] =
     summon[Reader[Null]].map(_ => value)
+
+  def tuple[A, Repr](
+      slots: Iterable[Reader[?]],
+      builder: TupleBuilder[Repr, A]
+  ): Reader[A] =
+    fromSchema(
+      RawSchema.Tuple(
+        IArray.from(slots.iterator.map(_.schema)),
+        RawSchema.TupleRead.FromReaderBuilder(builder),
+        write = null
+      )
+    )
+
+  def vector[A, Elem, Repr](
+      element: Reader[Elem],
+      builder: VectorBuilder[Elem, Repr, A]
+  ): Reader[A] =
+    fromSchema(
+      RawSchema.Vector(
+        element.schema,
+        RawSchema.VectorRead.FromReaderBuilder(builder),
+        write = null
+      )
+    )
+
+  def tupleOf[A, Elem, Repr](
+      element: Reader[Elem],
+      builder: VectorBuilder[Elem, Repr, A]
+  ): Reader[A] =
+    fromSchema(
+      RawSchema.TupleOf(
+        element.schema,
+        RawSchema.VectorRead.FromReaderBuilder(builder),
+        write = null
+      )
+    )
+
+  def dict[A, Elem, Repr](
+      element: Reader[Elem],
+      builder: DictBuilder[Elem, Repr, A]
+  ): Reader[A] =
+    fromSchema(
+      RawSchema.Dict(
+        element.schema,
+        RawSchema.DictRead.FromReaderBuilder(builder),
+        write = null
+      )
+    )
+
+  def pairSeq[A, Key, Elem, Repr](
+      key: Reader[Key],
+      element: Reader[Elem],
+      builder: PairSeqBuilder[Key, Elem, Repr, A]
+  ): Reader[A] =
+    fromSchema(
+      RawSchema.PairSeq(
+        key.schema,
+        element.schema,
+        RawSchema.PairSeqRead.FromReaderBuilder(builder),
+        write = null
+      )
+    )
 
   object skippable extends ReaderBuilders[true]:
     val thisBuilder: this.type = this
@@ -281,7 +367,7 @@ object Reader extends ReaderLowPriority, CommonTypeClassCompanion[Reader]:
         fromSchema[Col[K, V]](
           pairSeqSchema(
             entry.typeclass.schema,
-            RawSchema.PairSeqRead.FromFactory[K, V, Col](factory),
+            RawSchema.PairSeqRead.FromReaderBuilder(PublicInternal.MapFactoryPairSeq[K, V, Col]),
             write = null
           )
         )
