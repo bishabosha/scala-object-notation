@@ -1,0 +1,51 @@
+Benchmark                                                      Mode  Cnt      Score     Error   Units
+ArbitraryMapBenchmark.decodeExpr64                             avgt   10      4.237 ±   0.054   us/op
+ArbitraryMapBenchmark.decodeExpr64:gc.alloc.rate               avgt   10   2101.344 ±  26.746  MB/sec
+ArbitraryMapBenchmark.decodeExpr64:gc.alloc.rate.norm          avgt   10   9336.029 ±   0.001    B/op
+ArbitraryMapBenchmark.decodeExpr64:gc.count                    avgt   10     35.000            counts
+ArbitraryMapBenchmark.decodeExpr64:gc.time                     avgt   10     18.000                ms
+ArbitraryMapBenchmark.decodeExpr8                              avgt   10      0.297 ±   0.002   us/op
+ArbitraryMapBenchmark.decodeExpr8:gc.alloc.rate                avgt   10   3857.830 ±  25.540  MB/sec
+ArbitraryMapBenchmark.decodeExpr8:gc.alloc.rate.norm           avgt   10   1200.002 ±   0.001    B/op
+ArbitraryMapBenchmark.decodeExpr8:gc.count                     avgt   10     64.000            counts
+ArbitraryMapBenchmark.decodeExpr8:gc.time                      avgt   10     30.000                ms
+ArbitraryMapBenchmark.decodeText64                             avgt   10      8.838 ±   0.081   us/op
+ArbitraryMapBenchmark.decodeText64:gc.alloc.rate               avgt   10   1829.099 ±  16.718  MB/sec
+ArbitraryMapBenchmark.decodeText64:gc.alloc.rate.norm          avgt   10  16952.061 ±   0.001    B/op
+ArbitraryMapBenchmark.decodeText64:gc.count                    avgt   10     31.000            counts
+ArbitraryMapBenchmark.decodeText64:gc.time                     avgt   10     16.000                ms
+ArbitraryMapBenchmark.decodeText64Batched                      avgt   10      8.272 ±   0.048   us/op
+ArbitraryMapBenchmark.decodeText64Batched:gc.alloc.rate        avgt   10   1879.365 ±  10.913  MB/sec
+ArbitraryMapBenchmark.decodeText64Batched:gc.alloc.rate.norm   avgt   10  16304.057 ±   0.001    B/op
+ArbitraryMapBenchmark.decodeText64Batched:gc.count             avgt   10     32.000            counts
+ArbitraryMapBenchmark.decodeText64Batched:gc.time              avgt   10     16.000                ms
+ArbitraryMapBenchmark.decodeText8                              avgt   10      1.042 ±   0.012   us/op
+ArbitraryMapBenchmark.decodeText8:gc.alloc.rate                avgt   10   1829.956 ±  20.643  MB/sec
+ArbitraryMapBenchmark.decodeText8:gc.alloc.rate.norm           avgt   10   2000.007 ±   0.001    B/op
+ArbitraryMapBenchmark.decodeText8:gc.count                     avgt   10     31.000            counts
+ArbitraryMapBenchmark.decodeText8:gc.time                      avgt   10     15.000                ms
+ArbitraryMapBenchmark.decodeText8Batched                       avgt   10      0.939 ±   0.011   us/op
+ArbitraryMapBenchmark.decodeText8Batched:gc.alloc.rate         avgt   10   1373.231 ±  16.138  MB/sec
+ArbitraryMapBenchmark.decodeText8Batched:gc.alloc.rate.norm    avgt   10   1352.006 ±   0.001    B/op
+ArbitraryMapBenchmark.decodeText8Batched:gc.count              avgt   10     23.000            counts
+ArbitraryMapBenchmark.decodeText8Batched:gc.time               avgt   10     14.000                ms
+ArbitraryMapBenchmark.writeExpr64                              avgt   10      3.298 ±   0.101   us/op
+ArbitraryMapBenchmark.writeExpr64:gc.alloc.rate                avgt   10   3185.643 ±  98.096  MB/sec
+ArbitraryMapBenchmark.writeExpr64:gc.alloc.rate.norm           avgt   10  11016.026 ±   0.001    B/op
+ArbitraryMapBenchmark.writeExpr64:gc.count                     avgt   10     53.000            counts
+ArbitraryMapBenchmark.writeExpr64:gc.time                      avgt   10     27.000                ms
+ArbitraryMapBenchmark.writeExpr8                               avgt   10      0.298 ±   0.010   us/op
+ArbitraryMapBenchmark.writeExpr8:gc.alloc.rate                 avgt   10   5740.055 ± 189.317  MB/sec
+ArbitraryMapBenchmark.writeExpr8:gc.alloc.rate.norm            avgt   10   1792.003 ±   0.001    B/op
+ArbitraryMapBenchmark.writeExpr8:gc.count                      avgt   10     96.000            counts
+ArbitraryMapBenchmark.writeExpr8:gc.time                       avgt   10     44.000                ms
+ArbitraryMapBenchmark.writeText64                              avgt   10      3.196 ±   0.023   us/op
+ArbitraryMapBenchmark.writeText64:gc.alloc.rate                avgt   10   2524.996 ±  18.384  MB/sec
+ArbitraryMapBenchmark.writeText64:gc.alloc.rate.norm           avgt   10   8464.022 ±   0.001    B/op
+ArbitraryMapBenchmark.writeText64:gc.count                     avgt   10     42.000            counts
+ArbitraryMapBenchmark.writeText64:gc.time                      avgt   10     21.000                ms
+ArbitraryMapBenchmark.writeText8                               avgt   10      0.443 ±   0.014   us/op
+ArbitraryMapBenchmark.writeText8:gc.alloc.rate                 avgt   10   1724.554 ±  56.642  MB/sec
+ArbitraryMapBenchmark.writeText8:gc.alloc.rate.norm            avgt   10    800.003 ±   0.001    B/op
+ArbitraryMapBenchmark.writeText8:gc.count                      avgt   10     29.000            counts
+ArbitraryMapBenchmark.writeText8:gc.time                       avgt   10     15.000                ms

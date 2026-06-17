@@ -69,6 +69,21 @@ private[scalanotation] object Encode:
         Expr.TupleExpr(
           tupleOf.write.nn.iterator(value).map(writeExpr(tupleOf.element, _)).toIndexedSeq
         )
+      case pairSeq: RawSchema.PairSeq =>
+        if pairSeq.write == null then missingWriteCapability(schema)
+        Expr.VectorExpr(
+          pairSeq.write.nn
+            .iterator(value)
+            .map((key, elem) =>
+              Expr.TupleExpr(
+                IndexedSeq(
+                  writeExpr(pairSeq.key, key),
+                  writeExpr(pairSeq.value, elem)
+                )
+              )
+            )
+            .toIndexedSeq
+        )
       case dict: RawSchema.Dict =>
         if dict.write == null then missingWriteCapability(schema)
         Expr.NamedTupleExpr(
@@ -155,6 +170,14 @@ private[scalanotation] object Encode:
       ExprRenderer.renderTuple(out, depth, write.size(value)) { _ =>
         renderTupleElement(tupleOf.element, values.next(), out, depth + 1)
       }
+    case pairSeq: RawSchema.PairSeq =>
+      val write = pairSeq.write
+      if write == null then missingWriteCapability(schema)
+      val values = write.iterator(value)
+      ExprRenderer.renderVector(out, depth, write.size(value)) { _ =>
+        val (key, elem) = values.next()
+        renderPair(pairSeq, key, elem, out, depth + 1)
+      }
     case dict: RawSchema.Dict =>
       val write = dict.write
       if write == null then missingWriteCapability(schema)
@@ -221,3 +244,15 @@ private[scalanotation] object Encode:
       depth: Int
   )(using format: TextFormat): Unit =
     renderText(schema, value, out, depth)
+
+  private def renderPair(
+      schema: RawSchema.PairSeq,
+      key: Any,
+      value: Any,
+      out: ExprRenderer.Output,
+      depth: Int
+  )(using format: TextFormat): Unit =
+    ExprRenderer.renderTuple(out, depth, 2) { index =>
+      if index == 0 then renderTupleElement(schema.key, key, out, depth + 1)
+      else renderTupleElement(schema.value, value, out, depth + 1)
+    }
