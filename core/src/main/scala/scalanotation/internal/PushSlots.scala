@@ -174,19 +174,33 @@ private[scalanotation] abstract class PushSlots extends Internal.PoolHolder:
       case SlotKind.Boolean => read.addBoolean(state, key, booleanSlot)
       case _                => read.add(state, key, anySlot)
 
-  /** adds the live value slot to a key/value sequence builder state */
-  protected final def addSlot(
+  /** adds the live key slot to a key/value sequence builder state */
+  protected final def addPairKeySlot(
       read: RawSchema.PairSeqRead
-  )(state: read.State, key: Any): read.State =
+  )(state: read.State): read.State =
     (lastSlotKind: @switch) match
-      case SlotKind.String  => read.addString(state, key, stringSlot)
-      case SlotKind.Char    => read.addChar(state, key, charSlot)
-      case SlotKind.Int     => read.addInt(state, key, intSlot)
-      case SlotKind.Long    => read.addLong(state, key, longSlot)
-      case SlotKind.Float   => read.addFloat(state, key, floatSlot)
-      case SlotKind.Double  => read.addDouble(state, key, doubleSlot)
-      case SlotKind.Boolean => read.addBoolean(state, key, booleanSlot)
-      case _                => read.add(state, key, anySlot)
+      case SlotKind.String  => read.addStringKey(state, stringSlot)
+      case SlotKind.Char    => read.addCharKey(state, charSlot)
+      case SlotKind.Int     => read.addIntKey(state, intSlot)
+      case SlotKind.Long    => read.addLongKey(state, longSlot)
+      case SlotKind.Float   => read.addFloatKey(state, floatSlot)
+      case SlotKind.Double  => read.addDoubleKey(state, doubleSlot)
+      case SlotKind.Boolean => read.addBooleanKey(state, booleanSlot)
+      case _                => read.addKey(state, anySlot)
+
+  /** adds the live value slot to a key/value sequence builder state */
+  protected final def addPairValueSlot(
+      read: RawSchema.PairSeqRead
+  )(state: read.State): read.State =
+    (lastSlotKind: @switch) match
+      case SlotKind.String  => read.addStringValue(state, stringSlot)
+      case SlotKind.Char    => read.addCharValue(state, charSlot)
+      case SlotKind.Int     => read.addIntValue(state, intSlot)
+      case SlotKind.Long    => read.addLongValue(state, longSlot)
+      case SlotKind.Float   => read.addFloatValue(state, floatSlot)
+      case SlotKind.Double  => read.addDoubleValue(state, doubleSlot)
+      case SlotKind.Boolean => read.addBooleanValue(state, booleanSlot)
+      case _                => read.addValue(state, anySlot)
 
   /** applies a [[RawSchema.Mapped]] mapping to the live slot after a successful push */
   protected final def mapSlot(
