@@ -238,6 +238,80 @@ class CollectionDecodingSuite extends ScalanotationSuite:
       case Result.Err(error) =>
         fail(s"Expected successful parse, got $error")
 
+  test("pair sequence readers can build primitive key/value collections statefully"):
+    final case class PrimitiveHashTable(
+        entries: Vector[(Int, Int)],
+        stagedKeys: Int,
+        valueAdds: Int,
+        hashUpdates: Int
+    )
+
+    final class PrimitiveHashTableBuilder:
+      private val entries: scala.collection.mutable.Builder[(Int, Int), Vector[(Int, Int)]] =
+        Vector.newBuilder[(Int, Int)]
+      var pendingKey: Int  = 0
+      var stagedKeys: Int  = 0
+      var valueAdds: Int   = 0
+      var hashUpdates: Int = 0
+
+      def stageKey(key: Int): Unit =
+        pendingKey = key
+        stagedKeys += 1
+
+      def addValue(value: Int): Unit =
+        hashUpdates += 1
+        entries.addOne(pendingKey -> value)
+        valueAdds += 1
+
+      def result(): PrimitiveHashTable =
+        PrimitiveHashTable(entries.result(), stagedKeys, valueAdds, hashUpdates)
+
+    object PrimitiveHashTableRead extends RawSchema.PairSeqRead:
+      type State = PrimitiveHashTableBuilder
+
+      def init(): State = new PrimitiveHashTableBuilder
+
+      def addKey(state: State, key: Any): State =
+        fail(s"Expected an Int key slot, got $key")
+
+      override def addIntKey(state: State, key: Int): State =
+        state.stageKey(key)
+        state
+
+      def addValue(state: State, elem: Any): State =
+        fail(s"Expected an Int value slot, got $elem")
+
+      override def addIntValue(state: State, elem: Int): State =
+        state.addValue(elem)
+        state
+
+      def finish(state: State): Any =
+        state.result()
+
+    given Reader[PrimitiveHashTable] = Reader.fromSchema(
+      RawSchema.PairSeq(RawSchema.Int, RawSchema.Int, PrimitiveHashTableRead)
+    )
+
+    val expected = PrimitiveHashTable(
+      Vector(1 -> 10, 2 -> 20, 3 -> 30),
+      stagedKeys = 3,
+      valueAdds = 3,
+      hashUpdates = 3
+    )
+    val expr = Expr.VectorExpr(
+      IndexedSeq(
+        Expr.TupleExpr(IndexedSeq(Expr.IntConstant(1), Expr.IntConstant(10))),
+        Expr.TupleExpr(IndexedSeq(Expr.IntConstant(2), Expr.IntConstant(20))),
+        Expr.TupleExpr(IndexedSeq(Expr.IntConstant(3), Expr.IntConstant(30)))
+      )
+    )
+
+    assertEquals(
+      Readers.readAs[PrimitiveHashTable]("Vector((1, 10), (2, 20), (3, 30))"),
+      Result.Ok(expected)
+    )
+    assertEquals(expr.decodeAs[PrimitiveHashTable], Result.Ok(expected))
+
   test("string-key maps keep named tuple dict syntax"):
     type Data = mutable.LinkedHashMap[String, Int]
 

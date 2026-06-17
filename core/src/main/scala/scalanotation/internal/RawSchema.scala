@@ -926,32 +926,52 @@ private[scalanotation] object RawSchema:
   trait PairSeqRead:
     type State
     def init(): State
-    def add(state: State, key: Any, elem: Any): State
+    def addKey(state: State, key: Any): State
+    def addValue(state: State, elem: Any): State
 
-    // typed value adds: key is already decoded and stored while the value decoder owns the live
-    // slot. The defaults box and delegate to `add`.
-    def addString(state: State, key: Any, elem: String): State   = add(state, key, elem)
-    def addChar(state: State, key: Any, elem: Char): State       = add(state, key, elem)
-    def addInt(state: State, key: Any, elem: Int): State         = add(state, key, elem)
-    def addLong(state: State, key: Any, elem: Long): State       = add(state, key, elem)
-    def addFloat(state: State, key: Any, elem: Float): State     = add(state, key, elem)
-    def addDouble(state: State, key: Any, elem: Double): State   = add(state, key, elem)
-    def addBoolean(state: State, key: Any, elem: Boolean): State = add(state, key, elem)
+    // The decoder pushes keys and values separately so a stateful builder can store primitive
+    // keys without forcing an intermediate tuple or Any value.
+    def addStringKey(state: State, key: String): State   = addKey(state, key)
+    def addCharKey(state: State, key: Char): State       = addKey(state, key)
+    def addIntKey(state: State, key: Int): State         = addKey(state, key)
+    def addLongKey(state: State, key: Long): State       = addKey(state, key)
+    def addFloatKey(state: State, key: Float): State     = addKey(state, key)
+    def addDoubleKey(state: State, key: Double): State   = addKey(state, key)
+    def addBooleanKey(state: State, key: Boolean): State = addKey(state, key)
+
+    def addStringValue(state: State, elem: String): State   = addValue(state, elem)
+    def addCharValue(state: State, elem: Char): State       = addValue(state, elem)
+    def addIntValue(state: State, elem: Int): State         = addValue(state, elem)
+    def addLongValue(state: State, elem: Long): State       = addValue(state, elem)
+    def addFloatValue(state: State, elem: Float): State     = addValue(state, elem)
+    def addDoubleValue(state: State, elem: Double): State   = addValue(state, elem)
+    def addBooleanValue(state: State, elem: Boolean): State = addValue(state, elem)
 
     def finish(state: State): Any
 
   object PairSeqRead:
+    final class FromFactoryState[Key, Elem, Col[X, Y] <: scala.collection.Map[X, Y]](
+        val builder: scala.collection.mutable.Builder[(Key, Elem), Col[Key, Elem]]
+    ):
+      var key: Any = null
+
     final case class FromFactory[Key, Elem, Col[X, Y] <: scala.collection.Map[X, Y]](
         factory: scala.collection.Factory[(Key, Elem), Col[Key, Elem]]
     ) extends PairSeqRead:
-      type State = scala.collection.mutable.Builder[(Key, Elem), Col[Key, Elem]]
+      type State = FromFactoryState[Key, Elem, Col]
 
-      def init(): State = factory.newBuilder
+      def init(): State = new FromFactoryState(factory.newBuilder)
 
-      def add(state: State, key: Any, elem: Any): State =
-        state.addOne((key.asInstanceOf[Key], elem.asInstanceOf[Elem]))
+      def addKey(state: State, key: Any): State =
+        state.key = key
+        state
 
-      def finish(state: State): Any = state.result()
+      def addValue(state: State, elem: Any): State =
+        state.builder.addOne((state.key.asInstanceOf[Key], elem.asInstanceOf[Elem]))
+        state.key = null
+        state
+
+      def finish(state: State): Any = state.builder.result()
 
   trait PairSeqWrite:
     def size(value: Any): Int
