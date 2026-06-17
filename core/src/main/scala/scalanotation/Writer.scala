@@ -77,6 +77,73 @@ object Writer extends WriterLowPriority, CommonTypeClassCompanion[Writer]:
   def forNull[T]: Writer[T] =
     summon[Writer[Null]].contramap(_ => null)
 
+  def tuple[A](
+      slots: Iterable[Writer[?]],
+      size: A => Int,
+      elementValue: (A, Int) => Any
+  ): Writer[A] =
+    fromSchema(
+      RawSchema.Tuple(
+        IArray.from(slots.iterator.map(_.schema)),
+        read = null,
+        RawSchema.TupleWrite.from(size, elementValue)
+      )
+    )
+
+  def vector[A, Elem](
+      element: Writer[Elem],
+      size: A => Int,
+      iterator: A => Iterator[Elem]
+  ): Writer[A] =
+    fromSchema(
+      RawSchema.Vector(
+        element.schema,
+        read = null,
+        RawSchema.VectorWrite.from(size, iterator)
+      )
+    )
+
+  def tupleOf[A, Elem](
+      element: Writer[Elem],
+      size: A => Int,
+      iterator: A => Iterator[Elem]
+  ): Writer[A] =
+    fromSchema(
+      RawSchema.TupleOf(
+        element.schema,
+        read = null,
+        RawSchema.VectorWrite.from(size, iterator)
+      )
+    )
+
+  def dict[A, Elem](
+      element: Writer[Elem],
+      size: A => Int,
+      iterator: A => Iterator[(String, Elem)]
+  ): Writer[A] =
+    fromSchema(
+      RawSchema.Dict(
+        element.schema,
+        read = null,
+        RawSchema.DictWrite.from(size, iterator)
+      )
+    )
+
+  def pairSeq[A, Key, Elem](
+      key: Writer[Key],
+      element: Writer[Elem],
+      size: A => Int,
+      iterator: A => Iterator[(Key, Elem)]
+  ): Writer[A] =
+    fromSchema(
+      RawSchema.PairSeq(
+        key.schema,
+        element.schema,
+        read = null,
+        RawSchema.PairSeqWrite.from(size, iterator)
+      )
+    )
+
   object configured:
     inline def derived[T](using mirror: Mirror.Of[T], config: Configured[T]): Writer[T] =
       fromSchema(Configured.applyToSchema(Writer.derived[T].schema, config))

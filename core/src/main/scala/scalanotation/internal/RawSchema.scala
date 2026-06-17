@@ -808,6 +808,13 @@ private[scalanotation] object RawSchema:
       def elementValue(value: Any, index: Int): Any =
         value.asInstanceOf[Product].productElement(index)
 
+    def from[A](size0: A => Int, elementValue0: (A, Int) => Any): TupleWrite = new:
+      def size(value: Any): Int =
+        size0(value.asInstanceOf[A])
+
+      def elementValue(value: Any, index: Int): Any =
+        elementValue0(value.asInstanceOf[A], index)
+
   trait SumWrite:
     def caseIndex(value: Any): Int
 
@@ -941,28 +948,66 @@ private[scalanotation] object RawSchema:
     def finish(state: State): Any
 
   object PairSeqRead:
-    final class FromFactoryState[Key, Elem, Col[X, Y] <: scala.collection.Map[X, Y]](
-        val builder: scala.collection.mutable.Builder[(Key, Elem), Col[Key, Elem]]
-    ):
-      var key: Any = null
+    final case class FromReaderBuilder[Key, Elem, Repr, A](
+        builder: Reader.PairSeqBuilder[Key, Elem, Repr, A]
+    ) extends PairSeqRead:
+      type State = Repr
+
+      def init(): State = builder.init()
+
+      def addKey(state: State, key: Any): State =
+        builder.addKey(state, key.asInstanceOf[Key])
+
+      override def addStringKey(state: State, key: String): State =
+        builder.addStringKey(state, key)
+      override def addCharKey(state: State, key: Char): State =
+        builder.addCharKey(state, key)
+      override def addIntKey(state: State, key: Int): State =
+        builder.addIntKey(state, key)
+      override def addLongKey(state: State, key: Long): State =
+        builder.addLongKey(state, key)
+      override def addFloatKey(state: State, key: Float): State =
+        builder.addFloatKey(state, key)
+      override def addDoubleKey(state: State, key: Double): State =
+        builder.addDoubleKey(state, key)
+      override def addBooleanKey(state: State, key: Boolean): State =
+        builder.addBooleanKey(state, key)
+
+      def addValue(state: State, elem: Any): State =
+        builder.addValue(state, elem.asInstanceOf[Elem])
+
+      override def addStringValue(state: State, elem: String): State =
+        builder.addStringValue(state, elem)
+      override def addCharValue(state: State, elem: Char): State =
+        builder.addCharValue(state, elem)
+      override def addIntValue(state: State, elem: Int): State =
+        builder.addIntValue(state, elem)
+      override def addLongValue(state: State, elem: Long): State =
+        builder.addLongValue(state, elem)
+      override def addFloatValue(state: State, elem: Float): State =
+        builder.addFloatValue(state, elem)
+      override def addDoubleValue(state: State, elem: Double): State =
+        builder.addDoubleValue(state, elem)
+      override def addBooleanValue(state: State, elem: Boolean): State =
+        builder.addBooleanValue(state, elem)
+
+      def finish(state: State): Any = builder.finish(state)
 
     final case class FromFactory[Key, Elem, Col[X, Y] <: scala.collection.Map[X, Y]](
         factory: scala.collection.Factory[(Key, Elem), Col[Key, Elem]]
     ) extends PairSeqRead:
-      type State = FromFactoryState[Key, Elem, Col]
+      type State = PublicInternal.MapFactoryPairSeq.State[Key, Elem, Col]
+      private val builder = PublicInternal.MapFactoryPairSeq[Key, Elem, Col](using factory)
 
-      def init(): State = new FromFactoryState(factory.newBuilder)
+      def init(): State = builder.init()
 
       def addKey(state: State, key: Any): State =
-        state.key = key
-        state
+        builder.addKey(state, key.asInstanceOf[Key])
 
       def addValue(state: State, elem: Any): State =
-        state.builder.addOne((state.key.asInstanceOf[Key], elem.asInstanceOf[Elem]))
-        state.key = null
-        state
+        builder.addValue(state, elem.asInstanceOf[Elem])
 
-      def finish(state: State): Any = state.builder.result()
+      def finish(state: State): Any = builder.finish(state)
 
   trait PairSeqWrite:
     def size(value: Any): Int

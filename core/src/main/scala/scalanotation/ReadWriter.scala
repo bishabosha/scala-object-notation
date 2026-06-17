@@ -61,6 +61,78 @@ object ReadWriter extends CommonTypeClassCompanion[ReadWriter]:
   def forNull[T](value: T): ReadWriter[T] =
     summon[ReadWriter[Null]].bimap(_ => value)(_ => null)
 
+  def tuple[A, Repr](
+      slots: Iterable[ReadWriter[?]],
+      builder: Reader.TupleBuilder[Repr, A],
+      size: A => Int,
+      elementValue: (A, Int) => Any
+  ): ReadWriter[A] =
+    fromSchema(
+      RawSchema.Tuple(
+        IArray.from(slots.iterator.map(_.schema)),
+        RawSchema.TupleRead.FromReaderBuilder(builder),
+        RawSchema.TupleWrite.from(size, elementValue)
+      )
+    )
+
+  def vector[A, Elem, Repr](
+      element: ReadWriter[Elem],
+      builder: Reader.VectorBuilder[Elem, Repr, A],
+      size: A => Int,
+      iterator: A => Iterator[Elem]
+  ): ReadWriter[A] =
+    fromSchema(
+      RawSchema.Vector(
+        element.schema,
+        RawSchema.VectorRead.FromReaderBuilder(builder),
+        RawSchema.VectorWrite.from(size, iterator)
+      )
+    )
+
+  def tupleOf[A, Elem, Repr](
+      element: ReadWriter[Elem],
+      builder: Reader.VectorBuilder[Elem, Repr, A],
+      size: A => Int,
+      iterator: A => Iterator[Elem]
+  ): ReadWriter[A] =
+    fromSchema(
+      RawSchema.TupleOf(
+        element.schema,
+        RawSchema.VectorRead.FromReaderBuilder(builder),
+        RawSchema.VectorWrite.from(size, iterator)
+      )
+    )
+
+  def dict[A, Elem, Repr](
+      element: ReadWriter[Elem],
+      builder: Reader.DictBuilder[Elem, Repr, A],
+      size: A => Int,
+      iterator: A => Iterator[(String, Elem)]
+  ): ReadWriter[A] =
+    fromSchema(
+      RawSchema.Dict(
+        element.schema,
+        RawSchema.DictRead.FromReaderBuilder(builder),
+        RawSchema.DictWrite.from(size, iterator)
+      )
+    )
+
+  def pairSeq[A, Key, Elem, Repr](
+      key: ReadWriter[Key],
+      element: ReadWriter[Elem],
+      builder: Reader.PairSeqBuilder[Key, Elem, Repr, A],
+      size: A => Int,
+      iterator: A => Iterator[(Key, Elem)]
+  ): ReadWriter[A] =
+    fromSchema(
+      RawSchema.PairSeq(
+        key.schema,
+        element.schema,
+        RawSchema.PairSeqRead.FromReaderBuilder(builder),
+        RawSchema.PairSeqWrite.from(size, iterator)
+      )
+    )
+
   object skippable extends ReadWriterBuilders[true]:
     val thisBuilder: this.type = this
     override type ThisBuilder = thisBuilder.type
@@ -232,7 +304,7 @@ object ReadWriter extends CommonTypeClassCompanion[ReadWriter]:
         fromSchema[Col[K, V]](
           pairSeqSchema(
             entry.typeclass.schema,
-            RawSchema.PairSeqRead.FromFactory[K, V, Col](factory),
+            RawSchema.PairSeqRead.FromReaderBuilder(PublicInternal.MapFactoryPairSeq[K, V, Col]),
             RawSchema.PairSeqWrite.from[Col[K, V], K, V](_.size, _.iterator)
           )
         )
