@@ -47,6 +47,12 @@ private[scalanotation] enum RawSchema:
       read: RawSchema.VectorRead | Null = null,
       write: RawSchema.VectorWrite | Null = null
   )
+  case PairSeq(
+      key: RawSchema,
+      value: RawSchema,
+      read: RawSchema.PairSeqRead | Null = null,
+      write: RawSchema.PairSeqWrite | Null = null
+  )
   case Dict(
       element: RawSchema,
       read: RawSchema.DictRead | Null = null,
@@ -139,6 +145,7 @@ private[scalanotation] enum RawSchema:
           cases.iterator.map(k => s"""($field: "${k.name}", ...)""").mkString(" | ")
       case _: RawSchema.Vector      => "Vector[...]"
       case _: RawSchema.TupleOf     => "Tuple[...]"
+      case _: RawSchema.PairSeq     => "Vector[(..., ...)]"
       case _: RawSchema.Dict        => "AnyNamedTuple"
       case router: RawSchema.Router => router.selfKind
       case RawSchema.Ref(name, _)   => name
@@ -915,6 +922,48 @@ private[scalanotation] object RawSchema:
         builder.addBoolean(state, key, elem)
 
       def finish(state: State): Any = builder.finish(state)
+
+  trait PairSeqRead:
+    type State
+    def init(): State
+    def add(state: State, key: Any, elem: Any): State
+
+    // typed value adds: key is already decoded and stored while the value decoder owns the live
+    // slot. The defaults box and delegate to `add`.
+    def addString(state: State, key: Any, elem: String): State   = add(state, key, elem)
+    def addChar(state: State, key: Any, elem: Char): State       = add(state, key, elem)
+    def addInt(state: State, key: Any, elem: Int): State         = add(state, key, elem)
+    def addLong(state: State, key: Any, elem: Long): State       = add(state, key, elem)
+    def addFloat(state: State, key: Any, elem: Float): State     = add(state, key, elem)
+    def addDouble(state: State, key: Any, elem: Double): State   = add(state, key, elem)
+    def addBoolean(state: State, key: Any, elem: Boolean): State = add(state, key, elem)
+
+    def finish(state: State): Any
+
+  object PairSeqRead:
+    final case class FromFactory[Key, Elem, Col[X, Y] <: scala.collection.Map[X, Y]](
+        factory: scala.collection.Factory[(Key, Elem), Col[Key, Elem]]
+    ) extends PairSeqRead:
+      type State = scala.collection.mutable.Builder[(Key, Elem), Col[Key, Elem]]
+
+      def init(): State = factory.newBuilder
+
+      def add(state: State, key: Any, elem: Any): State =
+        state.addOne((key.asInstanceOf[Key], elem.asInstanceOf[Elem]))
+
+      def finish(state: State): Any = state.result()
+
+  trait PairSeqWrite:
+    def size(value: Any): Int
+    def iterator(value: Any): Iterator[(Any, Any)]
+
+  object PairSeqWrite:
+    def from[A, Key, Elem](size0: A => Int, iterator0: A => Iterator[(Key, Elem)]): PairSeqWrite =
+      new:
+        def size(value: Any): Int = size0(value.asInstanceOf[A])
+
+        def iterator(value: Any): Iterator[(Any, Any)] =
+          iterator0(value.asInstanceOf[A]).map((key, elem) => key -> elem.asInstanceOf[Any])
 
   trait DictWrite:
     def size(value: Any): Int

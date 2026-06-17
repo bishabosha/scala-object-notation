@@ -279,17 +279,10 @@ object Reader extends ReaderLowPriority, CommonTypeClassCompanion[Reader]:
       => AtPath[Path, Col[K, V]] =
       liftAtPath[Path, Col[K, V]](
         fromSchema[Col[K, V]](
-          RawSchema.mapPure(
-            RawSchema.Vector(
-              entry.typeclass.schema,
-              RawSchema.VectorRead.FromReaderBuilder(PublicInternal.BuildVector[(K, V)]),
-              write = null
-            )
-          )(value =>
-            buildMapFromEntries(
-              value.asInstanceOf[Vector[(K, V)]],
-              factory
-            )
+          pairSeqSchema(
+            entry.typeclass.schema,
+            RawSchema.PairSeqRead.FromFactory[K, V, Col](factory),
+            write = null
           )
         )
       )
