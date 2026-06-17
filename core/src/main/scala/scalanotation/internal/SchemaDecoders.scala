@@ -104,16 +104,17 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
       schema: RawSchema.Router,
       construct: RawSchema.RouterConstruct
   ): Result[Unit, DecodeError] =
-    Result.task:
-      if schema.read == null then missingReadCapability(schema)
-      val index = schema.read.nn.route(construct)
-      if index < 0 || index >= schema.cases.length then
-        raise(
-          DecodeError
-            .ExpectedType(schema.describeSelf, describeCurrent())
-            .atToken(currentSpan())
-        )
-      decodeBase(schema.cases(index).schema).check
+    withRead(schema, _.read) { read =>
+      Result.task:
+        val index = read.route(construct)
+        if index < 0 || index >= schema.cases.length then
+          raise(
+            DecodeError
+              .ExpectedType(schema.describeSelf, describeCurrent())
+              .atToken(currentSpan())
+          )
+        decodeBase(schema.cases(index).schema).check
+    }
 
   private def numberConstruct(
       bounded: RawSchema.RouterConstruct,
