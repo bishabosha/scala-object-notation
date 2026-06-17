@@ -83,6 +83,70 @@ class PrimitiveDecodingSuite extends ScalanotationSuite:
     assertEquals(Readers.readAs[Double]("-2_147_483_648"), Result.Ok(Int.MinValue.toDouble))
     assertEquals(Readers.readAs[Float]("-2_147_483_648"), Result.Ok(Int.MinValue.toFloat))
 
+  test("public primitive reader constructors map from primitive slots"):
+    final case class IntLiteral(value: Int)
+    final case class LongLiteral(value: Long)
+    final case class FloatLiteral(value: Float)
+    final case class DoubleLiteral(value: Double)
+
+    def assertTotalMap[T](reader: Reader[T], base: RawSchema)(
+        isExpected: RawSchema.SchemaMapping.TotalMap => Boolean
+    ): Unit =
+      reader.schema match
+        case RawSchema.Mapped(`base`, mapping) =>
+          assert(mapping.resultMap == null)
+          assert(isExpected(mapping.totalMaps), s"Unexpected total map: ${mapping.totalMaps}")
+        case other =>
+          fail(s"Expected a mapped ${base.describeSelf} schema, got ${other.describeSelf}")
+
+    var calls                = 0
+    given Reader[IntLiteral] = Reader.int: value =>
+      calls += 1
+      IntLiteral(value)
+
+    assertTotalMap(summon[Reader[IntLiteral]], RawSchema.Int):
+      case RawSchema.SchemaMapping.TotalMap.IntMap(_) => true
+      case _                                          => false
+    assertEquals(Readers.readAs[IntLiteral]("123"), Result.Ok(IntLiteral(123)))
+    assertEquals(Expr.IntConstant(456).decodeAs[IntLiteral], Result.Ok(IntLiteral(456)))
+    assertEquals(calls, 2)
+
+    var longCalls             = 0
+    given Reader[LongLiteral] = Reader.long: value =>
+      longCalls += 1
+      LongLiteral(value)
+
+    assertTotalMap(summon[Reader[LongLiteral]], RawSchema.Long):
+      case RawSchema.SchemaMapping.TotalMap.LongMap(_) => true
+      case _                                           => false
+    assertEquals(Readers.readAs[LongLiteral]("123L"), Result.Ok(LongLiteral(123L)))
+    assertEquals(Expr.LongConstant(456L).decodeAs[LongLiteral], Result.Ok(LongLiteral(456L)))
+    assertEquals(longCalls, 2)
+
+    var floatCalls             = 0
+    given Reader[FloatLiteral] = Reader.float: value =>
+      floatCalls += 1
+      FloatLiteral(value)
+
+    assertTotalMap(summon[Reader[FloatLiteral]], RawSchema.Float):
+      case RawSchema.SchemaMapping.TotalMap.FloatMap(_) => true
+      case _                                            => false
+    assertEquals(Readers.readAs[FloatLiteral]("1.5f"), Result.Ok(FloatLiteral(1.5f)))
+    assertEquals(Expr.FloatConstant(2.5f).decodeAs[FloatLiteral], Result.Ok(FloatLiteral(2.5f)))
+    assertEquals(floatCalls, 2)
+
+    var doubleCalls             = 0
+    given Reader[DoubleLiteral] = Reader.double: value =>
+      doubleCalls += 1
+      DoubleLiteral(value)
+
+    assertTotalMap(summon[Reader[DoubleLiteral]], RawSchema.Double):
+      case RawSchema.SchemaMapping.TotalMap.DoubleMap(_) => true
+      case _                                             => false
+    assertEquals(Readers.readAs[DoubleLiteral]("1.25"), Result.Ok(DoubleLiteral(1.25d)))
+    assertEquals(Expr.DoubleConstant(2.5d).decodeAs[DoubleLiteral], Result.Ok(DoubleLiteral(2.5d)))
+    assertEquals(doubleCalls, 2)
+
   test("reject integer literals that overflow their type"):
     def assertTokenFormat[T: Reader](input: String, expected: String): Unit =
       Readers.readAs[T](input) match

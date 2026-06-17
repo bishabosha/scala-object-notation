@@ -1,6 +1,7 @@
 package scalanotation.internal
 
 import scalanotation.DecodeError
+import scalanotation.Reader
 import scalanotation.internal.RawSchema.Field
 import steps.result.Result
 import steps.result.Result.eval.{raise, ok}
@@ -121,7 +122,9 @@ private[scalanotation] abstract class PushSlots extends Internal.PoolHolder:
     lastSlotKind = SlotKind.Ref
 
   /** appends the live slot to a vector builder state, unboxed when a typed slot is live */
-  protected final def addSlot(read: RawSchema.VectorRead)(state: read.State): read.State =
+  protected final def addSlot[Elem, Repr, A](
+      read: Reader.VectorBuilder[Elem, Repr, A]
+  )(state: Repr): Repr =
     (lastSlotKind: @switch) match
       case SlotKind.String  => read.addString(state, stringSlot)
       case SlotKind.Char    => read.addChar(state, charSlot)
@@ -130,12 +133,12 @@ private[scalanotation] abstract class PushSlots extends Internal.PoolHolder:
       case SlotKind.Float   => read.addFloat(state, floatSlot)
       case SlotKind.Double  => read.addDouble(state, doubleSlot)
       case SlotKind.Boolean => read.addBoolean(state, booleanSlot)
-      case _                => read.add(state, anySlot)
+      case _                => read.add(state, anySlot.asInstanceOf[Elem])
 
   /** adds the live slot at `index` of a tuple builder state, unboxed when a typed slot is live */
-  protected final def addSlot(
-      read: RawSchema.TupleRead
-  )(state: read.State, index: Int): read.State =
+  protected final def addSlot[Repr, A](
+      read: Reader.TupleBuilder[Repr, A]
+  )(state: Repr, index: Int): Repr =
     (lastSlotKind: @switch) match
       case SlotKind.String  => read.addString(state, index, stringSlot)
       case SlotKind.Char    => read.addChar(state, index, charSlot)
@@ -161,9 +164,9 @@ private[scalanotation] abstract class PushSlots extends Internal.PoolHolder:
       case _                => read.add(state, index, anySlot)
 
   /** adds the live slot at `key` of a dict builder state, unboxed when a typed slot is live */
-  protected final def addSlot(
-      read: RawSchema.DictRead
-  )(state: read.State, key: String): read.State =
+  protected final def addSlot[Elem, Repr, A](
+      read: Reader.DictBuilder[Elem, Repr, A]
+  )(state: Repr, key: String): Repr =
     (lastSlotKind: @switch) match
       case SlotKind.String  => read.addString(state, key, stringSlot)
       case SlotKind.Char    => read.addChar(state, key, charSlot)
@@ -172,12 +175,12 @@ private[scalanotation] abstract class PushSlots extends Internal.PoolHolder:
       case SlotKind.Float   => read.addFloat(state, key, floatSlot)
       case SlotKind.Double  => read.addDouble(state, key, doubleSlot)
       case SlotKind.Boolean => read.addBoolean(state, key, booleanSlot)
-      case _                => read.add(state, key, anySlot)
+      case _                => read.add(state, key, anySlot.asInstanceOf[Elem])
 
   /** adds the live key slot to a key/value sequence builder state */
-  protected final def addPairKeySlot(
-      read: RawSchema.PairSeqRead
-  )(state: read.State): read.State =
+  protected final def addPairKeySlot[Key, Elem, Repr, A](
+      read: Reader.PairSeqBuilder[Key, Elem, Repr, A]
+  )(state: Repr): Repr =
     (lastSlotKind: @switch) match
       case SlotKind.String  => read.addStringKey(state, stringSlot)
       case SlotKind.Char    => read.addCharKey(state, charSlot)
@@ -186,12 +189,12 @@ private[scalanotation] abstract class PushSlots extends Internal.PoolHolder:
       case SlotKind.Float   => read.addFloatKey(state, floatSlot)
       case SlotKind.Double  => read.addDoubleKey(state, doubleSlot)
       case SlotKind.Boolean => read.addBooleanKey(state, booleanSlot)
-      case _                => read.addKey(state, anySlot)
+      case _                => read.addKey(state, anySlot.asInstanceOf[Key])
 
   /** adds the live value slot to a key/value sequence builder state */
-  protected final def addPairValueSlot(
-      read: RawSchema.PairSeqRead
-  )(state: read.State): read.State =
+  protected final def addPairValueSlot[Key, Elem, Repr, A](
+      read: Reader.PairSeqBuilder[Key, Elem, Repr, A]
+  )(state: Repr): Repr =
     (lastSlotKind: @switch) match
       case SlotKind.String  => read.addStringValue(state, stringSlot)
       case SlotKind.Char    => read.addCharValue(state, charSlot)
@@ -200,7 +203,7 @@ private[scalanotation] abstract class PushSlots extends Internal.PoolHolder:
       case SlotKind.Float   => read.addFloatValue(state, floatSlot)
       case SlotKind.Double  => read.addDoubleValue(state, doubleSlot)
       case SlotKind.Boolean => read.addBooleanValue(state, booleanSlot)
-      case _                => read.addValue(state, anySlot)
+      case _                => read.addValue(state, anySlot.asInstanceOf[Elem])
 
   /** applies a [[RawSchema.Mapped]] mapping to the live slot after a successful push */
   protected final def mapSlot(

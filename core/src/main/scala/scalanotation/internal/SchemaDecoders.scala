@@ -1,6 +1,7 @@
 package scalanotation.internal
 
 import scalanotation.DecodeError
+import scalanotation.Reader
 import scalanotation.internal.RawSchema.Field
 import steps.result.Result
 import steps.result.Result.eval.check
@@ -127,22 +128,26 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
       case RawSchema.RouterNumberMode.Raw     => RawSchema.RouterConstruct.RawNumber
 
   protected final def decodeTuple(schema: RawSchema.Tuple): Result[Unit, DecodeError] =
-    withRead(schema, _.read) { read =>
-      withBorrowSlots(read.slotsFactory) { pooled =>
-        Result.task {
-          val slots              = schema.slots
-          val state0: read.State = read.initPooled(slots.length, pooled)
-          val expectedSlots      = slots.length
-          val state1             = parseTupleLike(
-            schema,
-            state0,
-            expectedSlots
-          )(
-            index => decodeTupleSlotValue(slots, index),
-            (state, index) => addSlot(read)(state, index)
-          )
-          pushRef(read.finish(state1))
-        }
+    withRead(schema, _.read)(read => decodeTupleWithRead(schema, read))
+
+  private def decodeTupleWithRead[Repr, A](
+      schema: RawSchema.Tuple,
+      read: Reader.TupleBuilder[Repr, A]
+  ): Result[Unit, DecodeError] =
+    withBorrowSlots(read.slotsFactory) { pooled =>
+      Result.task {
+        val slots         = schema.slots
+        val state0        = read.initPooled(slots.length, pooled)
+        val expectedSlots = slots.length
+        val state1        = parseTupleLike(
+          schema,
+          state0,
+          expectedSlots
+        )(
+          index => decodeTupleSlotValue(slots, index),
+          (state, index) => addSlot(read)(state, index)
+        )
+        pushRef(read.finish(state1))
       }
     }
 
@@ -433,102 +438,118 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
   }
 
   protected final def decodeVector(schema: RawSchema.Vector): Result[Unit, DecodeError] =
-    withRead(schema, _.read) { read =>
-      Result.task {
-        var values = read.init()
-        parseVectorStructure(schema) { indexInVector =>
-          checkOrRaise(decodeBase(schema.element))(_.atPath(s"[$indexInVector]"))
-          values = addSlot(read)(values)
-        }
-        pushRef(read.finish(values))
+    withRead(schema, _.read)(read => decodeVectorWithRead(schema, read))
+
+  private def decodeVectorWithRead[Elem, Repr, A](
+      schema: RawSchema.Vector,
+      read: Reader.VectorBuilder[Elem, Repr, A]
+  ): Result[Unit, DecodeError] =
+    Result.task {
+      var values = read.init()
+      parseVectorStructure(schema) { indexInVector =>
+        checkOrRaise(decodeBase(schema.element))(_.atPath(s"[$indexInVector]"))
+        values = addSlot(read)(values)
       }
+      pushRef(read.finish(values))
     }
 
   protected final def decodeTupleOf(schema: RawSchema.TupleOf): Result[Unit, DecodeError] =
-    withRead(schema, _.read) { read =>
-      Result.task:
-        val state0 = read.init()
-        val state1 = parseTupleLike(
-          schema,
-          state0,
-          expectedSlots = VariableTupleSlots
-        )(
-          _ => decodeBase(schema.element),
-          (state, _) => addSlot(read)(state)
-        )
-        pushRef(read.finish(state1))
-    }
+    withRead(schema, _.read)(read => decodeTupleOfWithRead(schema, read))
+
+  private def decodeTupleOfWithRead[Elem, Repr, A](
+      schema: RawSchema.TupleOf,
+      read: Reader.VectorBuilder[Elem, Repr, A]
+  ): Result[Unit, DecodeError] =
+    Result.task:
+      val state0 = read.init()
+      val state1 = parseTupleLike(
+        schema,
+        state0,
+        expectedSlots = VariableTupleSlots
+      )(
+        _ => decodeBase(schema.element),
+        (state, _) => addSlot(read)(state)
+      )
+      pushRef(read.finish(state1))
 
   protected final def decodePairSeq(schema: RawSchema.PairSeq): Result[Unit, DecodeError] =
-    withRead(schema, _.read) { read =>
-      Result.task:
-        var state = read.init()
-        parseVectorStructure(schema) { index =>
-          val tupleOffset = currentOffset()
-          if currentKind() == TokenKind.LParen then advance()
-          else
-            raise(
-              DecodeError
-                .ExpectedType(RawSchema.describeTupleSlots(2), describeCurrent())
-                .atToken(currentSpan())
-            )
+    withRead(schema, _.read)(read => decodePairSeqWithRead(schema, read))
 
-          if currentKind() == TokenKind.RParen then
-            raise(DecodeError.FieldCountMismatch(2, 0).atToken(currentSpan()))
+  private def decodePairSeqWithRead[Key, Elem, Repr, A](
+      schema: RawSchema.PairSeq,
+      read: Reader.PairSeqBuilder[Key, Elem, Repr, A]
+  ): Result[Unit, DecodeError] =
+    Result.task:
+      var state = read.init()
+      parseVectorStructure(schema) { index =>
+        val tupleOffset = currentOffset()
+        if currentKind() == TokenKind.LParen then advance()
+        else
+          raise(
+            DecodeError
+              .ExpectedType(RawSchema.describeTupleSlots(2), describeCurrent())
+              .atToken(currentSpan())
+          )
 
-          checkOrRaise(decodeBase(schema.key))(_.atPath(s"[$index][0]"))
-          state = addPairKeySlot(read)(state)
+        if currentKind() == TokenKind.RParen then
+          raise(DecodeError.FieldCountMismatch(2, 0).atToken(currentSpan()))
 
-          currentKind() match
-            case TokenKind.Comma =>
-              advance()
-            case TokenKind.RParen =>
-              raise(DecodeError.FieldCountMismatch(2, 1).atToken(spanAt(tupleOffset)))
-            case _ =>
-              raise(DecodeError.ExpectedRParen(describeCurrent()).atToken(currentSpan()))
+        checkOrRaise(decodeBase(schema.key))(_.atPath(s"[$index][0]"))
+        state = addPairKeySlot(read)(state)
 
-          if currentKind() == TokenKind.RParen then
-            raise(DecodeError.FieldCountMismatch(2, 1).atToken(currentSpan()))
+        currentKind() match
+          case TokenKind.Comma =>
+            advance()
+          case TokenKind.RParen =>
+            raise(DecodeError.FieldCountMismatch(2, 1).atToken(spanAt(tupleOffset)))
+          case _ =>
+            raise(DecodeError.ExpectedRParen(describeCurrent()).atToken(currentSpan()))
 
-          checkOrRaise(decodeBase(schema.value))(_.atPath(s"[$index][1]"))
-          state = addPairValueSlot(read)(state)
+        if currentKind() == TokenKind.RParen then
+          raise(DecodeError.FieldCountMismatch(2, 1).atToken(currentSpan()))
 
-          currentKind() match
-            case TokenKind.RParen =>
-              advance()
-            case TokenKind.Comma =>
-              advance()
-              currentKind() match
-                case TokenKind.RParen =>
-                  advance()
-                case _ =>
-                  raise(DecodeError.FieldCountMismatch(2, 3).atToken(currentSpan()))
-            case _ =>
-              raise(DecodeError.ExpectedRParen(describeCurrent()).atToken(currentSpan()))
-        }
-        pushRef(read.finish(state))
-    }
+        checkOrRaise(decodeBase(schema.value))(_.atPath(s"[$index][1]"))
+        state = addPairValueSlot(read)(state)
+
+        currentKind() match
+          case TokenKind.RParen =>
+            advance()
+          case TokenKind.Comma =>
+            advance()
+            currentKind() match
+              case TokenKind.RParen =>
+                advance()
+              case _ =>
+                raise(DecodeError.FieldCountMismatch(2, 3).atToken(currentSpan()))
+          case _ =>
+            raise(DecodeError.ExpectedRParen(describeCurrent()).atToken(currentSpan()))
+      }
+      pushRef(read.finish(state))
 
   protected final def decodeDict(schema: RawSchema.Dict): Result[Unit, DecodeError] =
     namesPool.withBorrowed { seenNames =>
-      withRead(schema, _.read) { read =>
-        Result.task {
-          var state  = read.init()
-          val parsed = parseNamedTupleStructure(schema, allowEmpty = false) {
-            (name, nameOffset, _) =>
-              if seenNames.alreadySeen(name) then
-                raise(
-                  DecodeError.DuplicateField(name).atPath(s".${name}").atToken(spanAt(nameOffset))
-                )
-              checkOrRaise(decodeBase(schema.element))(_.atPath(s".${name}"))
-              state = addSlot(read)(state, name)
-          }
-          val _ = parsed.closingOffset
-          val _ = parsed.fieldName
-          val _ = parsed.fieldCount
-          pushRef(read.finish(state))
-        }
+      withRead(schema, _.read)(read => decodeDictWithRead(schema, read, seenNames))
+    }
+
+  private def decodeDictWithRead[Elem, Repr, A, SeenNames](
+      schema: RawSchema.Dict,
+      read: Reader.DictBuilder[Elem, Repr, A],
+      seenNames: SeenNames
+  )(using Internal.NameSet[SeenNames]): Result[Unit, DecodeError] =
+    Result.task {
+      var state  = read.init()
+      val parsed = parseNamedTupleStructure(schema, allowEmpty = false) { (name, nameOffset, _) =>
+        if seenNames.alreadySeen(name) then
+          raise(
+            DecodeError.DuplicateField(name).atPath(s".${name}").atToken(spanAt(nameOffset))
+          )
+        checkOrRaise(decodeBase(schema.element))(_.atPath(s".${name}"))
+        state = addSlot(read)(state, name)
       }
+      val _ = parsed.closingOffset
+      val _ = parsed.fieldName
+      val _ = parsed.fieldCount
+      pushRef(read.finish(state))
     }
 
   protected final def decodeOption(schema: RawSchema.Option): Result[Unit, DecodeError] =
