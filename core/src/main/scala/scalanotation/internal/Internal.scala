@@ -439,20 +439,20 @@ private[scalanotation] object PublicInternal {
   /** vector read for `Array[T]`, specialized to append without boxing when `T` is primitive */
   def arrayVectorRead[T](using tag: ClassTag[T]): RawSchema.VectorRead =
     tag.runtimeClass match
-      case java.lang.Integer.TYPE   => RawSchema.VectorRead.FromReaderBuilder(BuildIntArray())
-      case java.lang.Long.TYPE      => RawSchema.VectorRead.FromReaderBuilder(BuildLongArray())
-      case java.lang.Float.TYPE     => RawSchema.VectorRead.FromReaderBuilder(BuildFloatArray())
-      case java.lang.Double.TYPE    => RawSchema.VectorRead.FromReaderBuilder(BuildDoubleArray())
-      case java.lang.Boolean.TYPE   => RawSchema.VectorRead.FromReaderBuilder(BuildBooleanArray())
-      case java.lang.Character.TYPE => RawSchema.VectorRead.FromReaderBuilder(BuildCharArray())
-      case _                        => RawSchema.VectorRead.FromReaderBuilder(BuildArray[T]())
+      case java.lang.Integer.TYPE   => BuildIntArray()
+      case java.lang.Long.TYPE      => BuildLongArray()
+      case java.lang.Float.TYPE     => BuildFloatArray()
+      case java.lang.Double.TYPE    => BuildDoubleArray()
+      case java.lang.Boolean.TYPE   => BuildBooleanArray()
+      case java.lang.Character.TYPE => BuildCharArray()
+      case _                        => BuildArray[T]()
 
   /** vector read for `IArray[T]`: a specialized array builder's result is freshly allocated, so for
     * primitive elements it can be safely viewed as the immutable array
     */
   def iarrayVectorRead[T](using tag: ClassTag[T]): RawSchema.VectorRead =
     if tag.runtimeClass.isPrimitive then arrayVectorRead[T]
-    else RawSchema.VectorRead.FromReaderBuilder(BuildIArray[T]())
+    else BuildIArray[T]()
 
   // TODO: add to standard library!
   inline def showType[T] = ${ showTypeImpl[T] }
