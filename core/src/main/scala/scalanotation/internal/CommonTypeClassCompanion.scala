@@ -10,11 +10,11 @@ import scala.deriving.Mirror
 import scala.util.NotGiven
 
 private[scalanotation] trait CommonTypeClassCompanion[TC[_]]:
-  private[scalanotation] def fromSchema[T](schema0: RawSchema): TC[T]
+  private[scalanotation] def fromSchema[T](schema0: RawSchema[T]): TC[T]
 
-  private[scalanotation] def schemaOf[T](typeclass: TC[T]): RawSchema
+  private[scalanotation] def schemaOf[T](typeclass: TC[T]): RawSchema[T]
 
-  protected def primitiveTypeClass[T](schema: RawSchema): TC[T]
+  protected def primitiveTypeClass[T](schema: RawSchema[T]): TC[T]
 
   protected def mappedStringTypeClass[T](
       read: String => Result[T, DecodeError],
@@ -22,21 +22,20 @@ private[scalanotation] trait CommonTypeClassCompanion[TC[_]]:
   ): TC[T] =
     fromSchema(
       RawSchema.mapResultAndInput(RawSchema.String)(
-        resultMap0 =
-          value => read(value.asInstanceOf[String]).asInstanceOf[Result[Any, DecodeError]],
+        resultMap0 = value => read(value.asInstanceOf[String]),
         inputMap0 = value => write(value.asInstanceOf[T])
       )
     )
 
-  protected final def pairSeqSchema(
-      pairSchema: RawSchema,
+  protected final def pairSeqSchema[A](
+      pairSchema: RawSchema[?],
       read: RawSchema.PairSeqRead | Null,
       write: RawSchema.PairSeqWrite | Null
-  ): RawSchema =
+  ): RawSchema[A] =
     val (key, value) = pairSchemas(pairSchema)
     RawSchema.PairSeq(key, value, read, write)
 
-  private def pairSchemas(pairSchema: RawSchema): (RawSchema, RawSchema) =
+  private def pairSchemas(pairSchema: RawSchema[?]): (RawSchema[?], RawSchema[?]) =
     pairSchema match
       case RawSchema.Tuple(slots, _, _) if slots.length == 2 =>
         slots(0) -> slots(1)
@@ -104,7 +103,7 @@ private[scalanotation] trait CommonTypeClassCompanion[TC[_]]:
 
     private[scalanotation] def namedTupleTypeClass[T](fields: List[FieldRepr]): TC[T]
 
-    private[scalanotation] def tupleTypeClass[T <: Tuple](slots: List[RawSchema]): TC[T] =
+    private[scalanotation] def tupleTypeClass[T <: Tuple](slots: List[RawSchema[?]]): TC[T] =
       fromSchema[T](RawSchema.Tuple(IArray.from(slots), read = null, write = null))
 
     private[scalanotation] def productTypeClass[T](fields: List[FieldRepr])(
@@ -235,11 +234,11 @@ private[scalanotation] trait CommonTypeClassCompanion[TC[_]]:
 
     opaque type AtPath[Path <: String, T] = TC[T] | List[FieldRepr]
 
-    opaque type TupleSlotsAtPath[Path <: String, Values <: Tuple] = List[RawSchema]
+    opaque type TupleSlotsAtPath[Path <: String, Values <: Tuple] = List[RawSchema[?]]
 
     private def tupleSlotSchemas[Path <: String, Values <: Tuple](
         slots: TupleSlotsAtPath[Path, Values]
-    ): List[RawSchema] = slots
+    ): List[RawSchema[?]] = slots
 
     private[scalanotation] final def liftAtPath[Path <: String, T](
         typeclass: TC[T]
@@ -290,14 +289,14 @@ private[scalanotation] trait CommonTypeClassCompanion[TC[_]]:
       import AtPath.typeclass
 
       extension [Path <: String, Values <: Tuple](slots: TupleSlotsAtPath[Path, Values])
-        def schemas: List[RawSchema] = slots
+        def schemas: List[RawSchema[?]] = slots
 
-      opaque type Indexed[Path <: String, Index <: Int, Values <: Tuple] = List[RawSchema]
+      opaque type Indexed[Path <: String, Index <: Int, Values <: Tuple] = List[RawSchema[?]]
 
       object Indexed:
         extension [Path <: String, Index <: Int, Values <: Tuple](
             slots: Indexed[Path, Index, Values]
-        ) def schemas: List[RawSchema] = slots
+        ) def schemas: List[RawSchema[?]] = slots
 
         given Empty: [Path <: String, Index <: Int] => Indexed[Path, Index, EmptyTuple] =
           Nil

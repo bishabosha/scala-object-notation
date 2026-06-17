@@ -30,7 +30,7 @@ private[scalanotation] class ExprDecoder() extends PushSlots with SharedHelpers:
     case Expr.BooleanConstant(value) => s"($value: Boolean)"
     case Expr.NullConstant           => "null"
 
-  private def expectedType(schema: RawSchema, expr: Expr): DecodeError =
+  private def expectedType(schema: RawSchema[?], expr: Expr): DecodeError =
     DecodeError.ExpectedType(schema.describeSelf, describeExpr(expr))
 
   def decodeInto[A](reader: Reader[A], expr: Expr): Result[A, DecodeError] =
@@ -39,42 +39,42 @@ private[scalanotation] class ExprDecoder() extends PushSlots with SharedHelpers:
       pullAny().asInstanceOf[A]
 
   private def decodeBase(
-      schema: RawSchema,
+      schema: RawSchema[?],
       expr: Expr
   ): Result[Unit, DecodeError] =
     schema match
-      case mapped: RawSchema.Mapped =>
+      case mapped: RawSchema.Mapped[?, ?] =>
         Result.task {
           decodeBase(mapped.base, expr).check
           mapSlot(mapped.mapping).check
         }
       case RawSchema.Ref(_, target) =>
         decodeBase(target(), expr)
-      case router: RawSchema.Router =>
+      case router: RawSchema.Router[?] =>
         if router eq RawSchema.ExprRouterSchema then
           Result.task {
             pushRef(expr)
           }
         else decodeRouter(router, expr)
-      case sc: RawSchema.NamedTuple =>
+      case sc: RawSchema.NamedTuple[?] =>
         decodeNamedTuple(sc, expr)
-      case sc: RawSchema.Tuple =>
+      case sc: RawSchema.Tuple[?] =>
         decodeTuple(sc, expr)
       case RawSchema.PartialNamedTuple(base, alreadySeenField) =>
         decodePartialNamedTuple(base, alreadySeenField, expr)
-      case sc: RawSchema.Sum =>
+      case sc: RawSchema.Sum[?] =>
         decodeSum(sc, expr)
-      case sc: RawSchema.DiscriminatorSum =>
+      case sc: RawSchema.DiscriminatorSum[?] =>
         decodeDiscriminatorSum(sc, expr)
-      case sc: RawSchema.Vector =>
+      case sc: RawSchema.Vector[?] =>
         decodeVector(sc, expr)
-      case sc: RawSchema.TupleOf =>
+      case sc: RawSchema.TupleOf[?] =>
         decodeTupleOf(sc, expr)
-      case sc: RawSchema.PairSeq =>
+      case sc: RawSchema.PairSeq[?] =>
         decodePairSeq(sc, expr)
-      case sc: RawSchema.Dict =>
+      case sc: RawSchema.Dict[?] =>
         decodeDict(sc, expr)
-      case sc: RawSchema.Option =>
+      case sc: RawSchema.Option[?] =>
         expr match
           case Expr.NullConstant =>
             Result.task {
@@ -149,7 +149,7 @@ private[scalanotation] class ExprDecoder() extends PushSlots with SharedHelpers:
         }
 
   private def decodeRouter(
-      schema: RawSchema.Router,
+      schema: RawSchema.Router[?],
       expr: Expr
   ): Result[Unit, DecodeError] =
     withRead(schema, _.read): read =>
@@ -174,7 +174,7 @@ private[scalanotation] class ExprDecoder() extends PushSlots with SharedHelpers:
       case Expr.NullConstant       => RawSchema.RouterConstruct.Null
 
   private def decodeVector(
-      schema: RawSchema.Vector,
+      schema: RawSchema.Vector[?],
       expr: Expr
   ): Result[Unit, DecodeError] =
     withRead(schema, _.read): read =>
@@ -192,7 +192,7 @@ private[scalanotation] class ExprDecoder() extends PushSlots with SharedHelpers:
             raise(DecodeError.ExpectedType(schema.describeSelf, describeExpr(other)))
 
   private def decodeTupleOf(
-      schema: RawSchema.TupleOf,
+      schema: RawSchema.TupleOf[?],
       expr: Expr
   ): Result[Unit, DecodeError] =
     withRead(schema, _.read): read =>
@@ -210,7 +210,7 @@ private[scalanotation] class ExprDecoder() extends PushSlots with SharedHelpers:
             raise(DecodeError.ExpectedType(schema.describeSelf, describeExpr(other)))
 
   private def decodePairSeq(
-      schema: RawSchema.PairSeq,
+      schema: RawSchema.PairSeq[?],
       expr: Expr
   ): Result[Unit, DecodeError] = Result.task:
     expr match
@@ -231,16 +231,16 @@ private[scalanotation] class ExprDecoder() extends PushSlots with SharedHelpers:
             case other =>
               raise(
                 DecodeError
-                  .ExpectedType(RawSchema.describeTupleSlots(2), describe(other))
+                  .ExpectedType(RawSchema.describeTupleSlots(2), describeExpr(other))
                   .atPath(s"[$index]")
               )
           index += 1
         pushRef(read.finish(state))
       case other =>
-        raise(DecodeError.ExpectedType(schema.describeSelf, describe(other)))
+        raise(DecodeError.ExpectedType(schema.describeSelf, describeExpr(other)))
 
   private def decodeTuple(
-      schema: RawSchema.Tuple,
+      schema: RawSchema.Tuple[?],
       expr: Expr
   ): Result[Unit, DecodeError] =
     withRead(schema, _.read): read =>
@@ -261,7 +261,7 @@ private[scalanotation] class ExprDecoder() extends PushSlots with SharedHelpers:
             raise(DecodeError.ExpectedType(schema.describeSelf, describeExpr(other)))
 
   private def decodeNamedTuple(
-      schema: RawSchema.NamedTuple,
+      schema: RawSchema.NamedTuple[?],
       expr: Expr
   ): Result[Unit, DecodeError] = namesPool.withBorrowed { seenNames =>
     withRead(schema, _.read): read =>
@@ -322,7 +322,7 @@ private[scalanotation] class ExprDecoder() extends PushSlots with SharedHelpers:
   }
 
   private def decodeDict(
-      schema: RawSchema.Dict,
+      schema: RawSchema.Dict[?],
       expr: Expr
   ): Result[Unit, DecodeError] =
     withRead(schema, _.read): read =>
@@ -343,7 +343,7 @@ private[scalanotation] class ExprDecoder() extends PushSlots with SharedHelpers:
             raise(DecodeError.ExpectedType(schema.describeSelf, describeExpr(other)))
 
   private def decodeSum(
-      schema: RawSchema.Sum,
+      schema: RawSchema.Sum[?],
       expr: Expr
   ): Result[Unit, DecodeError] =
     Result.task:
@@ -361,7 +361,7 @@ private[scalanotation] class ExprDecoder() extends PushSlots with SharedHelpers:
           raise(DecodeError.ExpectedType(schema.describeSelf, describeExpr(other)))
 
   private def decodeDiscriminatorSum(
-      schema: RawSchema.DiscriminatorSum,
+      schema: RawSchema.DiscriminatorSum[?],
       expr: Expr
   ): Result[Unit, DecodeError] =
     expr match
@@ -387,19 +387,19 @@ private[scalanotation] class ExprDecoder() extends PushSlots with SharedHelpers:
         Result.Err(expectedType(schema, other))
 
   private def decodePartialNamedTuple(
-      schema: RawSchema,
+      schema: RawSchema[?],
       alreadySeenField: String,
       expr: Expr
   ): Result[Unit, DecodeError] =
     schema match
       case RawSchema.PartialNamedTuple(base, _) =>
         decodePartialNamedTuple(base, alreadySeenField, expr)
-      case mapped: RawSchema.Mapped =>
+      case mapped: RawSchema.Mapped[?, ?] =>
         Result.task {
           decodePartialNamedTuple(mapped.base, alreadySeenField, expr).check
           mapSlot(mapped.mapping).check
         }
-      case namedTuple: RawSchema.NamedTuple =>
+      case namedTuple: RawSchema.NamedTuple[?] =>
         decodePartialNamedTuple(namedTuple, alreadySeenField, expr)
       case RawSchema.Null =>
         expr match
@@ -425,7 +425,7 @@ private[scalanotation] class ExprDecoder() extends PushSlots with SharedHelpers:
         raise(DecodeError.FieldOrderMismatch(alreadySeenField, actualName))
 
   private def decodePartialNamedTuple(
-      schema: RawSchema.NamedTuple,
+      schema: RawSchema.NamedTuple[?],
       alreadySeenField: String,
       expr: Expr
   ): Result[Unit, DecodeError] =
