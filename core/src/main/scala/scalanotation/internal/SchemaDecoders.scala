@@ -477,7 +477,7 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
             raise(DecodeError.FieldCountMismatch(2, 0).atToken(currentSpan()))
 
           checkOrRaise(decodeBase(schema.key))(_.atPath(s"[$index][0]"))
-          val key = pullAny()
+          state = addPairKeySlot(read)(state)
 
           currentKind() match
             case TokenKind.Comma =>
@@ -491,7 +491,7 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
             raise(DecodeError.FieldCountMismatch(2, 1).atToken(currentSpan()))
 
           checkOrRaise(decodeBase(schema.value))(_.atPath(s"[$index][1]"))
-          state = addSlot(read)(state, key)
+          state = addPairValueSlot(read)(state)
 
           currentKind() match
             case TokenKind.RParen =>

@@ -225,9 +225,9 @@ private[scalanotation] class ExprDecoder() extends PushSlots with SharedHelpers:
               if pair.length != 2 then
                 raise(DecodeError.FieldCountMismatch(2, pair.length).atPath(s"[$index]"))
               checkOrRaise(decodeBase(schema.key, pair(0)))(_.atPath(s"[$index][0]"))
-              val key = pullAny()
+              state = addPairKeySlot(read)(state)
               checkOrRaise(decodeBase(schema.value, pair(1)))(_.atPath(s"[$index][1]"))
-              state = addSlot(read)(state, key)
+              state = addPairValueSlot(read)(state)
             case other =>
               raise(
                 DecodeError
