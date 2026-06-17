@@ -14,7 +14,8 @@ import ujson.Value
 
 import java.nio.file.Files
 import java.nio.file.Path
-import scala.collection.immutable.ListMap
+
+import FormatSchemas.given
 
 object Main:
   def main(args: Array[String]): Unit =
@@ -75,25 +76,29 @@ object Main:
         else None
 
   private def exprToJson(expr: Expr, preserveNums: Boolean): Value =
+    if preserveNums then exprToJsonPreservingNumbers(expr)
+    else
+      expr.decodeAs[Value] match
+        case Result.Ok(value)  => value
+        case Result.Err(error) => throw IllegalArgumentException(error.format)
+
+  private def exprToJsonPreservingNumbers(expr: Expr): Value =
     expr match
       case Expr.NamedTupleExpr(fieldExprs) =>
         val fields = fieldExprs.map { (name, element) =>
-          name -> exprToJson(element, preserveNums)
+          name -> exprToJsonPreservingNumbers(element)
         }
         Obj.from(fields)
       case Expr.VectorExpr(elements) =>
-        Arr.from(elements.map(exprToJson(_, preserveNums)))
+        Arr.from(elements.map(exprToJsonPreservingNumbers))
       case Expr.TupleExpr(elements) =>
-        Arr.from(elements.map(exprToJson(_, preserveNums)))
+        Arr.from(elements.map(exprToJsonPreservingNumbers))
       case Expr.StringConstant(value) => Str(value)
       case Expr.CharConstant(value)   => Str(value.toString)
       case Expr.IntConstant(value)    => Num(value.toDouble)
-      case Expr.LongConstant(value)   =>
-        if preserveNums then Str(s"$value") else Num(value.toDouble)
-      case Expr.FloatConstant(value) =>
-        if preserveNums then Str(value.toString)
-        else if value.isNaN || value.isInfinity then Str(value.toString)
-        else Num(value.toDouble)
+      case Expr.LongConstant(value)   => Str(s"$value")
+      case Expr.FloatConstant(value)  =>
+        Str(value.toString)
       case Expr.DoubleConstant(value) =>
         if value.isNaN || value.isInfinity then Str(value.toString)
         else Num(value)
@@ -101,23 +106,6 @@ object Main:
       case Expr.NullConstant           => Null
 
   private[scalableconfig] def exprToYamlNode(expr: Expr): Node =
-    expr match
-      case Expr.NamedTupleExpr(fieldExprs) =>
-        val fields = fieldExprs.map { (name, element) =>
-          Node.ScalarNode(name) -> exprToYamlNode(element)
-        }
-        Node.MappingNode(ListMap.from(fields))
-      case Expr.VectorExpr(elements) =>
-        val values = elements.map(exprToYamlNode(_))
-        Node.SequenceNode(values*)
-      case Expr.TupleExpr(elements) =>
-        val values = elements.map(exprToYamlNode(_))
-        Node.SequenceNode(values*)
-      case Expr.StringConstant(value)  => Node.ScalarNode(value)
-      case Expr.CharConstant(value)    => Node.ScalarNode(value.toString)
-      case Expr.IntConstant(value)     => Node.ScalarNode(value.toString)
-      case Expr.LongConstant(value)    => Node.ScalarNode(value.toString)
-      case Expr.FloatConstant(value)   => Node.ScalarNode(value.toString)
-      case Expr.DoubleConstant(value)  => Node.ScalarNode(value.toString)
-      case Expr.BooleanConstant(value) => Node.ScalarNode(value.toString)
-      case Expr.NullConstant           => Node.ScalarNode("null")
+    expr.decodeAs[Node] match
+      case Result.Ok(value)  => value
+      case Result.Err(error) => throw IllegalArgumentException(error.format)

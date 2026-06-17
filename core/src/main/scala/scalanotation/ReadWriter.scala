@@ -133,6 +133,17 @@ object ReadWriter extends CommonTypeClassCompanion[ReadWriter]:
       )
     )
 
+  def router[A](
+      name: String,
+      selfKind: String,
+      numberMode: RouterSchema.NumberMode = RouterSchema.NumberMode.Bounded
+  )(
+      cases: ReadWriter[A] => Iterable[RouterSchema.Case[A]],
+      read: RouterSchema.Read,
+      write: RouterSchema.Write[A]
+  ): ReadWriter[A] =
+    RouterSchema.readWriter(name, selfKind, numberMode)(cases, read, write)
+
   object skippable extends ReadWriterBuilders[true]:
     val thisBuilder: this.type = this
     override type ThisBuilder = thisBuilder.type

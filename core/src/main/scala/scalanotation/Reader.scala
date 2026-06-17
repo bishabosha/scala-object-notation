@@ -235,6 +235,16 @@ object Reader extends ReaderLowPriority, CommonTypeClassCompanion[Reader]:
       )
     )
 
+  def router[A](
+      name: String,
+      selfKind: String,
+      numberMode: RouterSchema.NumberMode = RouterSchema.NumberMode.Bounded
+  )(
+      cases: Reader[A] => Iterable[RouterSchema.ReadCase[A]],
+      read: RouterSchema.Read
+  ): Reader[A] =
+    RouterSchema.reader(name, selfKind, numberMode)(cases, read)
+
   object skippable extends ReaderBuilders[true]:
     val thisBuilder: this.type = this
     override type ThisBuilder = thisBuilder.type
