@@ -4,13 +4,12 @@ import scalanotation.internal.CommonTypeClassCompanion
 import scalanotation.internal.Encode
 import scalanotation.internal.ExprRenderer
 import scalanotation.internal.IdentifierSyntax
-import scalanotation.internal.RawSchema
 
 import scala.deriving.Mirror
 import scala.util.NotGiven
 
 sealed trait Writer[T]:
-  private[scalanotation] def schema: RawSchema
+  def schema: RawSchema[T]
 
   final def contramap[U](f: U => T): Writer[U] =
     Writer.contramapped(this)(f)
@@ -20,15 +19,15 @@ private[scalanotation] trait WriterLowPriority:
     readWriter.writer
 
 object Writer extends WriterLowPriority, CommonTypeClassCompanion[Writer]:
-  private final class Instance[T](val schema: RawSchema) extends Writer[T]
+  private final class Instance[T](val schema: RawSchema[T]) extends Writer[T]
 
-  private[scalanotation] def fromSchema[T](schema0: RawSchema): Writer[T] =
+  private[scalanotation] def fromSchema[T](schema0: RawSchema[T]): Writer[T] =
     new Instance(schema0)
 
-  private[scalanotation] def schemaOf[T](typeclass: Writer[T]): RawSchema =
+  private[scalanotation] def schemaOf[T](typeclass: Writer[T]): RawSchema[T] =
     typeclass.schema
 
-  protected def primitiveTypeClass[T](schema: RawSchema): Writer[T] =
+  protected def primitiveTypeClass[T](schema: RawSchema[T]): Writer[T] =
     fromSchema(schema)
 
   private[scalanotation] def renderText[T](
@@ -188,7 +187,7 @@ object Writer extends WriterLowPriority, CommonTypeClassCompanion[Writer]:
       )
 
     override private[scalanotation] def tupleTypeClass[T <: Tuple](
-        slots: List[RawSchema]
+        slots: List[RawSchema[?]]
     ): Writer[T] =
       fromSchema[T](
         RawSchema.Tuple(

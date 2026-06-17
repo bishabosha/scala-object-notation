@@ -89,11 +89,11 @@ class PrimitiveDecodingSuite extends ScalanotationSuite:
     final case class FloatLiteral(value: Float)
     final case class DoubleLiteral(value: Double)
 
-    def assertTotalMap[T](reader: Reader[T], base: RawSchema)(
-        isExpected: RawSchema.SchemaMapping.TotalMap => Boolean
+    def assertTotalMap[T](reader: Reader[T], base: RawSchema[?])(
+        isExpected: RawSchema.SchemaMapping.TotalMap[?, ?] => Boolean
     ): Unit =
       reader.schema match
-        case RawSchema.Mapped(`base`, mapping) =>
+        case RawSchema.Mapped(mappedBase, mapping) if mappedBase == base =>
           assert(mapping.resultMap == null)
           assert(isExpected(mapping.totalMaps), s"Unexpected total map: ${mapping.totalMaps}")
         case other =>

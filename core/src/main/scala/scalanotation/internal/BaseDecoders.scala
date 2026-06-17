@@ -16,7 +16,7 @@ private[scalanotation] trait BaseDecoders extends SharedHelpers:
 
   protected def namedTupleParseResult: NamedTupleParseResult
 
-  protected final def expectedTypeAtCurrent(schema: RawSchema): DecodeError =
+  protected final def expectedTypeAtCurrent(schema: RawSchema[?]): DecodeError =
     DecodeError.ExpectedType(schema.describeSelf, describeCurrent()).atToken(currentSpan())
 
   // The sign is passed into `literal` rather than multiplied in afterwards, so integer literals
@@ -98,7 +98,7 @@ private[scalanotation] trait BaseDecoders extends SharedHelpers:
   protected inline val VariableTupleSlots = -1
 
   protected inline def parseTupleLike[State](
-      schema: RawSchema,
+      schema: RawSchema[?],
       state0: State,
       expectedSlots: Int
   )(
@@ -241,7 +241,7 @@ private[scalanotation] trait BaseDecoders extends SharedHelpers:
       else raise(DecodeError.ExpectedEquals(describeCurrent()).atToken(currentSpan()))
 
   protected inline def parseNamedTupleStructure(
-      schema: RawSchema,
+      schema: RawSchema[?],
       allowEmpty: Boolean
   )(
       inline consumeFieldValue: Resulting[(String, Int, Int) => Unit, DecodeError]
@@ -262,7 +262,7 @@ private[scalanotation] trait BaseDecoders extends SharedHelpers:
   }
 
   protected inline def parsePartialNamedTupleStructure(
-      schema: RawSchema
+      schema: RawSchema[?]
   )(
       inline consumeFieldValue: Resulting[(String, Int, Int) => Unit, DecodeError]
   ): Resulting[NamedTupleParseResult, DecodeError] = {
@@ -273,7 +273,7 @@ private[scalanotation] trait BaseDecoders extends SharedHelpers:
   }
 
   protected inline def parsePartialNamedTupleStructureInner(
-      schema: RawSchema
+      schema: RawSchema[?]
   )(
       inline consumeFieldValue: Resulting[(String, Int, Int) => Unit, DecodeError]
   ): NamedTupleParseResult | Result.Err[DecodeError] =
@@ -313,7 +313,7 @@ private[scalanotation] trait BaseDecoders extends SharedHelpers:
       }
     }
 
-  protected inline def parseVectorStructure(schema: RawSchema)(
+  protected inline def parseVectorStructure(schema: RawSchema[?])(
       inline consumeElementValue: Resulting[Int => Unit, DecodeError]
   ): Resulting[Unit, DecodeError] = {
     if currentKind() == TokenKind.VectorId && peekKind() == TokenKind.LParen then

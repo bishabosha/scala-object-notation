@@ -22,7 +22,7 @@ class TypedFactorySuite extends munit.FunSuite:
     given Reader[Point]       = Reader.configured.derived
 
     summon[Reader[Point]].schema match
-      case nt: RawSchema.NamedTuple =>
+      case nt: RawSchema.NamedTuple[?] =>
         assert(nt.read != null)
         assert(nt.read.nn.slotsFactory != null)
       case other => fail(s"Expected a named tuple schema, got ${other.describeSelf}")

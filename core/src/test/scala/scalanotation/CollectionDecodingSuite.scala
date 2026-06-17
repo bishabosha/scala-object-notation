@@ -134,7 +134,7 @@ class CollectionDecodingSuite extends ScalanotationSuite:
 
     val sc = summon[Reader[Data]]
     sc.schema match
-      case vector: RawSchema.Vector =>
+      case vector: RawSchema.Vector[?] =>
         vector.read match
           case _: PublicInternal.BuildIntArray =>
             ()
@@ -161,7 +161,7 @@ class CollectionDecodingSuite extends ScalanotationSuite:
 
     val sc = summon[Reader[Data]]
     sc.schema match
-      case vector: RawSchema.Vector =>
+      case vector: RawSchema.Vector[?] =>
         vector.read match
           case _: PublicInternal.BuildIntArray =>
             ()
@@ -188,7 +188,7 @@ class CollectionDecodingSuite extends ScalanotationSuite:
 
     val sc = summon[Reader[Data]]
     sc.schema match
-      case vector: RawSchema.Vector =>
+      case vector: RawSchema.Vector[?] =>
         vector.read match
           case read: PublicInternal.SeqFactoryVector[?, ?] =>
             assertEquals(read.getClass.getSimpleName, "SeqFactoryVector")
@@ -216,7 +216,7 @@ class CollectionDecodingSuite extends ScalanotationSuite:
 
     val sc = summon[Reader[Data]]
     sc.schema match
-      case vector: RawSchema.Vector =>
+      case vector: RawSchema.Vector[?] =>
         vector.read match
           case _: PublicInternal.BuildVector[?] =>
             ()
@@ -244,7 +244,7 @@ class CollectionDecodingSuite extends ScalanotationSuite:
 
     val sc = summon[Reader[Data]]
     sc.schema match
-      case dict: RawSchema.Dict =>
+      case dict: RawSchema.Dict[?] =>
         dict.read match
           case read: PublicInternal.MapFactoryDict[?, ?] =>
             assertEquals(read.getClass.getSimpleName, "MapFactoryDict")
@@ -269,11 +269,11 @@ class CollectionDecodingSuite extends ScalanotationSuite:
     type Data = ListMap[Int, String]
 
     summon[ReadWriter[Data]].schema match
-      case pairSeq: RawSchema.PairSeq =>
+      case pairSeq: RawSchema.PairSeq[?] =>
         assert(pairSeq.read != null)
         assert(pairSeq.write != null)
-        assertEquals(pairSeq.key, RawSchema.Int)
-        assertEquals(pairSeq.value, RawSchema.String)
+        assertEquals(pairSeq.key.asInstanceOf[Any], RawSchema.Int)
+        assertEquals(pairSeq.value.asInstanceOf[Any], RawSchema.String)
       case other =>
         fail(s"Expected a pair sequence schema, got ${other.describeSelf}")
 
@@ -396,8 +396,8 @@ class CollectionDecodingSuite extends ScalanotationSuite:
     given ReadWriter[IntList] = readWriter
 
     readWriter.schema match
-      case vector: RawSchema.Vector =>
-        assert(vector.read.asInstanceOf[AnyRef] eq IntListBuilder)
+      case vector: RawSchema.Vector[?] =>
+        assert(vector.read.asInstanceOf[AnyRef].eq(IntListBuilder))
       case other =>
         fail(s"Expected a vector schema, got ${other.describeSelf}")
 
@@ -444,8 +444,8 @@ class CollectionDecodingSuite extends ScalanotationSuite:
     given Reader[PrimitiveIntTable] = reader
 
     reader.schema match
-      case pairSeq: RawSchema.PairSeq =>
-        assert(pairSeq.read.asInstanceOf[AnyRef] eq PrimitiveMapBuilder)
+      case pairSeq: RawSchema.PairSeq[?] =>
+        assert(pairSeq.read.asInstanceOf[AnyRef].eq(PrimitiveMapBuilder))
       case other =>
         fail(s"Expected a pair sequence schema, got ${other.describeSelf}")
 
@@ -465,7 +465,7 @@ class CollectionDecodingSuite extends ScalanotationSuite:
     type Data = mutable.LinkedHashMap[String, Int]
 
     summon[ReadWriter[Data]].schema match
-      case dict: RawSchema.Dict =>
+      case dict: RawSchema.Dict[?] =>
         assert(dict.read != null)
         assert(dict.write != null)
       case other =>

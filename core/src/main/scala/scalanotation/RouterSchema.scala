@@ -1,7 +1,5 @@
 package scalanotation
 
-import scalanotation.internal.RawSchema
-
 object RouterSchema:
   final val Unsupported: Int = -1
 
@@ -75,7 +73,7 @@ object RouterSchema:
       cases: Reader[A] => Iterable[ReadCase[A]],
       read: Read
   ): Reader[A] =
-    lazy val schema: RawSchema =
+    lazy val schema: RawSchema[A] =
       val self = Reader.fromSchema[A](RawSchema.Ref(name, () => schema))
       RawSchema.Router(
         name,
@@ -94,7 +92,7 @@ object RouterSchema:
       cases: Writer[A] => Iterable[WriteCase[A]],
       write: Write[A]
   ): Writer[A] =
-    lazy val schema: RawSchema =
+    lazy val schema: RawSchema[A] =
       val self = Writer.fromSchema[A](RawSchema.Ref(name, () => schema))
       RawSchema.Router(
         name,
@@ -115,7 +113,7 @@ object RouterSchema:
       read: Read,
       write: Write[A]
   ): ReadWriter[A] =
-    lazy val schema: RawSchema =
+    lazy val schema: RawSchema[A] =
       val self = ReadWriter.fromSchema[A](RawSchema.Ref(name, () => schema))
       RawSchema.Router(
         name,

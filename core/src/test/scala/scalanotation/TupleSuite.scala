@@ -16,7 +16,7 @@ class TupleSuite extends ScalanotationSuite:
     val value: Data = (1, "two", (ok = true), Vector(3L, 4L))
 
     summon[Reader[Data]].schema match
-      case tuple: RawSchema.Tuple =>
+      case tuple: RawSchema.Tuple[?] =>
         assertEquals(tuple.slots.length, 4)
         tuple.read match
           case _: PublicInternal.BuildTupleSlots[?] =>
@@ -27,7 +27,7 @@ class TupleSuite extends ScalanotationSuite:
         fail(s"Expected a tuple reader, got ${other.describeSelf}")
 
     summon[Writer[Data]].schema match
-      case tuple: RawSchema.Tuple =>
+      case tuple: RawSchema.Tuple[?] =>
         assertEquals(tuple.slots.length, 4)
         assertEquals(tuple.write, RawSchema.TupleWrite.productLike)
       case other =>
@@ -104,7 +104,7 @@ class TupleSuite extends ScalanotationSuite:
     val rendered = Writers.write(value)
 
     summon[Reader[Data]].schema match
-      case tuple: RawSchema.Tuple =>
+      case tuple: RawSchema.Tuple[?] =>
         assertEquals(tuple.slots.length, 23)
       case other =>
         fail(s"Expected a tuple reader, got ${other.describeSelf}")
