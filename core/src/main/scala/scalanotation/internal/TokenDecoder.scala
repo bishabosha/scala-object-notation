@@ -97,22 +97,6 @@ private[scalanotation] object TokenDecoder:
       case RawSchema.Ref(_, target)  => isNullable(target())
       case _                         => false
 
-  private[scalanotation] def describe(expr: Expr): String =
-    expr match
-      case Expr.VectorExpr(_)       => "Vector(...)"
-      case Expr.TupleExpr(elements) =>
-        RawSchema.describeTupleSlots(elements.length)
-      case Expr.NamedTupleExpr(fieldExprs) =>
-        if fieldExprs.isEmpty then "NamedTuple.Empty" else s"(${fieldExprs.head.name} = ...)"
-      case Expr.StringConstant(value)  => s"""("$value": String)"""
-      case Expr.CharConstant(value)    => s"('$value': Char)"
-      case Expr.IntConstant(value)     => s"($value: Int)"
-      case Expr.LongConstant(value)    => s"($value: Long)"
-      case Expr.FloatConstant(value)   => s"($value: Float)"
-      case Expr.DoubleConstant(value)  => s"($value: Double)"
-      case Expr.BooleanConstant(value) => s"($value: Boolean)"
-      case Expr.NullConstant           => "null"
-
 /** Reusable buffer for named-tuple parse results: the closing token is recorded as an unboxed Int
   * offset; a Span is only materialized if an error is constructed.
   */
@@ -131,12 +115,14 @@ private final class NamedTupleParseResult() {
 private final class TokenDecoder private (
     input: String,
     debug: Boolean,
-    protected val slotsPooling: Boolean,
+    private[internal] val slotsPooling: Boolean,
     scanOnInit: Boolean
 ) extends TokenStream(input, debug, cacheNamesOnInit = slotsPooling, scanOnInit),
       SchemaDecoders {
   def this(input: String, debug: Boolean) =
     this(input, debug, slotsPooling = true, scanOnInit = true)
+
+  protected val namedTupleParseResult: NamedTupleParseResult = new NamedTupleParseResult()
 
   /** Clears decode state and re-aims at a new input, for reuse via [[TokenDecoder.withPooled]]. */
   def reset(input: String, debug: Boolean): this.type =
