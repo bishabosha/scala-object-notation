@@ -98,7 +98,7 @@ object Configured:
         else
           RawSchema.NamedTuple(
             fields,
-            RawSchema.NamedTupleRead.withSlotsFactory(read.nn, factory.nn),
+            RawSchema.NamedTupleRead.withSlotsFactory(read, factory),
             write,
             allowSkipped
           )
@@ -129,7 +129,7 @@ object Configured:
         else
           RawSchema.NamedTuple(
             fields,
-            RawSchema.NamedTupleRead.withSlotsFactory(read.nn, factory),
+            RawSchema.NamedTupleRead.withSlotsFactory(read, factory),
             write,
             allowSkipped
           )

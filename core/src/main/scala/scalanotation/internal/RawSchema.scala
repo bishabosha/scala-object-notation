@@ -194,31 +194,26 @@ private[scalanotation] object RawSchema:
   final case class SchemaMapping(
       resultMap: ResultMap | Null = null,
       inputMap: InputMap | Null = null,
-      totalMaps: SchemaMapping.TotalMap = SchemaMapping.TotalMap.empty
+      totalMaps: SchemaMapping.TotalMap = SchemaMapping.TotalMap.Empty
   ):
-    def this(resultMap: ResultMap | Null, inputMap: InputMap | Null) =
-      this(resultMap, inputMap, SchemaMapping.TotalMap.empty)
 
     def mapInput(value: Any): Any =
       val fn = inputMap
       if fn == null then value
       else fn(value)
 
-    def copy(resultMap: ResultMap | Null, inputMap: InputMap | Null): SchemaMapping =
-      SchemaMapping(resultMap, inputMap, totalMaps)
-
     def withResultMap(f: ResultMap): SchemaMapping =
       copy(
         resultMap =
           if resultMap == null then f
-          else value => resultMap.nn(value).flatMap(f)
+          else value => resultMap(value).flatMap(f)
       )
 
     def withInputMap(f: InputMap): SchemaMapping =
       copy(
         inputMap =
           if inputMap == null then f
-          else value => inputMap.nn(f(value))
+          else value => inputMap(f(value))
       )
 
     def withMapped(resultMap0: ResultMap, inputMap0: InputMap): SchemaMapping =
@@ -239,10 +234,9 @@ private[scalanotation] object RawSchema:
           case SchemaMapping.TotalMap.AnyMap(fn) =>
             SchemaMapping.TotalMap.AnyMap(value => f(fn(value))))
       else
-        val fn = resultMap
         copy(resultMap =
           value =>
-            fn.nn(value) match
+            resultMap(value) match
               case Result.Ok(mapped)   => okAny(f(mapped))
               case err @ Result.Err(_) => err
         )
@@ -263,18 +257,15 @@ private[scalanotation] object RawSchema:
       copy(totalMaps = SchemaMapping.TotalMap.AnyMap(f))
 
   object SchemaMapping:
-    sealed abstract class TotalMap:
+    enum TotalMap:
+      case Empty
+      case IntMap(fn: IntTotalMap)
+      case LongMap(fn: LongTotalMap)
+      case FloatMap(fn: FloatTotalMap)
+      case DoubleMap(fn: DoubleTotalMap)
+      case AnyMap(fn: InputMap)
+
       def isEmpty: Boolean = this eq TotalMap.Empty
-
-    object TotalMap:
-      case object Empty                              extends TotalMap
-      final case class IntMap(fn: IntTotalMap)       extends TotalMap
-      final case class LongMap(fn: LongTotalMap)     extends TotalMap
-      final case class FloatMap(fn: FloatTotalMap)   extends TotalMap
-      final case class DoubleMap(fn: DoubleTotalMap) extends TotalMap
-      final case class AnyMap(fn: InputMap)          extends TotalMap
-
-      val empty: TotalMap = Empty
 
     val empty: SchemaMapping = SchemaMapping()
 
