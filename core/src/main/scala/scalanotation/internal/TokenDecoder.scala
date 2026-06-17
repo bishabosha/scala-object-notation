@@ -90,7 +90,7 @@ private[scalanotation] object TokenDecoder:
       case e: TokenizeException =>
         Result.Err(DecodeError.TokenFormat(e.message).atToken(Tokenizer.spanAt(input, e.offset)))
 
-  private[scalanotation] def isNullable(schema: RawSchema): Boolean =
+  private[scalanotation] def isNullable(schema: RawSchema[?]): Boolean =
     schema match
       case RawSchema.Option(_)       => true
       case RawSchema.Mapped(base, _) => isNullable(base)

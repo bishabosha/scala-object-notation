@@ -2,7 +2,6 @@ package scalanotation
 
 import scalanotation.internal.CommonTypeClassCompanion
 import scalanotation.internal.PublicInternal
-import scalanotation.internal.RawSchema
 import steps.result.Result
 
 import scala.deriving.Mirror
@@ -10,7 +9,7 @@ import scala.reflect.ClassTag
 import scala.util.NotGiven
 
 sealed trait Reader[T]:
-  private[scalanotation] def schema: RawSchema
+  def schema: RawSchema[T]
 
   final def map[U](f: T => U): Reader[U] =
     Reader.mapped(this)(f)
@@ -123,15 +122,15 @@ object Reader extends ReaderLowPriority, CommonTypeClassCompanion[Reader]:
     def addDoubleValue(repr: Repr, elem: Double): Repr   = addValue(repr, elem.asInstanceOf[Elem])
     def addBooleanValue(repr: Repr, elem: Boolean): Repr = addValue(repr, elem.asInstanceOf[Elem])
 
-  private final class Instance[T](val schema: RawSchema) extends Reader[T]
+  private final class Instance[T](val schema: RawSchema[T]) extends Reader[T]
 
-  private[scalanotation] def fromSchema[T](schema0: RawSchema): Reader[T] =
+  private[scalanotation] def fromSchema[T](schema0: RawSchema[T]): Reader[T] =
     new Instance(schema0)
 
-  private[scalanotation] def schemaOf[T](typeclass: Reader[T]): RawSchema =
+  private[scalanotation] def schemaOf[T](typeclass: Reader[T]): RawSchema[T] =
     typeclass.schema
 
-  protected def primitiveTypeClass[T](schema: RawSchema): Reader[T] =
+  protected def primitiveTypeClass[T](schema: RawSchema[T]): Reader[T] =
     fromSchema(schema)
 
   def mapped[A, B](base: Reader[A])(transform: A => B): Reader[B] =
@@ -143,9 +142,7 @@ object Reader extends ReaderLowPriority, CommonTypeClassCompanion[Reader]:
       transform: A => Result[B, DecodeError]
   ): Reader[B] =
     fromSchema(
-      RawSchema.mapResult(base.schema)(value =>
-        transform(value.asInstanceOf[A]).asInstanceOf[Result[Any, DecodeError]]
-      )
+      RawSchema.mapResult(base.schema)(value => transform(value.asInstanceOf[A]))
     )
 
   export Builders.{derived, ofFields, singleton, ofCases}
@@ -287,7 +284,7 @@ object Reader extends ReaderLowPriority, CommonTypeClassCompanion[Reader]:
       )
 
     override private[scalanotation] def tupleTypeClass[T <: Tuple](
-        slots: List[RawSchema]
+        slots: List[RawSchema[?]]
     ): Reader[T] =
       fromSchema[T](
         RawSchema.Tuple(

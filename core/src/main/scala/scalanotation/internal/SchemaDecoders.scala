@@ -10,36 +10,36 @@ import steps.result.Result.eval.raise
 private[scalanotation] trait SchemaDecoders extends BaseDecoders:
   self: TokenStream =>
 
-  protected final def decodeBase(schema: RawSchema): Result[Unit, DecodeError] =
+  protected final def decodeBase(schema: RawSchema[?]): Result[Unit, DecodeError] =
     schema match
-      case mapped: RawSchema.Mapped =>
+      case mapped: RawSchema.Mapped[?, ?] =>
         Result.task {
           decodeBase(mapped.base).check
           mapSlot(mapped.mapping).check
         }
       case RawSchema.Ref(_, target) =>
         decodeBase(target())
-      case router: RawSchema.Router =>
+      case router: RawSchema.Router[?] =>
         decodeRouter(router)
-      case sc: RawSchema.NamedTuple =>
+      case sc: RawSchema.NamedTuple[?] =>
         decodeNamedTuple(sc)
-      case sc: RawSchema.Tuple =>
+      case sc: RawSchema.Tuple[?] =>
         decodeTuple(sc)
       case RawSchema.PartialNamedTuple(base, alreadySeenField) =>
         decodePartialNamedTuple(base, alreadySeenField)
-      case sc: RawSchema.Sum =>
+      case sc: RawSchema.Sum[?] =>
         decodeSum(sc)
-      case sc: RawSchema.DiscriminatorSum =>
+      case sc: RawSchema.DiscriminatorSum[?] =>
         decodeDiscriminatorSum(sc)
-      case sc: RawSchema.Vector =>
+      case sc: RawSchema.Vector[?] =>
         decodeVector(sc)
-      case sc: RawSchema.TupleOf =>
+      case sc: RawSchema.TupleOf[?] =>
         decodeTupleOf(sc)
-      case sc: RawSchema.PairSeq =>
+      case sc: RawSchema.PairSeq[?] =>
         decodePairSeq(sc)
-      case sc: RawSchema.Dict =>
+      case sc: RawSchema.Dict[?] =>
         decodeDict(sc)
-      case sc: RawSchema.Option =>
+      case sc: RawSchema.Option[?] =>
         decodeOption(sc)
       case RawSchema.String =>
         decodeString()
@@ -58,7 +58,7 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
       case RawSchema.Null =>
         decodeNull()
 
-  protected final def decodeRouter(schema: RawSchema.Router): Result[Unit, DecodeError] =
+  protected final def decodeRouter(schema: RawSchema.Router[?]): Result[Unit, DecodeError] =
     Result.task:
       val construct = currentRouterConstruct(schema.numberMode)
       if construct == null then
@@ -104,7 +104,7 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
       case _ => RawSchema.RouterConstruct.RawNumber
 
   private def decodeRouterCase(
-      schema: RawSchema.Router,
+      schema: RawSchema.Router[?],
       construct: RawSchema.RouterConstruct
   ): Result[Unit, DecodeError] =
     withRead(schema, _.read) { read =>
@@ -127,11 +127,11 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
       case RawSchema.RouterNumberMode.Bounded => bounded
       case RawSchema.RouterNumberMode.Raw     => RawSchema.RouterConstruct.RawNumber
 
-  protected final def decodeTuple(schema: RawSchema.Tuple): Result[Unit, DecodeError] =
+  protected final def decodeTuple(schema: RawSchema.Tuple[?]): Result[Unit, DecodeError] =
     withRead(schema, _.read)(read => decodeTupleWithRead(schema, read))
 
   private def decodeTupleWithRead[Repr, A](
-      schema: RawSchema.Tuple,
+      schema: RawSchema.Tuple[?],
       read: Reader.TupleBuilder[Repr, A]
   ): Result[Unit, DecodeError] =
     withBorrowSlots(read.slotsFactory) { pooled =>
@@ -152,7 +152,7 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
     }
 
   protected final def decodeTupleSlotValue(
-      slots: IArray[RawSchema],
+      slots: IArray[RawSchema[?]],
       index: Int
   ): Result[Unit, DecodeError] =
     decodeBase(slots(index)) match
@@ -174,7 +174,7 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
     ((FieldNameStartMask >>> kind) & 1) != 0
 
   protected final def decodeNamedTuple(
-      schema: RawSchema.NamedTuple
+      schema: RawSchema.NamedTuple[?]
   ): Result[Unit, DecodeError] = namesPool.withBorrowed { seenNames =>
     withRead(schema, _.read) { read =>
       withBorrowSlots(read.slotsFactory) { slots =>
@@ -255,7 +255,7 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
     }
   }
 
-  protected final def decodeSum(schema: RawSchema.Sum): Result[Unit, DecodeError] =
+  protected final def decodeSum(schema: RawSchema.Sum[?]): Result[Unit, DecodeError] =
     Result.task {
       val parsed = parseNamedTupleStructure(schema, allowEmpty = false) {
         (actualName, nameOffset, fieldIndex) =>
@@ -286,7 +286,7 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
     }
 
   protected final def decodeDiscriminatorSum(
-      schema: RawSchema.DiscriminatorSum
+      schema: RawSchema.DiscriminatorSum[?]
   ): Result[Unit, DecodeError] =
     Result.task {
       val discriminatorField = schema.discriminatorField
@@ -331,16 +331,16 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
     }
 
   protected final def decodePartialNamedTuple(
-      schema: RawSchema,
+      schema: RawSchema[?],
       alreadySeenField: String
   ): Result[Unit, DecodeError] =
     schema match
-      case mapped: RawSchema.Mapped =>
+      case mapped: RawSchema.Mapped[?, ?] =>
         Result.task {
           decodePartialNamedTuple(mapped.base, alreadySeenField).check
           mapSlot(mapped.mapping).check
         }
-      case namedTuple: RawSchema.NamedTuple =>
+      case namedTuple: RawSchema.NamedTuple[?] =>
         decodePartialNamedTuple(namedTuple, alreadySeenField)
       case RawSchema.Null =>
         decodeEmptyPartialNamedTuple()
@@ -355,7 +355,7 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
       else raise(DecodeError.FieldCountMismatch(0, 1).atToken(currentSpan()))
 
   protected final def decodePartialNamedTuple(
-      schema: RawSchema.NamedTuple,
+      schema: RawSchema.NamedTuple[?],
       alreadySeenField: String
   ): Result[Unit, DecodeError] = namesPool.withBorrowed { seenNames =>
     withRead(schema, _.read) { read =>
@@ -437,11 +437,11 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
     }
   }
 
-  protected final def decodeVector(schema: RawSchema.Vector): Result[Unit, DecodeError] =
+  protected final def decodeVector(schema: RawSchema.Vector[?]): Result[Unit, DecodeError] =
     withRead(schema, _.read)(read => decodeVectorWithRead(schema, read))
 
   private def decodeVectorWithRead[Elem, Repr, A](
-      schema: RawSchema.Vector,
+      schema: RawSchema.Vector[?],
       read: Reader.VectorBuilder[Elem, Repr, A]
   ): Result[Unit, DecodeError] =
     Result.task {
@@ -453,11 +453,11 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
       pushRef(read.finish(values))
     }
 
-  protected final def decodeTupleOf(schema: RawSchema.TupleOf): Result[Unit, DecodeError] =
+  protected final def decodeTupleOf(schema: RawSchema.TupleOf[?]): Result[Unit, DecodeError] =
     withRead(schema, _.read)(read => decodeTupleOfWithRead(schema, read))
 
   private def decodeTupleOfWithRead[Elem, Repr, A](
-      schema: RawSchema.TupleOf,
+      schema: RawSchema.TupleOf[?],
       read: Reader.VectorBuilder[Elem, Repr, A]
   ): Result[Unit, DecodeError] =
     Result.task:
@@ -472,11 +472,11 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
       )
       pushRef(read.finish(state1))
 
-  protected final def decodePairSeq(schema: RawSchema.PairSeq): Result[Unit, DecodeError] =
+  protected final def decodePairSeq(schema: RawSchema.PairSeq[?]): Result[Unit, DecodeError] =
     withRead(schema, _.read)(read => decodePairSeqWithRead(schema, read))
 
   private def decodePairSeqWithRead[Key, Elem, Repr, A](
-      schema: RawSchema.PairSeq,
+      schema: RawSchema.PairSeq[?],
       read: Reader.PairSeqBuilder[Key, Elem, Repr, A]
   ): Result[Unit, DecodeError] =
     Result.task:
@@ -526,13 +526,13 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
       }
       pushRef(read.finish(state))
 
-  protected final def decodeDict(schema: RawSchema.Dict): Result[Unit, DecodeError] =
+  protected final def decodeDict(schema: RawSchema.Dict[?]): Result[Unit, DecodeError] =
     namesPool.withBorrowed { seenNames =>
       withRead(schema, _.read)(read => decodeDictWithRead(schema, read, seenNames))
     }
 
   private def decodeDictWithRead[Elem, Repr, A, SeenNames](
-      schema: RawSchema.Dict,
+      schema: RawSchema.Dict[?],
       read: Reader.DictBuilder[Elem, Repr, A],
       seenNames: SeenNames
   )(using Internal.NameSet[SeenNames]): Result[Unit, DecodeError] =
@@ -552,7 +552,7 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
       pushRef(read.finish(state))
     }
 
-  protected final def decodeOption(schema: RawSchema.Option): Result[Unit, DecodeError] =
+  protected final def decodeOption(schema: RawSchema.Option[?]): Result[Unit, DecodeError] =
     Result.task {
       if currentKind() == TokenKind.NullKw then
         advance()

@@ -4,7 +4,6 @@ import java.time.LocalDate
 import java.time.format.DateTimeParseException
 
 import scalanotation.internal.PublicInternal
-import scalanotation.internal.RawSchema
 import steps.result.Result
 
 import scala.collection.immutable.ListMap
@@ -149,7 +148,7 @@ class SchemaSuite extends ScalanotationSuite:
     val mappedReader = summon[Reader[Int]].map(UserId(_))
     mappedReader.schema match
       case RawSchema.Mapped(base, mapping) =>
-        assertEquals(base, RawSchema.Int)
+        assertEquals(base.asInstanceOf[Any], RawSchema.Int)
         assertEquals(mapping.resultMap, null)
         mapping.totalMaps match
           case RawSchema.SchemaMapping.TotalMap.AnyMap(_) => ()
@@ -162,7 +161,7 @@ class SchemaSuite extends ScalanotationSuite:
     val chainedReader = summon[Reader[Int]].map(UserId(_)).map(id => UserLabel(id.value.toString))
     chainedReader.schema match
       case RawSchema.Mapped(base, mapping) =>
-        assertEquals(base, RawSchema.Int)
+        assertEquals(base.asInstanceOf[Any], RawSchema.Int)
         assertEquals(mapping.resultMap, null)
         mapping.totalMaps match
           case RawSchema.SchemaMapping.TotalMap.AnyMap(_) => ()
@@ -174,7 +173,7 @@ class SchemaSuite extends ScalanotationSuite:
     val mappedWriter = summon[Writer[Int]].contramap[UserId](_.value)
     mappedWriter.schema match
       case RawSchema.Mapped(base, mapping) =>
-        assertEquals(base, RawSchema.Int)
+        assertEquals(base.asInstanceOf[Any], RawSchema.Int)
         assertEquals(mapping.resultMap, null)
         assert(mapping.inputMap != null)
         assertEquals(mappedWriter.schema.describeSelf, "Int")
@@ -184,7 +183,7 @@ class SchemaSuite extends ScalanotationSuite:
     val mappedReadWriter = summon[ReadWriter[Int]].bimap(UserId(_))(_.value)
     mappedReadWriter.schema match
       case RawSchema.Mapped(base, mapping) =>
-        assertEquals(base, RawSchema.Int)
+        assertEquals(base.asInstanceOf[Any], RawSchema.Int)
         assertEquals(mapping.resultMap, null)
         mapping.totalMaps match
           case RawSchema.SchemaMapping.TotalMap.AnyMap(_) => ()
@@ -195,7 +194,7 @@ class SchemaSuite extends ScalanotationSuite:
 
     Reader.forNull(UserId(1)).schema match
       case RawSchema.Mapped(base, mapping) =>
-        assertEquals(base, RawSchema.Null)
+        assertEquals(base.asInstanceOf[Any], RawSchema.Null)
         assertEquals(mapping.resultMap, null)
         mapping.totalMaps match
           case RawSchema.SchemaMapping.TotalMap.AnyMap(_) => ()
@@ -215,7 +214,7 @@ class SchemaSuite extends ScalanotationSuite:
 
     labelReadWriter.schema match
       case RawSchema.Mapped(base, mapping) =>
-        assertEquals(base, RawSchema.Int)
+        assertEquals(base.asInstanceOf[Any], RawSchema.Int)
         assertEquals(mapping.resultMap, null)
         mapping.totalMaps match
           case RawSchema.SchemaMapping.TotalMap.AnyMap(_) => ()
@@ -230,6 +229,23 @@ class SchemaSuite extends ScalanotationSuite:
     )
     assertEquals(Writers.write(UserLabel("15"))(using labelReadWriter.writer), "5")
 
+  test("public raw schema exposes typed mapping internals"):
+    final case class UserId(value: Int)
+
+    val readWriter                = summon[ReadWriter[Int]].bimap(UserId(_))(_.value)
+    val schema: RawSchema[UserId] = readWriter.schema
+
+    schema match
+      case mapped: RawSchema.Mapped[Int, UserId] @unchecked =>
+        val result: Result[UserId, DecodeError] = mapped.mapping.mapResult(12)
+        val input: Int                          = mapped.mapping.mapInput(UserId(34))
+
+        assertEquals(mapped.base, RawSchema.Int)
+        assertEquals(result, Result.Ok(UserId(12)))
+        assertEquals(input, 34)
+      case other =>
+        fail(s"Expected a typed mapped schema, got ${other.describeSelf}")
+
   test("Null is a primitive schema and decodes to null"):
     assertEquals(summon[Reader[Null]].schema, RawSchema.Null)
     assertEquals(summon[Writer[Null]].schema, RawSchema.Null)
@@ -240,7 +256,7 @@ class SchemaSuite extends ScalanotationSuite:
 
   test("Expr is represented as a recursive router schema"):
     summon[ReadWriter[Expr]].schema match
-      case router: RawSchema.Router =>
+      case router: RawSchema.Router[?] =>
         assertEquals(router.numberMode, RawSchema.RouterNumberMode.Bounded)
         assert(router.read != null)
         assert(router.write != null)
@@ -265,8 +281,13 @@ class SchemaSuite extends ScalanotationSuite:
           RawSchema.ExprRouter.NamedTupleCase
         )
         router.cases(RawSchema.ExprRouter.NamedTupleCase).schema match
-          case RawSchema.Dict(RawSchema.Ref("Expr", target), _, _) =>
-            assert(target() eq router)
+          case dict: RawSchema.Dict[?] =>
+            dict.element match
+              case ref: RawSchema.Ref[?] =>
+                assertEquals(ref.name, "Expr")
+                assert(ref.target().asInstanceOf[AnyRef].eq(router))
+              case other =>
+                fail(s"Expected a recursive Expr ref, got ${other.describeSelf}")
           case other =>
             fail(s"Expected a recursive Expr dict case, got ${other.describeSelf}")
       case other =>
@@ -305,15 +326,20 @@ class SchemaSuite extends ScalanotationSuite:
     assertEquals(Writers.writeExpr(expected).decodeAs[MiniNode], Result.Ok(expected))
 
     summon[ReadWriter[MiniNode]].schema match
-      case router: RawSchema.Router =>
+      case router: RawSchema.Router[?] =>
         assertEquals(router.numberMode, RawSchema.RouterNumberMode.Bounded)
         assertEquals(
           router.read.nn.route(RawSchema.RouterConstruct.Tuple),
           1
         )
         router.cases(0).schema match
-          case RawSchema.Dict(RawSchema.Ref("MiniNode", target), _, _) =>
-            assert(target() eq router)
+          case dict: RawSchema.Dict[?] =>
+            dict.element match
+              case ref: RawSchema.Ref[?] =>
+                assertEquals(ref.name, "MiniNode")
+                assert(ref.target().asInstanceOf[AnyRef].eq(router))
+              case other =>
+                fail(s"Expected a recursive MiniNode ref, got ${other.describeSelf}")
           case other =>
             fail(s"Expected a recursive dict case, got ${other.describeSelf}")
       case other =>

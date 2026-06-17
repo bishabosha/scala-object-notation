@@ -1,7 +1,5 @@
 package scalanotation
 
-import scalanotation.internal.RawSchema
-
 import scala.annotation.publicInBinary
 import scala.compiletime
 import scala.deriving.Mirror
@@ -67,7 +65,10 @@ object Configured:
   ): Configured[T] =
     new Configured[T](discriminatorField, skippable, TypedFactories(selfFactory, caseFactories))
 
-  private[scalanotation] def applyToSchema(schema: RawSchema, config: Configured[?]): RawSchema =
+  private[scalanotation] def applyToSchema[T](
+      schema: RawSchema[T],
+      config: Configured[?]
+  ): RawSchema[T] =
     val baseSchema =
       if config.skippable then makeSkippable(schema)
       else schema
@@ -90,7 +91,10 @@ object Configured:
       case null      => discriminated
       case factories => attachTypedFactories(discriminated, factories)
 
-  private def attachTypedFactories(schema: RawSchema, factories: TypedFactories): RawSchema =
+  private def attachTypedFactories[T](
+      schema: RawSchema[T],
+      factories: TypedFactories
+  ): RawSchema[T] =
     schema match
       case RawSchema.NamedTuple(fields, read, write, allowSkipped) =>
         val factory = factories.selfFactory
@@ -122,7 +126,10 @@ object Configured:
       case Some(factory) => sumCase.copy(schema = attachFactory(sumCase.schema, factory))
       case None          => sumCase
 
-  private def attachFactory(schema: RawSchema, factory: TypedFactory.OfProduct[?]): RawSchema =
+  private def attachFactory[T](
+      schema: RawSchema[T],
+      factory: TypedFactory.OfProduct[?]
+  ): RawSchema[T] =
     schema match
       case RawSchema.NamedTuple(fields, read, write, allowSkipped) =>
         if read == null then schema
@@ -139,7 +146,7 @@ object Configured:
         RawSchema.Mapped(attachFactory(base, factory), mapping)
       case other => other
 
-  private def makeSkippable(schema: RawSchema): RawSchema =
+  private def makeSkippable[T](schema: RawSchema[T]): RawSchema[T] =
     schema match
       case RawSchema.NamedTuple(fields, read, write, _) =>
         RawSchema.NamedTuple(

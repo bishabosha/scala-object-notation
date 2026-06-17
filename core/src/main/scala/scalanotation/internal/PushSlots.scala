@@ -207,7 +207,7 @@ private[scalanotation] abstract class PushSlots extends Internal.PoolHolder:
 
   /** applies a [[RawSchema.Mapped]] mapping to the live slot after a successful push */
   protected final def mapSlot(
-      mapping: RawSchema.SchemaMapping
+      mapping: RawSchema.SchemaMapping[?, ?]
   ): Result[Unit, DecodeError] = Result.task {
     mapping.totalMaps match
       case RawSchema.SchemaMapping.TotalMap.IntMap(fn) =>
@@ -223,12 +223,14 @@ private[scalanotation] abstract class PushSlots extends Internal.PoolHolder:
         if lastSlotKind == SlotKind.Double then pushRef(fn(doubleSlot))
         else pushRef(fn(pullAny().asInstanceOf[Double]))
       case RawSchema.SchemaMapping.TotalMap.AnyMap(fn) =>
-        pushRef(fn(pullAny()))
+        val fn0 = fn.asInstanceOf[RawSchema.InputMap[Any, Any]]
+        pushRef(fn0(pullAny()))
       case RawSchema.SchemaMapping.TotalMap.Empty =>
         val fn = mapping.resultMap
         if fn == null then () // preserve the live slot as-is
         else
-          val value1 = fn(pullAny()).ok
+          val fn0    = fn.asInstanceOf[RawSchema.ResultMap[Any, Any]]
+          val value1 = fn0(pullAny()).ok
           pushRef(value1)
   }
 

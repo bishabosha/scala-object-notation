@@ -2,7 +2,6 @@ package scalanotation
 
 import scalanotation.internal.CommonTypeClassCompanion
 import scalanotation.internal.PublicInternal
-import scalanotation.internal.RawSchema
 import steps.result.Result
 
 import scala.deriving.Mirror
@@ -10,7 +9,7 @@ import scala.reflect.ClassTag
 import scala.util.NotGiven
 
 sealed trait ReadWriter[T]:
-  private[scalanotation] def schema: RawSchema
+  def schema: RawSchema[T]
 
   final def reader: Reader[T] =
     Reader.fromSchema(schema)
@@ -25,15 +24,15 @@ sealed trait ReadWriter[T]:
     ReadWriter.mappedResult(this)(read)(write)
 
 object ReadWriter extends CommonTypeClassCompanion[ReadWriter]:
-  private final class Instance[T](val schema: RawSchema) extends ReadWriter[T]
+  private final class Instance[T](val schema: RawSchema[T]) extends ReadWriter[T]
 
-  private[scalanotation] def fromSchema[T](schema0: RawSchema): ReadWriter[T] =
+  private[scalanotation] def fromSchema[T](schema0: RawSchema[T]): ReadWriter[T] =
     new Instance(schema0)
 
-  private[scalanotation] def schemaOf[T](typeclass: ReadWriter[T]): RawSchema =
+  private[scalanotation] def schemaOf[T](typeclass: ReadWriter[T]): RawSchema[T] =
     typeclass.schema
 
-  protected def primitiveTypeClass[T](schema: RawSchema): ReadWriter[T] =
+  protected def primitiveTypeClass[T](schema: RawSchema[T]): ReadWriter[T] =
     fromSchema(schema)
 
   def mapped[A, B](base: ReadWriter[A])(read: A => B)(write: B => A): ReadWriter[B] =
@@ -51,7 +50,7 @@ object ReadWriter extends CommonTypeClassCompanion[ReadWriter]:
   ): ReadWriter[B] =
     fromSchema(
       RawSchema.mapResultAndInput(base.schema)(
-        resultMap0 = value => read(value.asInstanceOf[A]).asInstanceOf[Result[Any, DecodeError]],
+        resultMap0 = value => read(value.asInstanceOf[A]),
         inputMap0 = value => write(value.asInstanceOf[B])
       )
     )
@@ -189,7 +188,7 @@ object ReadWriter extends CommonTypeClassCompanion[ReadWriter]:
       )
 
     override private[scalanotation] def tupleTypeClass[T <: Tuple](
-        slots: List[RawSchema]
+        slots: List[RawSchema[?]]
     ): ReadWriter[T] =
       fromSchema[T](
         RawSchema.Tuple(
