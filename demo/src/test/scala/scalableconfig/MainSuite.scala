@@ -156,9 +156,38 @@ class MainSuite extends FunSuite:
       ujson.Obj("port" -> ujson.Num(8080), "label" -> ujson.Str("dev"))
     )
     assertEquals(upickle.default.read[Service](json), value)
+    assertEquals(upickle.default.write(value), """{"port":8080,"label":"dev"}""")
+    assertEquals(upickle.default.read[Service]("""{"port":8080,"label":"dev"}"""), value)
 
     val yamlEncoder = FormatSchemas.yamlEncoder[Service]
     val yamlDecoder = FormatSchemas.yamlDecoder[Service]
     val yamlNode    = yamlEncoder.asNode(value)
 
     assertEquals(yamlDecoder.construct(yamlNode), Right(value))
+
+  test("upickle adapter streams nested products, collections, options, and sums"):
+    final case class Metadata(tags: Vector[String], retry: Option[Int]) derives ReadWriter
+    enum Mode derives ReadWriter:
+      case Fast
+      case Scheduled(metadata: Metadata)
+    final case class Deployment(name: String, mode: Mode, ports: Vector[Int]) derives ReadWriter
+
+    given upickle.default.ReadWriter[Deployment] =
+      FormatSchemas.upickleReadWriter[Deployment]
+
+    val value = Deployment(
+      "api",
+      Mode.Scheduled(Metadata(Vector("blue", "green"), Some(2))),
+      Vector(8080, 9090)
+    )
+    val json =
+      """{"name":"api","mode":{"Scheduled":{"metadata":{"tags":["blue","green"],"retry":2}}},"ports":[8080,9090]}"""
+    val son =
+      """(name = "api", mode = (Scheduled = (metadata = (tags = Vector("blue", "green"), retry = 2))), ports = Vector(8080, 9090))"""
+
+    assertEquals(upickle.default.read[Deployment](json), value)
+    assertEquals(upickle.default.read[Deployment](upickle.default.write(value)), value)
+
+    val text = Writers.write(value)
+    assertEquals(text, son)
+    assertEquals(FormatSchemas.jsonTextToScalaObjectNotation[Deployment](json), text)
