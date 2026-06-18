@@ -14,8 +14,6 @@ private[scalanotation] trait CommonTypeClassCompanion[TC[_]]:
 
   private[scalanotation] def schemaOf[T](typeclass: TC[T]): RawSchema[T]
 
-  protected def primitiveTypeClass[T](schema: RawSchema[T]): TC[T]
-
   protected def mappedStringTypeClass[T](
       read: String => Result[T, DecodeError],
       write: T => String
@@ -27,18 +25,14 @@ private[scalanotation] trait CommonTypeClassCompanion[TC[_]]:
       )
     )
 
-  protected final def pairSeqSchema[A](
-      pairSchema: RawSchema[?],
+  protected final def pairSeqSchema[A, K, V](
+      pairSchema: RawSchema[(K, V)],
       read: RawSchema.PairSeqRead | Null,
       write: RawSchema.PairSeqWrite | Null
   ): RawSchema[A] =
-    val (key, value) = pairSchemas(pairSchema)
-    RawSchema.PairSeq(key, value, read, write)
-
-  private def pairSchemas(pairSchema: RawSchema[?]): (RawSchema[?], RawSchema[?]) =
     pairSchema match
       case RawSchema.Tuple(slots, _, _) if slots.length == 2 =>
-        slots(0) -> slots(1)
+        RawSchema.PairSeq(slots(0), slots(1), read, write)
       case other =>
         throw IllegalArgumentException(
           s"Expected pair tuple schema for map entries, got ${other.describeSelf}"
@@ -334,10 +328,10 @@ private[scalanotation] trait CommonTypeClassCompanion[TC[_]]:
   val Builders: CommonBuilders[false, ? <: "Reader" | "Writer" | "ReadWriter"]
 
   given ExprSchema: TC[Expr] =
-    primitiveTypeClass(RawSchema.ExprRouterSchema)
+    fromSchema(RawSchema.ExprRouterSchema)
 
   given StringSchema: TC[String] =
-    primitiveTypeClass(RawSchema.String)
+    fromSchema(RawSchema.String)
 
   private def invalidMappedStringValue(typeName: String, raw: String): DecodeError =
     DecodeError.Custom(s"Invalid $typeName '$raw'")
@@ -365,25 +359,25 @@ private[scalanotation] trait CommonTypeClassCompanion[TC[_]]:
     )
 
   given CharSchema: TC[Char] =
-    primitiveTypeClass(RawSchema.Char)
+    fromSchema(RawSchema.Char)
 
   given IntSchema: TC[Int] =
-    primitiveTypeClass(RawSchema.Int)
+    fromSchema(RawSchema.Int)
 
   given LongSchema: TC[Long] =
-    primitiveTypeClass(RawSchema.Long)
+    fromSchema(RawSchema.Long)
 
   given FloatSchema: TC[Float] =
-    primitiveTypeClass(RawSchema.Float)
+    fromSchema(RawSchema.Float)
 
   given DoubleSchema: TC[Double] =
-    primitiveTypeClass(RawSchema.Double)
+    fromSchema(RawSchema.Double)
 
   given BooleanSchema: TC[Boolean] =
-    primitiveTypeClass(RawSchema.Boolean)
+    fromSchema(RawSchema.Boolean)
 
   given NullSchema: TC[Null] =
-    primitiveTypeClass(RawSchema.Null)
+    fromSchema(RawSchema.Null)
 
   given OptionSchema: [T] => (atPath: Builders.AtPath["", Option[T]]) => TC[Option[T]] =
     atPath.typeclass

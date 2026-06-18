@@ -1,5 +1,7 @@
 package scalanotation
 
+import scalanotation.internal.RawSchema
+
 object RouterSchema:
   final val Unsupported: Int = -1
 
