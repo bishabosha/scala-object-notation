@@ -44,14 +44,14 @@ class SchemaSuite extends ScalanotationSuite:
         MiniNode.Arr(repr.result())
 
     object Select extends RouterSchema.Write[MiniNode]:
-      def caseIndex(value: MiniNode): Int =
+      def caseIndex(router: RouterSchema.Router, value: MiniNode): RouterSchema.Index =
         value match
-          case MiniNode.Obj(_)    => 0
-          case MiniNode.Arr(_)    => 2
-          case MiniNode.Str(_)    => 3
-          case MiniNode.IntNum(_) => 4
-          case MiniNode.Bool(_)   => 5
-          case MiniNode.Null      => 6
+          case MiniNode.Obj(_)    => router.recordIndex
+          case MiniNode.Arr(_)    => router.vectorIndex
+          case MiniNode.Str(_)    => router.stringIndex
+          case MiniNode.IntNum(_) => router.intIndex
+          case MiniNode.Bool(_)   => router.booleanIndex
+          case MiniNode.Null      => router.nullIndex
 
     given ReadWriter[MiniNode] =
       ReadWriter.router[MiniNode]("MiniNode", "mini dynamic node")(
@@ -251,7 +251,6 @@ class SchemaSuite extends ScalanotationSuite:
     summon[ReadWriter[Expr]].schema match
       case router: RawSchema.Router[?] =>
         assertEquals(router.numberMode, RouterSchema.NumberMode.Bounded)
-        assert(router.read != null)
         assert(router.write != null)
         assertEquals(
           router.cases.iterator.map(_.name).toList,
@@ -270,8 +269,8 @@ class SchemaSuite extends ScalanotationSuite:
           )
         )
         assertEquals(
-          router.read.nn.route(RouterSchema.RouterConstruct.Record),
-          RawSchema.ExprRouter.NamedTupleCase
+          RawSchema.routerCase(router, router.router.recordIndex).nn.name,
+          "NamedTupleExpr"
         )
         router.cases(RawSchema.ExprRouter.NamedTupleCase).schema match
           case dict: RawSchema.Dict[?] =>
@@ -310,7 +309,10 @@ class SchemaSuite extends ScalanotationSuite:
     assertEquals(Readers.readAs[String]("\"hello\"")(using reader), Result.Ok("second:hello"))
     reader.schema match
       case router: RawSchema.Router[?] =>
-        assertEquals(router.read.nn.route(RouterSchema.RouterConstruct.String), 1)
+        assertEquals(
+          RawSchema.routerCase(router, router.router.stringIndex).nn.name,
+          "SecondString"
+        )
       case other =>
         fail(s"Expected a router schema, got ${other.describeSelf}")
 
@@ -344,8 +346,8 @@ class SchemaSuite extends ScalanotationSuite:
       case router: RawSchema.Router[?] =>
         assertEquals(router.numberMode, RouterSchema.NumberMode.Bounded)
         assertEquals(
-          router.read.nn.route(RouterSchema.RouterConstruct.Tuple),
-          1
+          RawSchema.routerCase(router, router.router.tupleIndex).nn.name,
+          "TupleArr"
         )
         router.cases(0).schema match
           case dict: RawSchema.Dict[?] =>

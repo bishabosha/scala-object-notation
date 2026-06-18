@@ -65,7 +65,7 @@ enum RawSchema[A]:
       name: String,
       selfKind: String,
       cases: IArray[RawSchema.RouterCase[A]],
-      read: RawSchema.RouterRead | Null,
+      router: RouterSchema.Router,
       write: RouterSchema.Write[A] | Null,
       numberMode: RouterSchema.NumberMode
   )                                                     extends RawSchema[A]
@@ -314,6 +314,14 @@ object RawSchema:
 
   final case class RouterCase[A](name: String, schema: RawSchema[A])
 
+  def routerCase[A](
+      schema: RawSchema.Router[A],
+      index: RouterSchema.Index
+  ): RouterCase[A] | Null =
+    val rawIndex = RouterSchema.Index.toInt(index)
+    if rawIndex < 0 || rawIndex >= schema.cases.length then null
+    else schema.cases(rawIndex)
+
   private[scalanotation] def routerReader[A](
       name: String,
       selfKind: String,
@@ -325,11 +333,12 @@ object RawSchema:
       val self      = Reader.fromSchema[A](RawSchema.Ref(name, () => schema))
       val routes    = readRoutes(cases(self))
       val caseArray = routeCases(routes)
+      val router    = routeRouter(routes)
       RawSchema.Router(
         name,
         selfKind,
         caseArray,
-        routeRead(routes),
+        router,
         write = null,
         numberMode
       )
@@ -339,16 +348,18 @@ object RawSchema:
       name: String,
       selfKind: String
   )(
-      cases: Writer[A] => Iterable[RouterSchema.WriteCase[A]],
+      cases: Writer[A] => Iterable[RouterSchema.WriteRoute[A]],
       write: RouterSchema.Write[A]
   ): RawSchema[A] =
     lazy val schema: RawSchema[A] =
-      val self = Writer.fromSchema[A](RawSchema.Ref(name, () => schema))
+      val self      = Writer.fromSchema[A](RawSchema.Ref(name, () => schema))
+      val routes    = writeRoutes(cases(self))
+      val caseArray = routeCases(routes)
       RawSchema.Router(
         name,
         selfKind,
-        IArray.from(cases(self).iterator.map(c => RawSchema.RouterCase(c.name, c.writer.schema))),
-        read = null,
+        caseArray,
+        routeRouter(routes),
         write,
         RouterSchema.NumberMode.Bounded
       )
@@ -366,11 +377,12 @@ object RawSchema:
       val self      = ReadWriter.fromSchema[A](RawSchema.Ref(name, () => schema))
       val routes    = readWriterRoutes(cases(self))
       val caseArray = routeCases(routes)
+      val router    = routeRouter(routes)
       RawSchema.Router(
         name,
         selfKind,
         caseArray,
-        routeRead(routes),
+        router,
         write,
         numberMode
       )
@@ -396,14 +408,23 @@ object RawSchema:
       }
     )
 
+  private def writeRoutes[A](
+      routes: Iterable[RouterSchema.WriteRoute[A]]
+  ): IArray[RouterRoute[A]] =
+    IArray.from(
+      routes.iterator.map { case (construct, c) =>
+        construct -> RawSchema.RouterCase(c.name, c.writer.schema)
+      }
+    )
+
   private def routeCases[A](
       routes: IArray[RouterRoute[A]]
   ): IArray[RawSchema.RouterCase[A]] =
     IArray.from(routes.iterator.map(_._2))
 
-  private def routeRead[A](
+  private def routeRouter[A](
       routes: IArray[RouterRoute[A]]
-  ): RawSchema.RouterRead =
+  ): RouterSchema.Router =
     import RouterSchema.RouterConstruct
 
     var recordCase    = UnsupportedRouterCase
@@ -448,63 +469,21 @@ object RawSchema:
           rawNumberCase = index
       index += 1
 
-    new RawSchema.RouterRead:
-      private val recordCase0: Int    = recordCase
-      private val tupleCase0: Int     = tupleCase
-      private val vectorCase0: Int    = vectorCase
-      private val stringCase0: Int    = stringCase
-      private val charCase0: Int      = charCase
-      private val intCase0: Int       = intCase
-      private val longCase0: Int      = longCase
-      private val floatCase0: Int     = floatCase
-      private val doubleCase0: Int    = doubleCase
-      private val booleanCase0: Int   = booleanCase
-      private val nullCase0: Int      = nullCase
-      private val rawNumberCase0: Int = rawNumberCase
-
-      override def onRecord(): Int    = recordCase0
-      override def onTuple(): Int     = tupleCase0
-      override def onVector(): Int    = vectorCase0
-      override def onString(): Int    = stringCase0
-      override def onChar(): Int      = charCase0
-      override def onInt(): Int       = intCase0
-      override def onLong(): Int      = longCase0
-      override def onFloat(): Int     = floatCase0
-      override def onDouble(): Int    = doubleCase0
-      override def onBoolean(): Int   = booleanCase0
-      override def onNull(): Int      = nullCase0
-      override def onRawNumber(): Int = rawNumberCase0
-
-  trait RouterRead:
-    final def route(construct: RouterSchema.RouterConstruct): Int =
-      import RouterSchema.RouterConstruct
-
-      construct match
-        case RouterConstruct.Record    => onRecord()
-        case RouterConstruct.Tuple     => onTuple()
-        case RouterConstruct.Vector    => onVector()
-        case RouterConstruct.String    => onString()
-        case RouterConstruct.Char      => onChar()
-        case RouterConstruct.Int       => onInt()
-        case RouterConstruct.Long      => onLong()
-        case RouterConstruct.Float     => onFloat()
-        case RouterConstruct.Double    => onDouble()
-        case RouterConstruct.Boolean   => onBoolean()
-        case RouterConstruct.Null      => onNull()
-        case RouterConstruct.RawNumber => onRawNumber()
-
-    def onRecord(): Int    = UnsupportedRouterCase
-    def onTuple(): Int     = UnsupportedRouterCase
-    def onVector(): Int    = UnsupportedRouterCase
-    def onString(): Int    = UnsupportedRouterCase
-    def onChar(): Int      = UnsupportedRouterCase
-    def onInt(): Int       = UnsupportedRouterCase
-    def onLong(): Int      = UnsupportedRouterCase
-    def onFloat(): Int     = UnsupportedRouterCase
-    def onDouble(): Int    = UnsupportedRouterCase
-    def onBoolean(): Int   = UnsupportedRouterCase
-    def onNull(): Int      = UnsupportedRouterCase
-    def onRawNumber(): Int = UnsupportedRouterCase
+    RouterSchema.Router(
+      recordCase,
+      tupleCase,
+      vectorCase,
+      stringCase,
+      charCase,
+      intCase,
+      longCase,
+      floatCase,
+      doubleCase,
+      booleanCase,
+      nullCase,
+      rawNumberCase,
+      UnsupportedRouterCase
+    )
 
   /** linear scan for the case named `name` — unlike `cases.iterator.find`, allocates no iterator,
     * closure or `Some` on the decode hot path
@@ -657,47 +636,22 @@ object RawSchema:
         case other                         => invalidExprRouterInput("NamedTupleExpr", other)
 
   object ExprRouter:
-    final val NamedTupleCase = 0
-    final val TupleCase      = 1
-    final val VectorCase     = 2
-    final val StringCase     = 3
-    final val CharCase       = 4
-    final val IntCase        = 5
-    final val LongCase       = 6
-    final val FloatCase      = 7
-    final val DoubleCase     = 8
-    final val BooleanCase    = 9
-    final val NullCase       = 10
-
-  private object ExprRouterRead extends RouterRead:
-    override def onRecord(): Int  = ExprRouter.NamedTupleCase
-    override def onTuple(): Int   = ExprRouter.TupleCase
-    override def onVector(): Int  = ExprRouter.VectorCase
-    override def onString(): Int  = ExprRouter.StringCase
-    override def onChar(): Int    = ExprRouter.CharCase
-    override def onInt(): Int     = ExprRouter.IntCase
-    override def onLong(): Int    = ExprRouter.LongCase
-    override def onFloat(): Int   = ExprRouter.FloatCase
-    override def onDouble(): Int  = ExprRouter.DoubleCase
-    override def onBoolean(): Int = ExprRouter.BooleanCase
-    override def onNull(): Int    = ExprRouter.NullCase
+    inline val NamedTupleCase = 0
+    inline val TupleCase      = 1
+    inline val VectorCase     = 2
+    inline val StringCase     = 3
+    inline val CharCase       = 4
+    inline val IntCase        = 5
+    inline val LongCase       = 6
+    inline val FloatCase      = 7
+    inline val DoubleCase     = 8
+    inline val BooleanCase    = 9
+    inline val NullCase       = 10
 
   private object ExprRouterWrite extends RouterSchema.Write[Expr]:
-    def caseIndex(value: Expr): Int =
-      value match
-        case Expr.NamedTupleExpr(_)  => ExprRouter.NamedTupleCase
-        case Expr.TupleExpr(_)       => ExprRouter.TupleCase
-        case Expr.VectorExpr(_)      => ExprRouter.VectorCase
-        case Expr.StringConstant(_)  => ExprRouter.StringCase
-        case Expr.CharConstant(_)    => ExprRouter.CharCase
-        case Expr.IntConstant(_)     => ExprRouter.IntCase
-        case Expr.LongConstant(_)    => ExprRouter.LongCase
-        case Expr.FloatConstant(_)   => ExprRouter.FloatCase
-        case Expr.DoubleConstant(_)  => ExprRouter.DoubleCase
-        case Expr.BooleanConstant(_) =>
-          ExprRouter.BooleanCase
-        case Expr.NullConstant => ExprRouter.NullCase
-        case _                 => UnsupportedRouterCase
+    def caseIndex(router: RouterSchema.Router, value: Expr): RouterSchema.Index =
+      if value == null then router.unsupportedIndex
+      else RouterSchema.Index.fromInt(value.ordinal)
 
   lazy val ExprRouterSchema: RawSchema[Expr] =
     lazy val self: RawSchema[Expr] = RawSchema.Ref("Expr", () => ExprRouterSchema)
@@ -813,7 +767,21 @@ object RawSchema:
           )
         )
       ),
-      ExprRouterRead,
+      RouterSchema.Router(
+        ExprRouter.NamedTupleCase,
+        ExprRouter.TupleCase,
+        ExprRouter.VectorCase,
+        ExprRouter.StringCase,
+        ExprRouter.CharCase,
+        ExprRouter.IntCase,
+        ExprRouter.LongCase,
+        ExprRouter.FloatCase,
+        ExprRouter.DoubleCase,
+        ExprRouter.BooleanCase,
+        ExprRouter.NullCase,
+        UnsupportedRouterCase,
+        UnsupportedRouterCase
+      ),
       ExprRouterWrite,
       RouterSchema.NumberMode.Bounded
     )

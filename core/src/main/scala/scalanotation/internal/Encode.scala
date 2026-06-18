@@ -17,12 +17,15 @@ private[scalanotation] object Encode:
       value: Any
   ): RawSchema.RouterCase[?] =
     if schema.write == null then missingWriteCapability(schema)
-    val index = schema.write.asInstanceOf[RouterSchema.Write[Any]].caseIndex(value)
-    if index < 0 || index >= schema.cases.length then
+    val selected = RawSchema.routerCase(
+      schema,
+      schema.write.asInstanceOf[RouterSchema.Write[Any]].caseIndex(schema.router, value)
+    )
+    if selected == null then
       throw IllegalArgumentException(
         s"router ${schema.describeSelf} cannot select a case for value $value"
       )
-    schema.cases(index)
+    selected
 
   private def mappedInput(mapping: RawSchema.SchemaMapping[?, ?], value: Any): Any =
     mapping.asInstanceOf[RawSchema.SchemaMapping[Any, Any]].mapInput(value)

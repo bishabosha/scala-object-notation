@@ -52,15 +52,16 @@ object FormatSchemas:
       Arr.from(repr)
 
   private object JsonSelect extends RouterSchema.Write[Value]:
-    def caseIndex(value: Value): Int =
+    def caseIndex(router: RouterSchema.Router, value: Value): RouterSchema.Index =
       value match
-        case _: Obj                                                                        => 0
-        case _: Arr                                                                        => 2
-        case _: Str                                                                        => 3
-        case Num(value) if value.isWhole && value >= Int.MinValue && value <= Int.MaxValue => 5
-        case _: Num                                                                        => 8
-        case _: Bool                                                                       => 9
-        case Null                                                                          => 10
+        case _: Obj => router.recordIndex
+        case _: Arr => router.vectorIndex
+        case _: Str => router.stringIndex
+        case Num(value) if value.isWhole && value >= Int.MinValue && value <= Int.MaxValue =>
+          router.intIndex
+        case _: Num  => router.doubleIndex
+        case _: Bool => router.booleanIndex
+        case Null    => router.nullIndex
 
   given jsonValueReadWriter: SonReadWriter[Value] =
     SonReadWriter.router[Value]("ujson.Value", "JSON value")(
@@ -189,15 +190,16 @@ object FormatSchemas:
       Node.SequenceNode(repr.result()*)
 
   private object YamlSelect extends RouterSchema.Write[Node]:
-    def caseIndex(value: Node): Int =
+    def caseIndex(router: RouterSchema.Router, value: Node): RouterSchema.Index =
       value match
-        case _: Node.MappingNode                                  => 0
-        case _: Node.SequenceNode                                 => 2
-        case scalar: Node.ScalarNode if scalar.tag == Tag.int     => yamlIntegerCase(scalar.value)
-        case scalar: Node.ScalarNode if scalar.tag == Tag.float   => 8
-        case scalar: Node.ScalarNode if scalar.tag == Tag.boolean => 9
-        case scalar: Node.ScalarNode if scalar.tag == Tag.nullTag => 10
-        case _: Node.ScalarNode                                   => 3
+        case _: Node.MappingNode                              => router.recordIndex
+        case _: Node.SequenceNode                             => router.vectorIndex
+        case scalar: Node.ScalarNode if scalar.tag == Tag.int =>
+          yamlIntegerCase(router, scalar.value)
+        case scalar: Node.ScalarNode if scalar.tag == Tag.float   => router.doubleIndex
+        case scalar: Node.ScalarNode if scalar.tag == Tag.boolean => router.booleanIndex
+        case scalar: Node.ScalarNode if scalar.tag == Tag.nullTag => router.nullIndex
+        case _: Node.ScalarNode                                   => router.stringIndex
 
   given yamlNodeReadWriter: SonReadWriter[Node] =
     SonReadWriter.router[Node]("yaml.Node", "YAML node")(
@@ -360,8 +362,8 @@ object FormatSchemas:
       case other                   => invalidYaml("boolean scalar", other)
     }
 
-  private def yamlIntegerCase(value: String): Int =
-    if value.toIntOption.isDefined then 5 else 6
+  private def yamlIntegerCase(router: RouterSchema.Router, value: String): RouterSchema.Index =
+    if value.toIntOption.isDefined then router.intIndex else router.longIndex
 
   private def scalar(value: String, tag: Tag): Node.ScalarNode =
     Node.ScalarNode(value)
