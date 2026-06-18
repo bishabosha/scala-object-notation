@@ -7,39 +7,31 @@ object Writers:
     val writer = summon[Writer[T]]
     Encode.writeExpr(writer.schema, value)
 
-  def write[T: Writer](value: T): String =
-    Writer.renderText(summon[Writer[T]], value, TextFormat.compact)
-
-  def write[T: Writer](value: T, format: TextFormat): String =
+  def write[T: Writer](value: T, format: TextFormat = TextFormat.compact()): String =
     Writer.renderText(summon[Writer[T]], value, format)
 
-  def writePretty[T: Writer](value: T, indent: Int = 2): String =
-    Writer.renderText(summon[Writer[T]], value, TextFormat.pretty(indent))
-
-  def writeDecl[T: Writer](rootName: String, value: T): String =
-    Writer.renderDecl(summon[Writer[T]], rootName, value, TextFormat.compact)
-
-  def writeDecl[T: Writer](rootName: String, value: T, format: TextFormat): String =
-    Writer.renderDecl(summon[Writer[T]], rootName, value, format)
-
-  def writeDecl[T: Writer](rootName: String, value: T, packageName: String): String =
-    Writer.renderDecl(summon[Writer[T]], rootName, value, packageName, TextFormat.compact)
+  def writePretty[T: Writer](value: T, indent: Int = 2, spacing: Int = 1): String =
+    Writer.renderText(summon[Writer[T]], value, TextFormat.pretty(indent, spacing))
 
   def writeDecl[T: Writer](
       rootName: String,
       value: T,
-      packageName: String,
-      format: TextFormat
+      packageName: String = "",
+      format: TextFormat = TextFormat.compact()
   ): String =
     Writer.renderDecl(summon[Writer[T]], rootName, value, packageName, format)
-
-  def writeDeclPretty[T: Writer](rootName: String, value: T, indent: Int = 2): String =
-    Writer.renderDecl(summon[Writer[T]], rootName, value, TextFormat.pretty(indent))
 
   def writeDeclPretty[T: Writer](
       rootName: String,
       value: T,
-      packageName: String,
-      indent: Int
+      packageName: String = "",
+      indent: Int = 2,
+      spacing: Int = 1
   ): String =
-    Writer.renderDecl(summon[Writer[T]], rootName, value, packageName, TextFormat.pretty(indent))
+    Writer.renderDecl(
+      summon[Writer[T]],
+      rootName,
+      value,
+      packageName,
+      TextFormat.pretty(indent, spacing)
+    )

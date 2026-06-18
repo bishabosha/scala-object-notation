@@ -298,10 +298,6 @@ object FormatSchemas:
     given upickle.default.ReadWriter[T] = upickleReadWriter[T]
     upickle.default.read[T](json)
 
-  def jsonTextToScalaObjectNotation[T](json: String)(using readWriter: SonReadWriter[T]): String =
-    val value = fromJsonText[T](json)
-    Writers.write(value)(using readWriter.writer)
-
   def toYamlNode[T: SonWriter](value: T): Result[Node, DecodeError] =
     Writers.writeExpr(value).decodeAs[Node]
 

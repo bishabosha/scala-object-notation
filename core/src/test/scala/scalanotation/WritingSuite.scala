@@ -31,6 +31,25 @@ class WritingSuite extends ScalanotationSuite:
     assertEquals(reparsed, Result.Ok(value))
     assertEquals(rendered, """(x = (label = "abc", ys = Vector(-1, 2, 3)), y = 23, ok = true)""")
 
+  test("write typed values with configurable token spacing"):
+    type Data = (x: Int, nested: (ok: Boolean), items: Vector[Int])
+    val value: Data = (x = 1, nested = (ok = true), items = Vector(1, 2))
+
+    val compactFormat = TextFormat.compact(spacing = 0)
+    val rendered      = Writers.write(value, format = compactFormat)
+    val decl          = Writers.writeDecl("data", value, format = compactFormat)
+    val packaged = Writers.writeDecl("data", value, packageName = "foo.bar", format = compactFormat)
+
+    assertEquals(rendered, "(x=1,nested=(ok=true),items=Vector(1,2))")
+    assertEquals(decl, "val data = (x=1,nested=(ok=true),items=Vector(1,2))")
+    assertEquals(packaged, "package foo.bar;val data = (x=1,nested=(ok=true),items=Vector(1,2))")
+    assertEquals(Readers.readAs[Data](rendered), Result.Ok(value))
+    assertEquals(Readers.readDeclAs[Data](decl, rootName = "data"), Result.Ok(value))
+    assertEquals(
+      Readers.readDeclAs[Data](packaged, rootName = "data", packageName = "foo.bar"),
+      Result.Ok(value)
+    )
+
   test("write derived case classes and enums"):
     final case class Metadata(created: LocalDate, tags: Vector[String]) derives Reader, Writer
     enum Mode derives Reader, Writer:
@@ -190,7 +209,11 @@ class WritingSuite extends ScalanotationSuite:
         |)""".stripMargin
 
     assertEquals(
-      Writers.writeDecl("data", (items = Vector(1, 2), nested = (ok = true)), TextFormat.pretty(4)),
+      Writers.writeDecl(
+        "data",
+        (items = Vector(1, 2), nested = (ok = true)),
+        format = TextFormat.pretty(4)
+      ),
       expected
     )
     assertEquals(
@@ -198,7 +221,10 @@ class WritingSuite extends ScalanotationSuite:
       expected.stripPrefix("val data = ")
     )
 
-  test("TextFormat rejects negative indentation"):
+  test("TextFormat rejects negative indentation and spacing"):
     interceptMessage[IllegalArgumentException]("requirement failed: indent must be >= 0, got -1") {
       TextFormat.pretty(-1)
+    }
+    interceptMessage[IllegalArgumentException]("requirement failed: spacing must be >= 0, got -1") {
+      TextFormat.compact(-1)
     }

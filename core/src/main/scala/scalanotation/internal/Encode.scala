@@ -138,7 +138,7 @@ private[scalanotation] object Encode:
       ExprRenderer.renderNamedTuple(out, depth, fields.length) { index =>
         val field = fields(index)
         IdentifierSyntax.appendIdentifier(field.name, out)
-        out.append(" = ")
+        out.appendToken('=')
         renderText(field.schema, write.fieldValue(value, index), out, depth + 1)
       }
     case tuple: RawSchema.Tuple[?] =>
@@ -156,7 +156,7 @@ private[scalanotation] object Encode:
       val sumCase = sum.cases(write.caseIndex(value))
       ExprRenderer.renderNamedTuple(out, depth, 1) { _ =>
         IdentifierSyntax.appendIdentifier(sumCase.name, out)
-        out.append(" = ")
+        out.appendToken('=')
         renderText(sumCase.schema, value, out, depth + 1)
       }
     case sum: RawSchema.DiscriminatorSum[?] =>
@@ -191,7 +191,7 @@ private[scalanotation] object Encode:
       ExprRenderer.renderNamedTuple(out, depth, write.size(value)) { _ =>
         val (key, elem) = values.next()
         IdentifierSyntax.appendIdentifier(key, out)
-        out.append(" = ")
+        out.appendToken('=')
         renderText(dict.element, elem, out, depth + 1)
       }
     case option: RawSchema.Option[?] =>
