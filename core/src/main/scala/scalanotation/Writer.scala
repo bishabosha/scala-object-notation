@@ -148,7 +148,7 @@ object Writer extends WriterLowPriority, CommonTypeClassCompanion[Writer]:
       name: String,
       selfKind: String
   )(
-      cases: Writer[A] => Iterable[RouterSchema.WriteCase[A]],
+      cases: Writer[A] => Iterable[RouterSchema.WriteRoute[A]],
       write: RouterSchema.Write[A]
   ): Writer[A] =
     RouterSchema.writer(name, selfKind)(cases, write)
