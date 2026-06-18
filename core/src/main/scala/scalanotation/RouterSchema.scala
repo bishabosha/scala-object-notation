@@ -3,7 +3,7 @@ package scalanotation
 object RouterSchema:
   final val Unsupported: Int = -1
 
-  enum Construct:
+  enum RouterConstruct:
     case Record
     case Tuple
     case Vector
@@ -21,39 +21,6 @@ object RouterSchema:
     case Bounded
     case Raw
 
-  trait Read:
-    def route(construct: Construct): Int =
-      construct match
-        case Construct.Record    => onRecord()
-        case Construct.Tuple     => onTuple()
-        case Construct.Vector    => onVector()
-        case Construct.String    => onString()
-        case Construct.Char      => onChar()
-        case Construct.Int       => onInt()
-        case Construct.Long      => onLong()
-        case Construct.Float     => onFloat()
-        case Construct.Double    => onDouble()
-        case Construct.Boolean   => onBoolean()
-        case Construct.Null      => onNull()
-        case Construct.RawNumber => onRawNumber()
-
-    def onRecord(): Int    = Unsupported
-    def onTuple(): Int     = Unsupported
-    def onVector(): Int    = Unsupported
-    def onString(): Int    = Unsupported
-    def onChar(): Int      = Unsupported
-    def onInt(): Int       = Unsupported
-    def onLong(): Int      = Unsupported
-    def onFloat(): Int     = Unsupported
-    def onDouble(): Int    = Unsupported
-    def onBoolean(): Int   = Unsupported
-    def onNull(): Int      = Unsupported
-    def onRawNumber(): Int = Unsupported
-
-  object Read:
-    def apply(f: Construct => Int): Read = new:
-      override def route(construct: Construct): Int = f(construct)
-
   trait Write[-A]:
     def caseIndex(value: A): Int
 
@@ -64,22 +31,25 @@ object RouterSchema:
   final case class ReadCase[A](name: String, reader: Reader[A])
   final case class WriteCase[A](name: String, writer: Writer[A])
   final case class Case[A](name: String, readWriter: ReadWriter[A])
+  type ReadRoute[A] = (RouterConstruct, ReadCase[A])
+  type Route[A]     = (RouterConstruct, Case[A])
 
   def reader[A](
       name: String,
       selfKind: String,
       numberMode: NumberMode = NumberMode.Bounded
   )(
-      cases: Reader[A] => Iterable[ReadCase[A]],
-      read: Read
+      cases: Reader[A] => Iterable[ReadRoute[A]]
   ): Reader[A] =
     lazy val schema: RawSchema[A] =
-      val self = Reader.fromSchema[A](RawSchema.Ref(name, () => schema))
+      val self      = Reader.fromSchema[A](RawSchema.Ref(name, () => schema))
+      val routes    = readRoutes(cases(self))
+      val caseArray = routeCases(routes)
       RawSchema.Router(
         name,
         selfKind,
-        IArray.from(cases(self).iterator.map(c => RawSchema.RouterCase(c.name, c.reader.schema))),
-        rawRead(read),
+        caseArray,
+        routeRead(routes),
         write = null,
         rawNumberMode(numberMode)
       )
@@ -109,43 +79,122 @@ object RouterSchema:
       selfKind: String,
       numberMode: NumberMode = NumberMode.Bounded
   )(
-      cases: ReadWriter[A] => Iterable[Case[A]],
-      read: Read,
+      cases: ReadWriter[A] => Iterable[Route[A]],
       write: Write[A]
   ): ReadWriter[A] =
     lazy val schema: RawSchema[A] =
-      val self = ReadWriter.fromSchema[A](RawSchema.Ref(name, () => schema))
+      val self      = ReadWriter.fromSchema[A](RawSchema.Ref(name, () => schema))
+      val routes    = routesFrom(cases(self))
+      val caseArray = routeCases(routes)
       RawSchema.Router(
         name,
         selfKind,
-        IArray.from(
-          cases(self).iterator.map(c => RawSchema.RouterCase(c.name, c.readWriter.schema))
-        ),
-        rawRead(read),
+        caseArray,
+        routeRead(routes),
         rawWrite(write),
         rawNumberMode(numberMode)
       )
     ReadWriter.fromSchema(schema)
 
-  private[scalanotation] def rawRead(read: Read): RawSchema.RouterRead =
-    new RawSchema.RouterRead:
-      override def onRecord(): Int    = read.route(Construct.Record)
-      override def onTuple(): Int     = read.route(Construct.Tuple)
-      override def onVector(): Int    = read.route(Construct.Vector)
-      override def onString(): Int    = read.route(Construct.String)
-      override def onChar(): Int      = read.route(Construct.Char)
-      override def onInt(): Int       = read.route(Construct.Int)
-      override def onLong(): Int      = read.route(Construct.Long)
-      override def onFloat(): Int     = read.route(Construct.Float)
-      override def onDouble(): Int    = read.route(Construct.Double)
-      override def onBoolean(): Int   = read.route(Construct.Boolean)
-      override def onNull(): Int      = read.route(Construct.Null)
-      override def onRawNumber(): Int = read.route(Construct.RawNumber)
-
   private[scalanotation] def rawWrite[A](write: Write[A]): RawSchema.RouterWrite =
     new RawSchema.RouterWrite:
       def caseIndex(value: Any): Int =
         write.caseIndex(value.asInstanceOf[A])
+
+  private def readRoutes[A](
+      routes: Iterable[ReadRoute[A]]
+  ): IArray[(RouterConstruct, RawSchema.RouterCase[A])] =
+    IArray.from(
+      routes.iterator.map { case (construct, c) =>
+        construct -> RawSchema.RouterCase(c.name, c.reader.schema)
+      }
+    )
+
+  private def routesFrom[A](
+      routes: Iterable[Route[A]]
+  ): IArray[(RouterConstruct, RawSchema.RouterCase[A])] =
+    IArray.from(
+      routes.iterator.map { case (construct, c) =>
+        construct -> RawSchema.RouterCase(c.name, c.readWriter.schema)
+      }
+    )
+
+  private def routeCases[A](
+      routes: IArray[(RouterConstruct, RawSchema.RouterCase[A])]
+  ): IArray[RawSchema.RouterCase[A]] =
+    IArray.from(routes.iterator.map(_._2))
+
+  private def routeRead[A](
+      routes: IArray[(RouterConstruct, RawSchema.RouterCase[A])]
+  ): RawSchema.RouterRead =
+    var recordCase    = Unsupported
+    var tupleCase     = Unsupported
+    var vectorCase    = Unsupported
+    var stringCase    = Unsupported
+    var charCase      = Unsupported
+    var intCase       = Unsupported
+    var longCase      = Unsupported
+    var floatCase     = Unsupported
+    var doubleCase    = Unsupported
+    var booleanCase   = Unsupported
+    var nullCase      = Unsupported
+    var rawNumberCase = Unsupported
+
+    var index = 0
+    while index < routes.length do
+      routes(index)._1 match
+        case RouterConstruct.Record =>
+          recordCase = index
+        case RouterConstruct.Tuple =>
+          tupleCase = index
+        case RouterConstruct.Vector =>
+          vectorCase = index
+        case RouterConstruct.String =>
+          stringCase = index
+        case RouterConstruct.Char =>
+          charCase = index
+        case RouterConstruct.Int =>
+          intCase = index
+        case RouterConstruct.Long =>
+          longCase = index
+        case RouterConstruct.Float =>
+          floatCase = index
+        case RouterConstruct.Double =>
+          doubleCase = index
+        case RouterConstruct.Boolean =>
+          booleanCase = index
+        case RouterConstruct.Null =>
+          nullCase = index
+        case RouterConstruct.RawNumber =>
+          rawNumberCase = index
+      index += 1
+
+    new RawSchema.RouterRead:
+      private val recordCase0: Int    = recordCase
+      private val tupleCase0: Int     = tupleCase
+      private val vectorCase0: Int    = vectorCase
+      private val stringCase0: Int    = stringCase
+      private val charCase0: Int      = charCase
+      private val intCase0: Int       = intCase
+      private val longCase0: Int      = longCase
+      private val floatCase0: Int     = floatCase
+      private val doubleCase0: Int    = doubleCase
+      private val booleanCase0: Int   = booleanCase
+      private val nullCase0: Int      = nullCase
+      private val rawNumberCase0: Int = rawNumberCase
+
+      override def onRecord(): Int    = recordCase0
+      override def onTuple(): Int     = tupleCase0
+      override def onVector(): Int    = vectorCase0
+      override def onString(): Int    = stringCase0
+      override def onChar(): Int      = charCase0
+      override def onInt(): Int       = intCase0
+      override def onLong(): Int      = longCase0
+      override def onFloat(): Int     = floatCase0
+      override def onDouble(): Int    = doubleCase0
+      override def onBoolean(): Int   = booleanCase0
+      override def onNull(): Int      = nullCase0
+      override def onRawNumber(): Int = rawNumberCase0
 
   private def rawNumberMode(numberMode: NumberMode): RawSchema.RouterNumberMode =
     numberMode match

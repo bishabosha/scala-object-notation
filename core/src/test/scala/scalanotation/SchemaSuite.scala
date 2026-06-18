@@ -43,15 +43,6 @@ class SchemaSuite extends ScalanotationSuite:
       def finish(repr: ValuesBuilder): MiniNode =
         MiniNode.Arr(repr.result())
 
-    object Routing extends RouterSchema.Read:
-      override def onRecord(): Int  = 0
-      override def onTuple(): Int   = 1
-      override def onVector(): Int  = 2
-      override def onString(): Int  = 3
-      override def onInt(): Int     = 4
-      override def onBoolean(): Int = 5
-      override def onNull(): Int    = 6
-
     object Select extends RouterSchema.Write[MiniNode]:
       def caseIndex(value: MiniNode): Int =
         value match
@@ -66,7 +57,7 @@ class SchemaSuite extends ScalanotationSuite:
       ReadWriter.router[MiniNode]("MiniNode", "mini dynamic node")(
         cases = self =>
           List(
-            RouterSchema.Case(
+            RouterSchema.RouterConstruct.Record -> RouterSchema.Case(
               "Obj",
               ReadWriter.dict[MiniNode, MiniNode, FieldsBuilder](
                 self,
@@ -81,7 +72,7 @@ class SchemaSuite extends ScalanotationSuite:
                 }
               )
             ),
-            RouterSchema.Case(
+            RouterSchema.RouterConstruct.Tuple -> RouterSchema.Case(
               "TupleArr",
               ReadWriter.tupleOf[MiniNode, MiniNode, ValuesBuilder](
                 self,
@@ -96,7 +87,7 @@ class SchemaSuite extends ScalanotationSuite:
                 }
               )
             ),
-            RouterSchema.Case(
+            RouterSchema.RouterConstruct.Vector -> RouterSchema.Case(
               "VectorArr",
               ReadWriter.vector[MiniNode, MiniNode, ValuesBuilder](
                 self,
@@ -111,30 +102,32 @@ class SchemaSuite extends ScalanotationSuite:
                 }
               )
             ),
-            RouterSchema.Case(
+            RouterSchema.RouterConstruct.String -> RouterSchema.Case(
               "Str",
               summon[ReadWriter[String]].bimap(MiniNode.Str(_)) {
                 case MiniNode.Str(value) => value
                 case other               => fail(s"Expected Str, got $other")
               }
             ),
-            RouterSchema.Case(
+            RouterSchema.RouterConstruct.Int -> RouterSchema.Case(
               "IntNum",
-              summon[ReadWriter[Int]].bimap(MiniNode.IntNum(_)) {
+              ReadWriter.int[MiniNode](MiniNode.IntNum(_)) {
                 case MiniNode.IntNum(value) => value
                 case other                  => fail(s"Expected IntNum, got $other")
               }
             ),
-            RouterSchema.Case(
+            RouterSchema.RouterConstruct.Boolean -> RouterSchema.Case(
               "Bool",
               summon[ReadWriter[Boolean]].bimap(MiniNode.Bool(_)) {
                 case MiniNode.Bool(value) => value
                 case other                => fail(s"Expected Bool, got $other")
               }
             ),
-            RouterSchema.Case("Null", ReadWriter.forNull(MiniNode.Null))
+            RouterSchema.RouterConstruct.Null -> RouterSchema.Case(
+              "Null",
+              ReadWriter.forNull(MiniNode.Null)
+            )
           ),
-        read = Routing,
         write = Select
       )
 
@@ -298,6 +291,28 @@ class SchemaSuite extends ScalanotationSuite:
     )
     assertEquals(Writers.write(expr), "Tuple(Tuple(1))")
     assertEquals(Readers.readAs[Expr](Writers.write(expr)), Result.Ok(expr))
+
+  test("public RouterSchema duplicate read routes use the most recent case"):
+    val reader = Reader.router[String]("DuplicateString", "duplicate string router")(
+      cases = _ =>
+        List(
+          RouterSchema.RouterConstruct.String -> RouterSchema.ReadCase(
+            "FirstString",
+            summon[Reader[String]].map(value => s"first:$value")
+          ),
+          RouterSchema.RouterConstruct.String -> RouterSchema.ReadCase(
+            "SecondString",
+            summon[Reader[String]].map(value => s"second:$value")
+          )
+        )
+    )
+
+    assertEquals(Readers.readAs[String]("\"hello\"")(using reader), Result.Ok("second:hello"))
+    reader.schema match
+      case router: RawSchema.Router[?] =>
+        assertEquals(router.read.nn.route(RawSchema.RouterConstruct.String), 1)
+      case other =>
+        fail(s"Expected a router schema, got ${other.describeSelf}")
 
   test("public RouterSchema builds recursive dynamic read-writers"):
     import MiniNode.*
