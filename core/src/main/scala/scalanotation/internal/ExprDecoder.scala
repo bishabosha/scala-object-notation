@@ -3,6 +3,7 @@ package scalanotation.internal
 import scalanotation.DecodeError
 import scalanotation.Expr
 import scalanotation.Reader
+import scalanotation.RouterSchema
 import scalanotation.internal.RawSchema.Field
 import steps.result.Result
 import steps.result.Result.eval.check
@@ -159,19 +160,21 @@ private[scalanotation] class ExprDecoder() extends PushSlots with SharedHelpers:
           raise(DecodeError.ExpectedType(schema.describeSelf, describeExpr(expr)))
         decodeBase(schema.cases(index).schema, expr).check
 
-  private def routerConstruct(expr: Expr): RawSchema.RouterConstruct =
+  private def routerConstruct(expr: Expr): RouterSchema.RouterConstruct =
+    import RouterSchema.RouterConstruct
+
     expr match
-      case Expr.NamedTupleExpr(_)  => RawSchema.RouterConstruct.Record
-      case Expr.TupleExpr(_)       => RawSchema.RouterConstruct.Tuple
-      case Expr.VectorExpr(_)      => RawSchema.RouterConstruct.Vector
-      case Expr.StringConstant(_)  => RawSchema.RouterConstruct.String
-      case Expr.CharConstant(_)    => RawSchema.RouterConstruct.Char
-      case Expr.IntConstant(_)     => RawSchema.RouterConstruct.Int
-      case Expr.LongConstant(_)    => RawSchema.RouterConstruct.Long
-      case Expr.FloatConstant(_)   => RawSchema.RouterConstruct.Float
-      case Expr.DoubleConstant(_)  => RawSchema.RouterConstruct.Double
-      case Expr.BooleanConstant(_) => RawSchema.RouterConstruct.Boolean
-      case Expr.NullConstant       => RawSchema.RouterConstruct.Null
+      case Expr.NamedTupleExpr(_)  => RouterConstruct.Record
+      case Expr.TupleExpr(_)       => RouterConstruct.Tuple
+      case Expr.VectorExpr(_)      => RouterConstruct.Vector
+      case Expr.StringConstant(_)  => RouterConstruct.String
+      case Expr.CharConstant(_)    => RouterConstruct.Char
+      case Expr.IntConstant(_)     => RouterConstruct.Int
+      case Expr.LongConstant(_)    => RouterConstruct.Long
+      case Expr.FloatConstant(_)   => RouterConstruct.Float
+      case Expr.DoubleConstant(_)  => RouterConstruct.Double
+      case Expr.BooleanConstant(_) => RouterConstruct.Boolean
+      case Expr.NullConstant       => RouterConstruct.Null
 
   private def decodeVector(
       schema: RawSchema.Vector[?],

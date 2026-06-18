@@ -1,9 +1,10 @@
 package scalableconfig
 
 import scalanotation.DecodeError
-import scalanotation.RawSchema
 import scalanotation.Reader
 import scalanotation.ReadWriter as SonReadWriter
+import scalanotation.RouterSchema
+import scalanotation.internal.RawSchema
 import steps.result.Result
 import upickle.core.AbortException
 import upickle.core.ArrVisitor
@@ -79,42 +80,42 @@ private object UpickleSchemaAdapter:
           jsonableKeys: Boolean,
           index: Int
       ): ObjVisitor[Any, Any] =
-        visitorFor(routerCase(schema, RawSchema.RouterConstruct.Record, index))
+        visitorFor(routerCase(schema, RouterSchema.RouterConstruct.Record, index))
           .visitObject(length, jsonableKeys, index)
 
       override def visitArray(length: Int, index: Int): ArrVisitor[Any, Any] =
-        val vectorIndex = read.route(RawSchema.RouterConstruct.Vector)
+        val vectorIndex = read.route(RouterSchema.RouterConstruct.Vector)
         val construct   =
           if vectorIndex >= 0 && vectorIndex < schema.cases.length then
-            RawSchema.RouterConstruct.Vector
-          else RawSchema.RouterConstruct.Tuple
+            RouterSchema.RouterConstruct.Vector
+          else RouterSchema.RouterConstruct.Tuple
         visitorFor(routerCase(schema, construct, index)).visitArray(length, index)
 
       override def visitString(s: CharSequence, index: Int): Any =
-        visitorFor(routerCase(schema, RawSchema.RouterConstruct.String, index))
+        visitorFor(routerCase(schema, RouterSchema.RouterConstruct.String, index))
           .visitString(s, index)
 
       override def visitChar(s: Char, index: Int): Any =
-        visitorFor(routerCase(schema, RawSchema.RouterConstruct.Char, index)).visitChar(s, index)
+        visitorFor(routerCase(schema, RouterSchema.RouterConstruct.Char, index)).visitChar(s, index)
 
       override def visitInt32(i: Int, index: Int): Any =
-        val construct = numberConstruct(RawSchema.RouterConstruct.Int, schema.numberMode)
+        val construct = numberConstruct(RouterSchema.RouterConstruct.Int, schema.numberMode)
         visitorFor(routerCase(schema, construct, index)).visitInt32(i, index)
 
       override def visitInt64(i: Long, index: Int): Any =
-        val construct = numberConstruct(RawSchema.RouterConstruct.Long, schema.numberMode)
+        val construct = numberConstruct(RouterSchema.RouterConstruct.Long, schema.numberMode)
         visitorFor(routerCase(schema, construct, index)).visitInt64(i, index)
 
       override def visitUInt64(i: Long, index: Int): Any =
-        val construct = numberConstruct(RawSchema.RouterConstruct.Long, schema.numberMode)
+        val construct = numberConstruct(RouterSchema.RouterConstruct.Long, schema.numberMode)
         visitorFor(routerCase(schema, construct, index)).visitUInt64(i, index)
 
       override def visitFloat32(d: Float, index: Int): Any =
-        val construct = numberConstruct(RawSchema.RouterConstruct.Float, schema.numberMode)
+        val construct = numberConstruct(RouterSchema.RouterConstruct.Float, schema.numberMode)
         visitorFor(routerCase(schema, construct, index)).visitFloat32(d, index)
 
       override def visitFloat64(d: Double, index: Int): Any =
-        val construct = numberConstruct(RawSchema.RouterConstruct.Double, schema.numberMode)
+        val construct = numberConstruct(RouterSchema.RouterConstruct.Double, schema.numberMode)
         visitorFor(routerCase(schema, construct, index)).visitFloat64(d, index)
 
       override def visitFloat64StringParts(
@@ -123,22 +124,23 @@ private object UpickleSchemaAdapter:
           expIndex: Int,
           index: Int
       ): Any =
-        val construct = numberConstruct(RawSchema.RouterConstruct.Double, schema.numberMode)
+        val construct = numberConstruct(RouterSchema.RouterConstruct.Double, schema.numberMode)
         visitorFor(routerCase(schema, construct, index))
           .visitFloat64StringParts(s, decIndex, expIndex, index)
 
       override def visitTrue(index: Int): Any =
-        visitorFor(routerCase(schema, RawSchema.RouterConstruct.Boolean, index)).visitTrue(index)
+        visitorFor(routerCase(schema, RouterSchema.RouterConstruct.Boolean, index)).visitTrue(index)
 
       override def visitFalse(index: Int): Any =
-        visitorFor(routerCase(schema, RawSchema.RouterConstruct.Boolean, index)).visitFalse(index)
+        visitorFor(routerCase(schema, RouterSchema.RouterConstruct.Boolean, index))
+          .visitFalse(index)
 
       override def visitNull(index: Int): Any =
-        visitorFor(routerCase(schema, RawSchema.RouterConstruct.Null, index)).visitNull(index)
+        visitorFor(routerCase(schema, RouterSchema.RouterConstruct.Null, index)).visitNull(index)
 
   private def routerCase(
       schema: RawSchema.Router[?],
-      construct: RawSchema.RouterConstruct,
+      construct: RouterSchema.RouterConstruct,
       index: Int
   ): RawSchema[?] =
     val read = schema.read
@@ -149,12 +151,12 @@ private object UpickleSchemaAdapter:
     schema.cases(caseIndex).schema
 
   private def numberConstruct(
-      bounded: RawSchema.RouterConstruct,
-      mode: RawSchema.RouterNumberMode
-  ): RawSchema.RouterConstruct =
+      bounded: RouterSchema.RouterConstruct,
+      mode: RouterSchema.NumberMode
+  ): RouterSchema.RouterConstruct =
     mode match
-      case RawSchema.RouterNumberMode.Bounded => bounded
-      case RawSchema.RouterNumberMode.Raw     => RawSchema.RouterConstruct.RawNumber
+      case RouterSchema.NumberMode.Bounded => bounded
+      case RouterSchema.NumberMode.Raw     => RouterSchema.RouterConstruct.RawNumber
 
   private def partialNamedTupleVisitor(
       base: RawSchema[?],
@@ -776,7 +778,7 @@ private object UpickleSchemaAdapter:
   private def selectedRouterCase(schema: RawSchema.Router[?], value: Any): RawSchema.RouterCase[?] =
     val write = schema.write
     if write == null then missingWrite(schema)
-    val index = write.caseIndex(value)
+    val index = write.asInstanceOf[RouterSchema.Write[Any]].caseIndex(value)
     if index < 0 || index >= schema.cases.length then
       throw IllegalArgumentException(
         s"router ${schema.describeSelf} cannot select a case for value $value"
