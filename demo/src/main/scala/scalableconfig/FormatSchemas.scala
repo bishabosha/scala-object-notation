@@ -51,19 +51,6 @@ object FormatSchemas:
     def finish(repr: JsonArrayState): Value =
       Arr.from(repr)
 
-  private object JsonRouting extends RouterSchema.Read:
-    override def onRecord(): Int  = 0
-    override def onTuple(): Int   = 1
-    override def onVector(): Int  = 2
-    override def onString(): Int  = 3
-    override def onChar(): Int    = 4
-    override def onInt(): Int     = 5
-    override def onLong(): Int    = 6
-    override def onFloat(): Int   = 7
-    override def onDouble(): Int  = 8
-    override def onBoolean(): Int = 9
-    override def onNull(): Int    = 10
-
   private object JsonSelect extends RouterSchema.Write[Value]:
     def caseIndex(value: Value): Int =
       value match
@@ -79,7 +66,7 @@ object FormatSchemas:
     SonReadWriter.router[Value]("ujson.Value", "JSON value")(
       cases = self =>
         List(
-          RouterSchema.Case(
+          RouterSchema.RouterConstruct.Record -> RouterSchema.Case(
             "Object",
             SonReadWriter.dict[Value, Value, JsonObjectState](
               self,
@@ -94,7 +81,7 @@ object FormatSchemas:
               }
             )
           ),
-          RouterSchema.Case(
+          RouterSchema.RouterConstruct.Tuple -> RouterSchema.Case(
             "TupleArray",
             SonReadWriter.tupleOf[Value, Value, JsonArrayState](
               self,
@@ -109,7 +96,7 @@ object FormatSchemas:
               }
             )
           ),
-          RouterSchema.Case(
+          RouterSchema.RouterConstruct.Vector -> RouterSchema.Case(
             "Array",
             SonReadWriter.vector[Value, Value, JsonArrayState](
               self,
@@ -124,58 +111,60 @@ object FormatSchemas:
               }
             )
           ),
-          RouterSchema.Case(
+          RouterSchema.RouterConstruct.String -> RouterSchema.Case(
             "String",
             summon[SonReadWriter[String]].bimap[Value](Str(_)) {
               case Str(value) => value
               case other      => invalidJson("String", other)
             }
           ),
-          RouterSchema.Case(
+          RouterSchema.RouterConstruct.Char -> RouterSchema.Case(
             "Char",
             summon[SonReadWriter[Char]].bimap[Value](ch => Str(ch.toString)) {
               case Str(value) if value.length == 1 => value.charAt(0)
               case other                           => invalidJson("single-character string", other)
             }
           ),
-          RouterSchema.Case(
+          RouterSchema.RouterConstruct.Int -> RouterSchema.Case(
             "Int",
             summon[SonReadWriter[Int]].bimap[Value](value => Num(value.toDouble)) {
               case Num(value) => value.toInt
               case other      => invalidJson("number", other)
             }
           ),
-          RouterSchema.Case(
+          RouterSchema.RouterConstruct.Long -> RouterSchema.Case(
             "Long",
             summon[SonReadWriter[Long]].bimap[Value](value => Num(value.toDouble)) {
               case Num(value) => value.toLong
               case other      => invalidJson("number", other)
             }
           ),
-          RouterSchema.Case(
+          RouterSchema.RouterConstruct.Float -> RouterSchema.Case(
             "Float",
             summon[SonReadWriter[Float]].bimap[Value](value => Num(value.toDouble)) {
               case Num(value) => value.toFloat
               case other      => invalidJson("number", other)
             }
           ),
-          RouterSchema.Case(
+          RouterSchema.RouterConstruct.Double -> RouterSchema.Case(
             "Double",
             summon[SonReadWriter[Double]].bimap[Value](Num(_)) {
               case Num(value) => value
               case other      => invalidJson("number", other)
             }
           ),
-          RouterSchema.Case(
+          RouterSchema.RouterConstruct.Boolean -> RouterSchema.Case(
             "Boolean",
             summon[SonReadWriter[Boolean]].bimap[Value](Bool(_)) {
               case Bool(value) => value
               case other       => invalidJson("boolean", other)
             }
           ),
-          RouterSchema.Case("Null", SonReadWriter.forNull[Value](Null))
+          RouterSchema.RouterConstruct.Null -> RouterSchema.Case(
+            "Null",
+            SonReadWriter.forNull[Value](Null)
+          )
         ),
-      read = JsonRouting,
       write = JsonSelect
     )
 
@@ -199,19 +188,6 @@ object FormatSchemas:
     def finish(repr: YamlSeqState): Node =
       Node.SequenceNode(repr.result()*)
 
-  private object YamlRouting extends RouterSchema.Read:
-    override def onRecord(): Int  = 0
-    override def onTuple(): Int   = 1
-    override def onVector(): Int  = 2
-    override def onString(): Int  = 3
-    override def onChar(): Int    = 4
-    override def onInt(): Int     = 5
-    override def onLong(): Int    = 6
-    override def onFloat(): Int   = 7
-    override def onDouble(): Int  = 8
-    override def onBoolean(): Int = 9
-    override def onNull(): Int    = 10
-
   private object YamlSelect extends RouterSchema.Write[Node]:
     def caseIndex(value: Node): Int =
       value match
@@ -227,7 +203,7 @@ object FormatSchemas:
     SonReadWriter.router[Node]("yaml.Node", "YAML node")(
       cases = self =>
         List(
-          RouterSchema.Case(
+          RouterSchema.RouterConstruct.Record -> RouterSchema.Case(
             "Mapping",
             SonReadWriter.dict[Node, Node, YamlMapState](
               self,
@@ -246,7 +222,7 @@ object FormatSchemas:
               }
             )
           ),
-          RouterSchema.Case(
+          RouterSchema.RouterConstruct.Tuple -> RouterSchema.Case(
             "TupleSequence",
             SonReadWriter.tupleOf[Node, Node, YamlSeqState](
               self,
@@ -261,7 +237,7 @@ object FormatSchemas:
               }
             )
           ),
-          RouterSchema.Case(
+          RouterSchema.RouterConstruct.Vector -> RouterSchema.Case(
             "Sequence",
             SonReadWriter.vector[Node, Node, YamlSeqState](
               self,
@@ -276,37 +252,36 @@ object FormatSchemas:
               }
             )
           ),
-          RouterSchema.Case("String", yamlStringScalar),
-          RouterSchema.Case(
+          RouterSchema.RouterConstruct.String -> RouterSchema.Case("String", yamlStringScalar),
+          RouterSchema.RouterConstruct.Char   -> RouterSchema.Case(
             "Char",
             yamlCharScalar
           ),
-          RouterSchema.Case(
+          RouterSchema.RouterConstruct.Int -> RouterSchema.Case(
             "Int",
             yamlIntScalar
           ),
-          RouterSchema.Case(
+          RouterSchema.RouterConstruct.Long -> RouterSchema.Case(
             "Long",
             yamlLongScalar
           ),
-          RouterSchema.Case(
+          RouterSchema.RouterConstruct.Float -> RouterSchema.Case(
             "Float",
             yamlFloatScalar
           ),
-          RouterSchema.Case(
+          RouterSchema.RouterConstruct.Double -> RouterSchema.Case(
             "Double",
             yamlDoubleScalar
           ),
-          RouterSchema.Case(
+          RouterSchema.RouterConstruct.Boolean -> RouterSchema.Case(
             "Boolean",
             yamlBooleanScalar
           ),
-          RouterSchema.Case(
+          RouterSchema.RouterConstruct.Null -> RouterSchema.Case(
             "Null",
             SonReadWriter.forNull[Node](scalar("null", Tag.nullTag))
           )
         ),
-      read = YamlRouting,
       write = YamlSelect
     )
 
