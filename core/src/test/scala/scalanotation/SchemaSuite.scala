@@ -250,7 +250,7 @@ class SchemaSuite extends ScalanotationSuite:
   test("Expr is represented as a recursive router schema"):
     summon[ReadWriter[Expr]].schema match
       case router: RawSchema.Router[?] =>
-        assertEquals(router.numberMode, RawSchema.RouterNumberMode.Bounded)
+        assertEquals(router.numberMode, RouterSchema.NumberMode.Bounded)
         assert(router.read != null)
         assert(router.write != null)
         assertEquals(
@@ -270,7 +270,7 @@ class SchemaSuite extends ScalanotationSuite:
           )
         )
         assertEquals(
-          router.read.nn.route(RawSchema.RouterConstruct.Record),
+          router.read.nn.route(RouterSchema.RouterConstruct.Record),
           RawSchema.ExprRouter.NamedTupleCase
         )
         router.cases(RawSchema.ExprRouter.NamedTupleCase).schema match
@@ -310,7 +310,7 @@ class SchemaSuite extends ScalanotationSuite:
     assertEquals(Readers.readAs[String]("\"hello\"")(using reader), Result.Ok("second:hello"))
     reader.schema match
       case router: RawSchema.Router[?] =>
-        assertEquals(router.read.nn.route(RawSchema.RouterConstruct.String), 1)
+        assertEquals(router.read.nn.route(RouterSchema.RouterConstruct.String), 1)
       case other =>
         fail(s"Expected a router schema, got ${other.describeSelf}")
 
@@ -342,9 +342,9 @@ class SchemaSuite extends ScalanotationSuite:
 
     summon[ReadWriter[MiniNode]].schema match
       case router: RawSchema.Router[?] =>
-        assertEquals(router.numberMode, RawSchema.RouterNumberMode.Bounded)
+        assertEquals(router.numberMode, RouterSchema.NumberMode.Bounded)
         assertEquals(
-          router.read.nn.route(RawSchema.RouterConstruct.Tuple),
+          router.read.nn.route(RouterSchema.RouterConstruct.Tuple),
           1
         )
         router.cases(0).schema match

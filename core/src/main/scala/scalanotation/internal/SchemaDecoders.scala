@@ -2,6 +2,7 @@ package scalanotation.internal
 
 import scalanotation.DecodeError
 import scalanotation.Reader
+import scalanotation.RouterSchema
 import scalanotation.internal.RawSchema.Field
 import steps.result.Result
 import steps.result.Result.eval.check
@@ -66,46 +67,48 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
       else decodeRouterCase(schema, construct).check
 
   private def currentRouterConstruct(
-      numberMode: RawSchema.RouterNumberMode
-  ): RawSchema.RouterConstruct | Null =
+      numberMode: RouterSchema.NumberMode
+  ): RouterSchema.RouterConstruct | Null =
+    import RouterSchema.RouterConstruct
+
     currentKind() match
       case TokenKind.LParen =>
-        if parenStartsRecord() then RawSchema.RouterConstruct.Record
-        else RawSchema.RouterConstruct.Tuple
-      case TokenKind.EmptyTupleId => RawSchema.RouterConstruct.Tuple
-      case TokenKind.TupleId      => RawSchema.RouterConstruct.Tuple
-      case TokenKind.VectorId     => RawSchema.RouterConstruct.Vector
-      case TokenKind.StringLit    => RawSchema.RouterConstruct.String
-      case TokenKind.CharLit      => RawSchema.RouterConstruct.Char
+        if parenStartsRecord() then RouterConstruct.Record
+        else RouterConstruct.Tuple
+      case TokenKind.EmptyTupleId => RouterConstruct.Tuple
+      case TokenKind.TupleId      => RouterConstruct.Tuple
+      case TokenKind.VectorId     => RouterConstruct.Vector
+      case TokenKind.StringLit    => RouterConstruct.String
+      case TokenKind.CharLit      => RouterConstruct.Char
       case TokenKind.IntLit       =>
-        numberConstruct(RawSchema.RouterConstruct.Int, numberMode)
+        numberConstruct(RouterConstruct.Int, numberMode)
       case TokenKind.LongLit =>
-        numberConstruct(RawSchema.RouterConstruct.Long, numberMode)
+        numberConstruct(RouterConstruct.Long, numberMode)
       case TokenKind.FloatLit =>
-        numberConstruct(RawSchema.RouterConstruct.Float, numberMode)
+        numberConstruct(RouterConstruct.Float, numberMode)
       case TokenKind.DoubleLit =>
-        numberConstruct(RawSchema.RouterConstruct.Double, numberMode)
+        numberConstruct(RouterConstruct.Double, numberMode)
       case TokenKind.TrueKw | TokenKind.FalseKw =>
-        RawSchema.RouterConstruct.Boolean
+        RouterConstruct.Boolean
       case TokenKind.NullKw =>
-        RawSchema.RouterConstruct.Null
+        RouterConstruct.Null
       case TokenKind.Minus =>
         peekKind() match
           case TokenKind.IntLit =>
-            numberConstruct(RawSchema.RouterConstruct.Int, numberMode)
+            numberConstruct(RouterConstruct.Int, numberMode)
           case TokenKind.LongLit =>
-            numberConstruct(RawSchema.RouterConstruct.Long, numberMode)
+            numberConstruct(RouterConstruct.Long, numberMode)
           case TokenKind.FloatLit =>
-            numberConstruct(RawSchema.RouterConstruct.Float, numberMode)
+            numberConstruct(RouterConstruct.Float, numberMode)
           case TokenKind.DoubleLit =>
-            numberConstruct(RawSchema.RouterConstruct.Double, numberMode)
+            numberConstruct(RouterConstruct.Double, numberMode)
           case _ =>
-            RawSchema.RouterConstruct.RawNumber
-      case _ => RawSchema.RouterConstruct.RawNumber
+            RouterConstruct.RawNumber
+      case _ => RouterConstruct.RawNumber
 
   private def decodeRouterCase(
       schema: RawSchema.Router[?],
-      construct: RawSchema.RouterConstruct
+      construct: RouterSchema.RouterConstruct
   ): Result[Unit, DecodeError] =
     withRead(schema, _.read) { read =>
       Result.task:
@@ -120,12 +123,12 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
     }
 
   private def numberConstruct(
-      bounded: RawSchema.RouterConstruct,
-      numberMode: RawSchema.RouterNumberMode
-  ): RawSchema.RouterConstruct =
+      bounded: RouterSchema.RouterConstruct,
+      numberMode: RouterSchema.NumberMode
+  ): RouterSchema.RouterConstruct =
     numberMode match
-      case RawSchema.RouterNumberMode.Bounded => bounded
-      case RawSchema.RouterNumberMode.Raw     => RawSchema.RouterConstruct.RawNumber
+      case RouterSchema.NumberMode.Bounded => bounded
+      case RouterSchema.NumberMode.Raw     => RouterSchema.RouterConstruct.RawNumber
 
   protected final def decodeTuple(schema: RawSchema.Tuple[?]): Result[Unit, DecodeError] =
     withRead(schema, _.read)(read => decodeTupleWithRead(schema, read))
