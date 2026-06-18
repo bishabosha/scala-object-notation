@@ -1,10 +1,10 @@
 package scalableconfig
 
 import scalanotation.DecodeError
+import scalanotation.RawSchema
 import scalanotation.Reader
 import scalanotation.ReadWriter as SonReadWriter
 import scalanotation.RouterSchema
-import scalanotation.internal.RawSchema
 import steps.result.Result
 import upickle.core.AbortException
 import upickle.core.ArrVisitor
@@ -72,8 +72,6 @@ private object UpickleSchemaAdapter:
         nullVisitor(schema)
 
   private def routerVisitor(schema: RawSchema.Router[?]): Visitor[Any, Any] =
-    val read = schema.read
-    if read == null then missingRead(schema)
     new BaseVisitor(schema):
       override def visitObject(
           length: Int,
@@ -84,9 +82,8 @@ private object UpickleSchemaAdapter:
           .visitObject(length, jsonableKeys, index)
 
       override def visitArray(length: Int, index: Int): ArrVisitor[Any, Any] =
-        val vectorIndex = read.route(RouterSchema.RouterConstruct.Vector)
-        val construct   =
-          if vectorIndex >= 0 && vectorIndex < schema.cases.length then
+        val construct =
+          if RawSchema.routerCase(schema, schema.router.vectorIndex) != null then
             RouterSchema.RouterConstruct.Vector
           else RouterSchema.RouterConstruct.Tuple
         visitorFor(routerCase(schema, construct, index)).visitArray(length, index)
@@ -143,12 +140,9 @@ private object UpickleSchemaAdapter:
       construct: RouterSchema.RouterConstruct,
       index: Int
   ): RawSchema[?] =
-    val read = schema.read
-    if read == null then missingRead(schema)
-    val caseIndex = read.route(construct)
-    if caseIndex < 0 || caseIndex >= schema.cases.length then
-      abort(s"Expected ${schema.describeSelf}", index)
-    schema.cases(caseIndex).schema
+    val routerCase = RawSchema.routerCase(schema, schema.router.indexFor(construct))
+    if routerCase == null then abort(s"Expected ${schema.describeSelf}", index)
+    routerCase.schema
 
   private def numberConstruct(
       bounded: RouterSchema.RouterConstruct,
@@ -778,12 +772,16 @@ private object UpickleSchemaAdapter:
   private def selectedRouterCase(schema: RawSchema.Router[?], value: Any): RawSchema.RouterCase[?] =
     val write = schema.write
     if write == null then missingWrite(schema)
-    val index = write.asInstanceOf[RouterSchema.Write[Any]].caseIndex(value)
-    if index < 0 || index >= schema.cases.length then
+    val selected =
+      RawSchema.routerCase(
+        schema,
+        write.asInstanceOf[RouterSchema.Write[Any]].caseIndex(schema.router, value)
+      )
+    if selected == null then
       throw IllegalArgumentException(
         s"router ${schema.describeSelf} cannot select a case for value $value"
       )
-    schema.cases(index)
+    selected
 
   private def isOption(schema: RawSchema[?]): Boolean =
     schema match

@@ -153,12 +153,11 @@ private[scalanotation] class ExprDecoder() extends PushSlots with SharedHelpers:
       schema: RawSchema.Router[?],
       expr: Expr
   ): Result[Unit, DecodeError] =
-    withRead(schema, _.read): read =>
-      Result.task:
-        val index = read.route(routerConstruct(expr))
-        if index < 0 || index >= schema.cases.length then
-          raise(DecodeError.ExpectedType(schema.describeSelf, describeExpr(expr)))
-        decodeBase(schema.cases(index).schema, expr).check
+    Result.task:
+      val routerCase = RawSchema.routerCase(schema, schema.router.indexFor(routerConstruct(expr)))
+      if routerCase == null then
+        raise(DecodeError.ExpectedType(schema.describeSelf, describeExpr(expr)))
+      decodeBase(routerCase.schema, expr).check
 
   private def routerConstruct(expr: Expr): RouterSchema.RouterConstruct =
     import RouterSchema.RouterConstruct
