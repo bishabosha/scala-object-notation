@@ -926,7 +926,7 @@ object RawSchema:
       case _ =>
         RawSchema.Mapped(base, SchemaMapping[A, A]().withPureAndInput(resultMap0, inputMap0))
 
-  private def mapIntTotalAndInput[A](
+  private[scalanotation] def mapIntTotalAndInput[A](
       base: RawSchema[Int]
   )(
       resultMap0: Reader.IntMap[A],
@@ -937,7 +937,7 @@ object RawSchema:
       SchemaMapping[Int, Int]().withIntMap(resultMap0).copy(inputMap = inputMap0)
     )
 
-  private def mapLongTotalAndInput[A](
+  private[scalanotation] def mapLongTotalAndInput[A](
       base: RawSchema[Long]
   )(
       resultMap0: Reader.LongMap[A],
@@ -948,7 +948,7 @@ object RawSchema:
       SchemaMapping[Long, Long]().withLongMap(resultMap0).copy(inputMap = inputMap0)
     )
 
-  private def mapFloatTotalAndInput[A](
+  private[scalanotation] def mapFloatTotalAndInput[A](
       base: RawSchema[Float]
   )(
       resultMap0: Reader.FloatMap[A],
@@ -959,7 +959,7 @@ object RawSchema:
       SchemaMapping[Float, Float]().withFloatMap(resultMap0).copy(inputMap = inputMap0)
     )
 
-  private def mapDoubleTotalAndInput[A](
+  private[scalanotation] def mapDoubleTotalAndInput[A](
       base: RawSchema[Double]
   )(
       resultMap0: Reader.DoubleMap[A],

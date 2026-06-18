@@ -57,6 +57,38 @@ object ReadWriter extends CommonTypeClassCompanion[ReadWriter]:
 
   export Builders.{derived, ofFields, singleton, ofCases}
 
+  def int[A](read: Reader.IntMap[A])(write: A => Int): ReadWriter[A] =
+    fromSchema(
+      RawSchema.mapIntTotalAndInput(RawSchema.Int)(
+        resultMap0 = read,
+        inputMap0 = write
+      )
+    )
+
+  def long[A](read: Reader.LongMap[A])(write: A => Long): ReadWriter[A] =
+    fromSchema(
+      RawSchema.mapLongTotalAndInput(RawSchema.Long)(
+        resultMap0 = read,
+        inputMap0 = write
+      )
+    )
+
+  def float[A](read: Reader.FloatMap[A])(write: A => Float): ReadWriter[A] =
+    fromSchema(
+      RawSchema.mapFloatTotalAndInput(RawSchema.Float)(
+        resultMap0 = read,
+        inputMap0 = write
+      )
+    )
+
+  def double[A](read: Reader.DoubleMap[A])(write: A => Double): ReadWriter[A] =
+    fromSchema(
+      RawSchema.mapDoubleTotalAndInput(RawSchema.Double)(
+        resultMap0 = read,
+        inputMap0 = write
+      )
+    )
+
   def forNull[T](value: T): ReadWriter[T] =
     summon[ReadWriter[Null]].bimap(_ => value)(_ => null)
 
@@ -137,11 +169,10 @@ object ReadWriter extends CommonTypeClassCompanion[ReadWriter]:
       selfKind: String,
       numberMode: RouterSchema.NumberMode = RouterSchema.NumberMode.Bounded
   )(
-      cases: ReadWriter[A] => Iterable[RouterSchema.Case[A]],
-      read: RouterSchema.Read,
+      cases: ReadWriter[A] => Iterable[RouterSchema.Route[A]],
       write: RouterSchema.Write[A]
   ): ReadWriter[A] =
-    RouterSchema.readWriter(name, selfKind, numberMode)(cases, read, write)
+    RouterSchema.readWriter(name, selfKind, numberMode)(cases, write)
 
   object skippable extends ReadWriterBuilders[true]:
     val thisBuilder: this.type = this
