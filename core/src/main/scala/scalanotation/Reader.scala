@@ -8,6 +8,8 @@ import scala.deriving.Mirror
 import scala.reflect.ClassTag
 import scala.util.NotGiven
 
+import scalanotation.internal.RawSchema
+
 sealed trait Reader[T]:
   def schema: RawSchema[T]
 
@@ -129,9 +131,6 @@ object Reader extends ReaderLowPriority, CommonTypeClassCompanion[Reader]:
 
   private[scalanotation] def schemaOf[T](typeclass: Reader[T]): RawSchema[T] =
     typeclass.schema
-
-  protected def primitiveTypeClass[T](schema: RawSchema[T]): Reader[T] =
-    fromSchema(schema)
 
   def mapped[A, B](base: Reader[A])(transform: A => B): Reader[B] =
     fromSchema(

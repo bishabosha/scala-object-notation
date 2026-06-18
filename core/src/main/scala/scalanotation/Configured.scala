@@ -4,6 +4,8 @@ import scala.annotation.publicInBinary
 import scala.compiletime
 import scala.deriving.Mirror
 
+import scalanotation.internal.RawSchema
+
 final class Configured[T] private (
     val discriminatorField: Option[String],
     val skippable: Boolean,
