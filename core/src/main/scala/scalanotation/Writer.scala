@@ -5,6 +5,8 @@ import scalanotation.internal.Encode
 import scalanotation.internal.ExprRenderer
 import scalanotation.internal.IdentifierSyntax
 
+import scalanotation.internal.RawSchema
+
 import scala.deriving.Mirror
 import scala.util.NotGiven
 
@@ -26,9 +28,6 @@ object Writer extends WriterLowPriority, CommonTypeClassCompanion[Writer]:
 
   private[scalanotation] def schemaOf[T](typeclass: Writer[T]): RawSchema[T] =
     typeclass.schema
-
-  protected def primitiveTypeClass[T](schema: RawSchema[T]): Writer[T] =
-    fromSchema(schema)
 
   private[scalanotation] def renderText[T](
       writer: Writer[T],
