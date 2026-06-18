@@ -27,8 +27,8 @@ enum Expr:
   def render(format: TextFormat): String =
     ExprRenderer.renderExpr(this, format)
 
-  def renderPretty(indent: Int = 2): String =
-    ExprRenderer.renderExpr(this, TextFormat.pretty(indent))
+  def renderPretty(indent: Int = 2, spacing: Int = 1): String =
+    ExprRenderer.renderExpr(this, TextFormat.pretty(indent, spacing))
 
 object Expr:
   final case class SourceFile[T](declarations: Map[String, T])

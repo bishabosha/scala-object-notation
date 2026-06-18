@@ -13,6 +13,17 @@ private[scalanotation] object ExprRenderer:
     def append(str: String): Unit =
       builder ++= str
 
+    def tokenSpacing()(using format: TextFormat): Unit =
+      var i = 0
+      while i < format.spacing do
+        builder += ' '
+        i += 1
+
+    def appendToken(ch: Char)(using format: TextFormat): Unit =
+      tokenSpacing()
+      builder += ch
+      tokenSpacing()
+
     def newlineAndIndent(depth: Int)(using format: TextFormat): Unit =
       if format.pretty then
         builder += '\n'
@@ -26,7 +37,7 @@ private[scalanotation] object ExprRenderer:
       builder.result()
 
   def renderDecl(name: String, expr: Expr): String =
-    renderDecl(name, expr, TextFormat.compact)
+    renderDecl(name, expr, TextFormat.compact())
 
   def renderDecl(name: String, expr: Expr, format: TextFormat): String =
     val out = Output()
@@ -37,7 +48,7 @@ private[scalanotation] object ExprRenderer:
     out.result()
 
   def renderExpr(expr: Expr): String =
-    renderExpr(expr, TextFormat.compact)
+    renderExpr(expr, TextFormat.compact())
 
   def renderExpr(expr: Expr, format: TextFormat): String =
     val out = Output()
@@ -54,7 +65,7 @@ private[scalanotation] object ExprRenderer:
         renderNamedTuple(out, depth, elements.length) { index =>
           val (name, value) = elements(index)
           IdentifierSyntax.appendIdentifier(name, out)
-          out.append(" = ")
+          out.appendToken('=')
           renderExpr(value, out, depth + 1)
         }
       case Expr.TupleExpr(elements) =>
@@ -133,7 +144,9 @@ private[scalanotation] object ExprRenderer:
     else if !format.pretty then
       var i = 0
       while i < size do
-        if i > 0 then out.append(", ")
+        if i > 0 then
+          out.append(',')
+          out.tokenSpacing()
         renderValue(i)
         i += 1
       out.append(close)

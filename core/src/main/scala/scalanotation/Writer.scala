@@ -59,7 +59,9 @@ object Writer extends WriterLowPriority, CommonTypeClassCompanion[Writer]:
       out.append("package ")
       IdentifierSyntax.appendQualifiedIdentifier(packageName, out)
       if format.pretty then out.newlineAndIndent(0)(using format)
-      else out.append("; ")
+      else
+        out.append(';')
+        out.tokenSpacing()(using format)
     out.append("val ")
     IdentifierSyntax.appendIdentifier(name, out)
     out.append(" = ")

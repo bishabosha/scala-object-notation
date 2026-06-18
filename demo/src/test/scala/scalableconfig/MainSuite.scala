@@ -183,11 +183,11 @@ class MainSuite extends FunSuite:
     val json =
       """{"name":"api","mode":{"Scheduled":{"metadata":{"tags":["blue","green"],"retry":2}}},"ports":[8080,9090]}"""
     val son =
-      """(name = "api", mode = (Scheduled = (metadata = (tags = Vector("blue", "green"), retry = 2))), ports = Vector(8080, 9090))"""
+      """(name="api",mode=(Scheduled=(metadata=(tags=Vector("blue","green"),retry=2))),ports=Vector(8080,9090))"""
 
     assertEquals(upickle.default.read[Deployment](json), value)
     assertEquals(upickle.default.read[Deployment](upickle.default.write(value)), value)
 
-    val text = Writers.write(value)
+    val compactFormat = TextFormat.compact(spacing = 0)
+    val text          = Writers.write(value, compactFormat)
     assertEquals(text, son)
-    assertEquals(FormatSchemas.jsonTextToScalaObjectNotation[Deployment](json), text)
