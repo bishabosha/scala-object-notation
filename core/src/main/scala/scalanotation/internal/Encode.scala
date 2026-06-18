@@ -1,6 +1,7 @@
 package scalanotation.internal
 
 import scalanotation.Expr
+import scalanotation.RouterSchema
 import scalanotation.TextFormat
 
 import scala.{Option => ScalaOption}
@@ -16,7 +17,7 @@ private[scalanotation] object Encode:
       value: Any
   ): RawSchema.RouterCase[?] =
     if schema.write == null then missingWriteCapability(schema)
-    val index = schema.write.caseIndex(value)
+    val index = schema.write.asInstanceOf[RouterSchema.Write[Any]].caseIndex(value)
     if index < 0 || index >= schema.cases.length then
       throw IllegalArgumentException(
         s"router ${schema.describeSelf} cannot select a case for value $value"
