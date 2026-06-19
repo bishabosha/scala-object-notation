@@ -4,6 +4,7 @@ import java.time.LocalDate
 import java.time.format.DateTimeParseException
 
 import scalanotation.internal.PublicInternal
+import scalanotation.internal.RawSchema
 import steps.result.Result
 
 import scala.collection.immutable.ListMap
