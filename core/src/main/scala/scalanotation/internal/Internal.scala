@@ -9,26 +9,18 @@ import scala.reflect.ClassTag
 import scala.util.boundary
 import scala.annotation.threadUnsafe
 import BuilderSlotsPool.given
+import scalanotation.schema.RawSchema
 
 @publicInBinary
 private[internal] object Internal {
 
-  final class LocalPool[T: Alloc as factory] extends Pool[T]:
+  final class LocalPool[T: Alloc as factory] extends PublicInternal.Pool[T]:
     // non-atomic pull/push, but this should be single-threaded code
     private val pool = mutable.ArrayDeque.empty[T]
     def borrow(): T  =
       if pool.isEmpty then factory.alloc() else factory.prepare(pool.removeHead())
     def release(t: T): Unit =
       pool.prepend(t)
-
-  trait Pool[T]:
-    def borrow(): T
-    def release(t: T): Unit
-
-    inline def withBorrowed[A](inline f: T => A): A =
-      val t = borrow()
-      try f(t)
-      finally release(t)
 
   /** A lock-free, fixed-capacity pool that can be shared between threads — including virtual
     * threads, where a ThreadLocal cache would never be reused. Borrow and release probe the slot
@@ -37,7 +29,8 @@ private[internal] object Internal {
     * the released instance for the GC. The CAS pair also safely publishes the pooled instance's
     * state between threads.
     */
-  final class SharedPool[T <: AnyRef: Alloc as factory](capacityHint: Int) extends Pool[T]:
+  final class SharedPool[T <: AnyRef: Alloc as factory](capacityHint: Int)
+      extends PublicInternal.Pool[T]:
     val capacity: Int = Integer.highestOneBit(math.max(capacityHint, 2))
     private val mask  = capacity - 1
     private val slots = java.util.concurrent.atomic.AtomicReferenceArray[T](capacity)
@@ -74,7 +67,7 @@ private[internal] object Internal {
         t.clear()
         t
 
-    given NameSet[JumboNameSet]:
+    given PublicInternal.NameSet[JumboNameSet]:
       extension (seen: JumboNameSet)
         def alreadySeen(name: String): Boolean =
           val map        = seen.underlying0
@@ -82,12 +75,6 @@ private[internal] object Internal {
           map.addOne(name, ()).size == sizeBefore
 
         def clear(): Unit = seen.underlying0.clear()
-
-  trait NameSet[T] {
-    extension (seen: T)
-      def alreadySeen(name: String): Boolean
-      def clear(): Unit
-  }
 
   trait Alloc[T] {
     def alloc(): T
@@ -133,6 +120,20 @@ private[internal] object Internal {
 private[scalanotation] object PublicInternal {
   import scalanotation.Reader
   import quoted.{Expr as QExpr, *}
+
+  trait Pool[T]:
+    def borrow(): T
+    def release(t: T): Unit
+
+    inline def withBorrowed[A](inline f: T => A): A =
+      val t = borrow()
+      try f(t)
+      finally release(t)
+
+  trait NameSet[T]:
+    extension (seen: T)
+      def alreadySeen(name: String): Boolean
+      def clear(): Unit
 
   val buildNamedTuple: (values: Array[AnyRef]) => AnyNamedTuple = values =>
     val asTuple = Tuple.fromIArray(IArray.unsafeFromArray(values))

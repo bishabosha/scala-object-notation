@@ -2,11 +2,13 @@ package scalanotation.internal
 
 import scalanotation.DecodeError
 import scalanotation.Reader
-import scalanotation.internal.RawSchema.Field
+import scalanotation.schema.RawSchema.Field
 import steps.result.Result
 import steps.result.Result.eval.{raise, ok}
 
 import scala.annotation.switch
+import scalanotation.schema.RawSchema
+import scalanotation.schema
 
 /** Push-model plumbing shared by the decoders: a decode step marks success by returning
   * [[Result.done]] (a shared constant — no [[Result.Ok]] is allocated on the happy path) after
@@ -207,25 +209,25 @@ private[scalanotation] abstract class PushSlots extends Internal.PoolHolder:
 
   /** applies a [[RawSchema.Mapped]] mapping to the live slot after a successful push */
   protected final def mapSlot(
-      mapping: RawSchema.SchemaMapping[?, ?]
+      mapping: schema.SchemaMapping[?, ?]
   ): Result[Unit, DecodeError] = Result.task {
     mapping.totalMaps match
-      case RawSchema.SchemaMapping.TotalMap.IntMap(fn) =>
+      case schema.SchemaMapping.TotalMap.IntMap(fn) =>
         if lastSlotKind == SlotKind.Int then pushRef(fn(intSlot))
         else pushRef(fn(pullAny().asInstanceOf[Int]))
-      case RawSchema.SchemaMapping.TotalMap.LongMap(fn) =>
+      case schema.SchemaMapping.TotalMap.LongMap(fn) =>
         if lastSlotKind == SlotKind.Long then pushRef(fn(longSlot))
         else pushRef(fn(pullAny().asInstanceOf[Long]))
-      case RawSchema.SchemaMapping.TotalMap.FloatMap(fn) =>
+      case schema.SchemaMapping.TotalMap.FloatMap(fn) =>
         if lastSlotKind == SlotKind.Float then pushRef(fn(floatSlot))
         else pushRef(fn(pullAny().asInstanceOf[Float]))
-      case RawSchema.SchemaMapping.TotalMap.DoubleMap(fn) =>
+      case schema.SchemaMapping.TotalMap.DoubleMap(fn) =>
         if lastSlotKind == SlotKind.Double then pushRef(fn(doubleSlot))
         else pushRef(fn(pullAny().asInstanceOf[Double]))
-      case RawSchema.SchemaMapping.TotalMap.AnyMap(fn) =>
+      case schema.SchemaMapping.TotalMap.AnyMap(fn) =>
         val fn0 = fn.asInstanceOf[RawSchema.InputMap[Any, Any]]
         pushRef(fn0(pullAny()))
-      case RawSchema.SchemaMapping.TotalMap.Empty =>
+      case schema.SchemaMapping.TotalMap.Empty =>
         val fn = mapping.resultMap
         if fn == null then () // preserve the live slot as-is
         else

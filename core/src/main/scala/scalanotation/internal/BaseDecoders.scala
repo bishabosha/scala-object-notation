@@ -8,6 +8,7 @@ import steps.result.Result.eval.check
 import steps.result.Result.eval.raise
 
 import scala.util.boundary.Label
+import scalanotation.schema.RawSchema
 
 private[scalanotation] trait BaseDecoders extends SharedHelpers:
   self: TokenStream =>

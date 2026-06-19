@@ -1,10 +1,11 @@
 package scalableconfig
 
 import scalanotation.DecodeError
-import scalanotation.internal.RawSchema
-import scalanotation.Reader
 import scalanotation.ReadWriter as SonReadWriter
+import scalanotation.Reader
 import scalanotation.RouterSchema
+import scalanotation.schema.RawSchema
+import scalanotation.schema.SchemaMapping
 import steps.result.Result
 import upickle.core.AbortException
 import upickle.core.ArrVisitor
@@ -13,8 +14,8 @@ import upickle.core.ObjVisitor
 import upickle.core.SimpleVisitor
 import upickle.core.Visitor
 
+import scala.Option as ScalaOption
 import scala.collection.mutable
-import scala.{Option => ScalaOption}
 
 private object UpickleSchemaAdapter:
   def readWriter[A](readWriter: SonReadWriter[A]): upickle.default.ReadWriter[A] =
@@ -28,7 +29,7 @@ private object UpickleSchemaAdapter:
   private def visitorFor(schema: RawSchema[?]): Visitor[Any, Any] =
     schema match
       case mapped: RawSchema.Mapped[?, ?] =>
-        val mapping = mapped.mapping.asInstanceOf[RawSchema.SchemaMapping[Any, Any]]
+        val mapping = mapped.mapping.asInstanceOf[SchemaMapping[Any, Any]]
         visitorFor(mapped.base).mapNulls(value => resultOrAbort(mapping.mapResult(value), -1))
       case RawSchema.Ref(_, target) =>
         visitorFor(target())
@@ -44,13 +45,13 @@ private object UpickleSchemaAdapter:
         objectVisitor(SumConsumer(sum))
       case sum: RawSchema.DiscriminatorSum[?] =>
         discriminatorSumVisitor(sum)
-      case vector: RawSchema.Vector[?] =>
+      case vector: RawSchema.Vector[?, ?] =>
         vectorVisitor(vector)
-      case tupleOf: RawSchema.TupleOf[?] =>
+      case tupleOf: RawSchema.TupleOf[?, ?] =>
         tupleOfVisitor(tupleOf)
-      case pairSeq: RawSchema.PairSeq[?] =>
+      case pairSeq: RawSchema.PairSeq[?, ?, ?] =>
         pairSeqVisitor(pairSeq)
-      case dict: RawSchema.Dict[?] =>
+      case dict: RawSchema.Dict[?, ?] =>
         objectVisitor(DictConsumer(dict))
       case option: RawSchema.Option[?] =>
         optionVisitor(option)
@@ -158,7 +159,7 @@ private object UpickleSchemaAdapter:
   ): Visitor[Any, Any] =
     base match
       case mapped: RawSchema.Mapped[?, ?] =>
-        val mapping = mapped.mapping.asInstanceOf[RawSchema.SchemaMapping[Any, Any]]
+        val mapping = mapped.mapping.asInstanceOf[SchemaMapping[Any, Any]]
         partialNamedTupleVisitor(mapped.base, alreadySeenField)
           .mapNulls(value => resultOrAbort(mapping.mapResult(value), -1))
       case RawSchema.Ref(_, target) =>
@@ -225,14 +226,14 @@ private object UpickleSchemaAdapter:
               )
             read.finish(state)
 
-  private def vectorVisitor(schema: RawSchema.Vector[?]): Visitor[Any, Any] =
+  private def vectorVisitor(schema: RawSchema.Vector[?, ?]): Visitor[Any, Any] =
     val read = schema.read.asInstanceOf[Reader.VectorBuilder[Any, Any, Any]]
     if read == null then missingRead(schema)
     new BaseVisitor(schema):
       override def visitArray(length: Int, index: Int): ArrVisitor[Any, Any] =
         new VectorContext(read, schema.element)
 
-  private def tupleOfVisitor(schema: RawSchema.TupleOf[?]): Visitor[Any, Any] =
+  private def tupleOfVisitor(schema: RawSchema.TupleOf[?, ?]): Visitor[Any, Any] =
     val read = schema.read.asInstanceOf[Reader.VectorBuilder[Any, Any, Any]]
     if read == null then missingRead(schema)
     new BaseVisitor(schema):
@@ -254,7 +255,7 @@ private object UpickleSchemaAdapter:
     def visitEnd(index: Int): Any =
       read.finish(state)
 
-  private def pairSeqVisitor(schema: RawSchema.PairSeq[?]): Visitor[Any, Any] =
+  private def pairSeqVisitor(schema: RawSchema.PairSeq[?, ?, ?]): Visitor[Any, Any] =
     val read = schema.read.asInstanceOf[Reader.PairSeqBuilder[Any, Any, Any, Any]]
     if read == null then missingRead(schema)
     new BaseVisitor(schema):
@@ -377,7 +378,7 @@ private object UpickleSchemaAdapter:
         abort(s"Expected ${fields.length} fields but found $nextIndex", index)
       read.nn.finish(state)
 
-  private final class DictConsumer(schema: RawSchema.Dict[?]) extends ObjectConsumer:
+  private final class DictConsumer(schema: RawSchema.Dict[?, ?]) extends ObjectConsumer:
     private val read = schema.read.asInstanceOf[Reader.DictBuilder[Any, Any, Any]]
     if read == null then missingRead(schema)
     private val seen  = mutable.HashSet.empty[String]
@@ -404,7 +405,7 @@ private object UpickleSchemaAdapter:
 
     def visitKeyValue(key: String, index: Int): Unit =
       if seenCase then abort(s"Unexpected field '$key'", index)
-      val sumCase = RawSchema.findCase(schema.cases, key)
+      val sumCase = RawSchema.findCase(schema, key)
       if sumCase == null then abort(s"Unexpected field '$key'", index)
       currentSchema = sumCase.schema
       seenCase = true
@@ -462,7 +463,7 @@ private object UpickleSchemaAdapter:
           def visitValue(v: Any, index: Int): Unit =
             if readingDiscriminator then
               val caseName = v.asInstanceOf[String]
-              val sumCase  = RawSchema.findCase(schema.cases, caseName)
+              val sumCase  = RawSchema.findCase(schema, caseName)
               if sumCase == null then abort(s"Unexpected field '$caseName'", index)
               selected = consumerForPartial(sumCase.schema, schema.discriminatorField)
               sawDiscriminator = true
@@ -477,7 +478,7 @@ private object UpickleSchemaAdapter:
   private def consumerForPartial(schema: RawSchema[?], alreadySeenField: String): ObjectConsumer =
     schema match
       case mapped: RawSchema.Mapped[?, ?] =>
-        val mapping = mapped.mapping.asInstanceOf[RawSchema.SchemaMapping[Any, Any]]
+        val mapping = mapped.mapping.asInstanceOf[SchemaMapping[Any, Any]]
         val inner   = consumerForPartial(mapped.base, alreadySeenField)
         new ObjectConsumer:
           def visitKeyValue(key: String, index: Int): Unit = inner.visitKeyValue(key, index)
@@ -611,7 +612,7 @@ private object UpickleSchemaAdapter:
   private def writeAny(schema: RawSchema[?], value: Any, out: Visitor[Any, Any]): Any =
     schema match
       case mapped: RawSchema.Mapped[?, ?] =>
-        val mapping = mapped.mapping.asInstanceOf[RawSchema.SchemaMapping[Any, Any]]
+        val mapping = mapped.mapping.asInstanceOf[SchemaMapping[Any, Any]]
         writeAny(mapped.base, mapping.mapInput(value), out)
       case RawSchema.Ref(_, target) =>
         writeAny(target(), value, out)
@@ -662,11 +663,11 @@ private object UpickleSchemaAdapter:
         writeField(ctx, sum.discriminatorField, RawSchema.String, sumCase.name)
         writePayloadFields(ctx, sumCase.schema, value)
         ctx.visitEnd(-1)
-      case vector: RawSchema.Vector[?] =>
+      case vector: RawSchema.Vector[?, ?] =>
         writeVector(vector.element, vector.write, value, out, vector)
-      case tupleOf: RawSchema.TupleOf[?] =>
+      case tupleOf: RawSchema.TupleOf[?, ?] =>
         writeVector(tupleOf.element, tupleOf.write, value, out, tupleOf)
-      case pairSeq: RawSchema.PairSeq[?] =>
+      case pairSeq: RawSchema.PairSeq[?, ?, ?] =>
         val write = pairSeq.write
         if write == null then missingWrite(pairSeq)
         val ctx    = out.visitArray(write.size(value), -1)
@@ -678,7 +679,7 @@ private object UpickleSchemaAdapter:
           pairCtx.narrow.visitValue(writeAny(pairSeq.value, elem, subOut(pairCtx)), -1)
           ctx.narrow.visitValue(pairCtx.visitEnd(-1), -1)
         ctx.visitEnd(-1)
-      case dict: RawSchema.Dict[?] =>
+      case dict: RawSchema.Dict[?, ?] =>
         val write = dict.write
         if write == null then missingWrite(dict)
         val ctx    = out.visitObject(write.size(value), jsonableKeys = true, index = -1)
@@ -748,7 +749,7 @@ private object UpickleSchemaAdapter:
       case RawSchema.PartialNamedTuple(base, _) =>
         writePayloadFields(ctx, base, value)
       case mapped: RawSchema.Mapped[?, ?] =>
-        val mapping = mapped.mapping.asInstanceOf[RawSchema.SchemaMapping[Any, Any]]
+        val mapping = mapped.mapping.asInstanceOf[SchemaMapping[Any, Any]]
         writePayloadFields(ctx, mapped.base, mapping.mapInput(value))
       case RawSchema.Ref(_, target) =>
         writePayloadFields(ctx, target(), value)

@@ -1,6 +1,8 @@
 package scalanotation.internal
+import scalanotation.schema.RawSchema
 
-trait SharedHelpers:
+private[scalanotation] trait SharedHelpers:
+
   private[internal] final def missingReadCapability(schema: RawSchema[?]): Nothing =
     throw IllegalStateException(
       s"read is not available for schema ${schema.describeSelf}"
