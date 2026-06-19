@@ -274,7 +274,7 @@ class SchemaSuite extends ScalanotationSuite:
           RawSchema.routerCase(router, router.router.recordIndex).nn.name,
           "NamedTupleExpr"
         )
-        router.cases(schema.ExprSchema.ExprRouter.NamedTupleCase).schema match
+        RawSchema.routerCase(router, router.router.recordIndex).schema match
           case dict: RawSchema.Dict[?, ?] =>
             dict.element match
               case ref: RawSchema.Ref[?] =>

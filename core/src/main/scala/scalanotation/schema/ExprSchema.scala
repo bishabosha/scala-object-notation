@@ -7,6 +7,141 @@ import scala.collection.mutable
 import scalanotation.RouterSchema
 
 object ExprSchema:
+
+  val ExprRouterSchema: RawSchema[Expr] =
+    val self = RawSchema.Ref("Expr", () => ExprSchema.ExprRouterSchema)
+    RawSchema.Router(
+      name = "Expr",
+      selfKind = "any expression",
+      IArray(
+        RawSchema.RouterCase(
+          "NamedTupleExpr",
+          RawSchema.Dict(
+            self,
+            ExprNamedTupleRead,
+            ExprNamedTupleWrite
+          )
+        ),
+        RawSchema.RouterCase(
+          "TupleExpr",
+          RawSchema.TupleOf(
+            self,
+            ExprTupleRead,
+            ExprTupleWrite
+          )
+        ),
+        RawSchema.RouterCase(
+          "VectorExpr",
+          RawSchema.Vector(
+            self,
+            ExprVectorRead,
+            ExprVectorWrite
+          )
+        ),
+        RawSchema.RouterCase(
+          "StringConstant",
+          exprMappedPrimitive[String](
+            RawSchema.String,
+            Expr.StringConstant(_),
+            {
+              case Expr.StringConstant(value) => value
+              case other                      => invalidExprRouterInput("StringConstant", other)
+            }
+          )
+        ),
+        RawSchema.RouterCase(
+          "CharConstant",
+          exprMappedPrimitive[Char](
+            RawSchema.Char,
+            Expr.CharConstant(_),
+            {
+              case Expr.CharConstant(value) => value
+              case other                    => invalidExprRouterInput("CharConstant", other)
+            }
+          )
+        ),
+        RawSchema.RouterCase(
+          "IntConstant",
+          exprMappedIntPrimitive(
+            Expr.IntConstant(_),
+            {
+              case Expr.IntConstant(value) => value
+              case other                   => invalidExprRouterInput("IntConstant", other)
+            }
+          )
+        ),
+        RawSchema.RouterCase(
+          "LongConstant",
+          exprMappedLongPrimitive(
+            Expr.LongConstant(_),
+            {
+              case Expr.LongConstant(value) => value
+              case other                    => invalidExprRouterInput("LongConstant", other)
+            }
+          )
+        ),
+        RawSchema.RouterCase(
+          "FloatConstant",
+          exprMappedFloatPrimitive(
+            Expr.FloatConstant(_),
+            {
+              case Expr.FloatConstant(value) => value
+              case other                     => invalidExprRouterInput("FloatConstant", other)
+            }
+          )
+        ),
+        RawSchema.RouterCase(
+          "DoubleConstant",
+          exprMappedDoublePrimitive(
+            Expr.DoubleConstant(_),
+            {
+              case Expr.DoubleConstant(value) => value
+              case other                      => invalidExprRouterInput("DoubleConstant", other)
+            }
+          )
+        ),
+        RawSchema.RouterCase(
+          "BooleanConstant",
+          exprMappedPrimitive[Boolean](
+            RawSchema.Boolean,
+            Expr.BooleanConstant(_),
+            {
+              case Expr.BooleanConstant(value) => value
+              case other                       => invalidExprRouterInput("BooleanConstant", other)
+            }
+          )
+        ),
+        RawSchema.RouterCase(
+          "NullConstant",
+          RawSchema.mapPureAndInput(RawSchema.Null)(
+            resultMap0 = _ => Expr.NullConstant,
+            inputMap0 = value =>
+              value.asInstanceOf[Expr] match
+                case Expr.NullConstant => null
+                case other             => invalidExprRouterInput("NullConstant", other)
+          )
+        )
+      ),
+      RouterSchema.Router(
+        ExprRouter.NamedTupleCase,
+        ExprRouter.TupleCase,
+        ExprRouter.VectorCase,
+        ExprRouter.StringCase,
+        ExprRouter.CharCase,
+        ExprRouter.IntCase,
+        ExprRouter.LongCase,
+        ExprRouter.FloatCase,
+        ExprRouter.DoubleCase,
+        ExprRouter.BooleanCase,
+        ExprRouter.NullCase,
+        RawSchema.UnsupportedRouterCase,
+        RawSchema.UnsupportedRouterCase
+      ),
+      ExprRouterWrite,
+      RouterSchema.NumberMode.Bounded
+    )
+  end ExprRouterSchema
+
   private def invalidExprRouterInput(expected: String, value: Expr): Nothing =
     throw IllegalArgumentException(s"Expected Expr.$expected but found $value")
 
@@ -143,7 +278,7 @@ object ExprSchema:
         case Expr.NamedTupleExpr(elements) => elements.iterator.map((key, expr) => key -> expr)
         case other                         => invalidExprRouterInput("NamedTupleExpr", other)
 
-  object ExprRouter:
+  private object ExprRouter:
     inline val NamedTupleCase = 0
     inline val TupleCase      = 1
     inline val VectorCase     = 2
@@ -160,136 +295,3 @@ object ExprSchema:
     def caseIndex(router: RouterSchema.Router, value: Expr): RouterSchema.Index =
       if value == null then router.unsupportedIndex
       else RouterSchema.Index.fromInt(value.ordinal)
-
-  val ExprRouterSchema: RawSchema[Expr] =
-    val self = RawSchema.Ref("Expr", () => ExprSchema.ExprRouterSchema)
-    RawSchema.Router(
-      name = "Expr",
-      selfKind = "any expression",
-      IArray(
-        RawSchema.RouterCase(
-          "NamedTupleExpr",
-          RawSchema.Dict(
-            self,
-            ExprNamedTupleRead,
-            ExprNamedTupleWrite
-          )
-        ),
-        RawSchema.RouterCase(
-          "TupleExpr",
-          RawSchema.TupleOf(
-            self,
-            ExprTupleRead,
-            ExprTupleWrite
-          )
-        ),
-        RawSchema.RouterCase(
-          "VectorExpr",
-          RawSchema.Vector(
-            self,
-            ExprVectorRead,
-            ExprVectorWrite
-          )
-        ),
-        RawSchema.RouterCase(
-          "StringConstant",
-          exprMappedPrimitive[String](
-            RawSchema.String,
-            Expr.StringConstant(_),
-            {
-              case Expr.StringConstant(value) => value
-              case other                      => invalidExprRouterInput("StringConstant", other)
-            }
-          )
-        ),
-        RawSchema.RouterCase(
-          "CharConstant",
-          exprMappedPrimitive[Char](
-            RawSchema.Char,
-            Expr.CharConstant(_),
-            {
-              case Expr.CharConstant(value) => value
-              case other                    => invalidExprRouterInput("CharConstant", other)
-            }
-          )
-        ),
-        RawSchema.RouterCase(
-          "IntConstant",
-          exprMappedIntPrimitive(
-            Expr.IntConstant(_),
-            {
-              case Expr.IntConstant(value) => value
-              case other                   => invalidExprRouterInput("IntConstant", other)
-            }
-          )
-        ),
-        RawSchema.RouterCase(
-          "LongConstant",
-          exprMappedLongPrimitive(
-            Expr.LongConstant(_),
-            {
-              case Expr.LongConstant(value) => value
-              case other                    => invalidExprRouterInput("LongConstant", other)
-            }
-          )
-        ),
-        RawSchema.RouterCase(
-          "FloatConstant",
-          exprMappedFloatPrimitive(
-            Expr.FloatConstant(_),
-            {
-              case Expr.FloatConstant(value) => value
-              case other                     => invalidExprRouterInput("FloatConstant", other)
-            }
-          )
-        ),
-        RawSchema.RouterCase(
-          "DoubleConstant",
-          exprMappedDoublePrimitive(
-            Expr.DoubleConstant(_),
-            {
-              case Expr.DoubleConstant(value) => value
-              case other                      => invalidExprRouterInput("DoubleConstant", other)
-            }
-          )
-        ),
-        RawSchema.RouterCase(
-          "BooleanConstant",
-          exprMappedPrimitive[Boolean](
-            RawSchema.Boolean,
-            Expr.BooleanConstant(_),
-            {
-              case Expr.BooleanConstant(value) => value
-              case other                       => invalidExprRouterInput("BooleanConstant", other)
-            }
-          )
-        ),
-        RawSchema.RouterCase(
-          "NullConstant",
-          RawSchema.mapPureAndInput(RawSchema.Null)(
-            resultMap0 = _ => Expr.NullConstant,
-            inputMap0 = value =>
-              value.asInstanceOf[Expr] match
-                case Expr.NullConstant => null
-                case other             => invalidExprRouterInput("NullConstant", other)
-          )
-        )
-      ),
-      RouterSchema.Router(
-        ExprRouter.NamedTupleCase,
-        ExprRouter.TupleCase,
-        ExprRouter.VectorCase,
-        ExprRouter.StringCase,
-        ExprRouter.CharCase,
-        ExprRouter.IntCase,
-        ExprRouter.LongCase,
-        ExprRouter.FloatCase,
-        ExprRouter.DoubleCase,
-        ExprRouter.BooleanCase,
-        ExprRouter.NullCase,
-        RawSchema.UnsupportedRouterCase,
-        RawSchema.UnsupportedRouterCase
-      ),
-      ExprRouterWrite,
-      RouterSchema.NumberMode.Bounded
-    )
