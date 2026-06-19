@@ -26,8 +26,8 @@ object Versions:
   val scalaJs        = "1.21.0"
   val scalaNative    = "0.5.11"
   val scalaJavaTime  = "2.6.0"
-  val previous       = "0.3.0"
-  val previousMacros = "0.3.7"
+  val previous       = "0.4.0"
+  val previousMacros = "0.4.0"
 
 trait ScalaObjectNotationModule extends SbtModule:
   def scalaVersion = Versions.scala
@@ -115,9 +115,6 @@ object core extends ScalaObjectNotationModule, CorePublishedModule, Mima, TastyM
     Seq("scalanotation.internal")
   }
 
-  override def tastyMimaExcludedArtifactEntryPrefixes: Seq[String] =
-    Seq("scalanotation/internal/TokenDecoder")
-
   object js     extends ScalaObjectNotationJsModule, CorePublishedModule
   object jsWasm extends ScalaObjectNotationJsWasmModule, CoreModuleBase
   object native extends ScalaObjectNotationNativeModule, CorePublishedModule
@@ -153,7 +150,7 @@ object demo extends ScalaObjectNotationModule:
 
   def mainClass = Some("scalableconfig.Main")
 
-val benchTestVersions = Seq("HEAD", "0.3.7", "0.3.6", "0.3.5")
+val benchTestVersions = Seq("HEAD", "0.4.0", "0.3.7", "0.3.6", "0.3.5")
 case class BenchTestVersion(version: String):
   def displayName: String = version match
     case "HEAD"              => "head"
