@@ -107,7 +107,7 @@ class PrimitiveDecodingSuite extends ScalanotationSuite:
 
     assertTotalMap(summon[Reader[IntLiteral]], RawSchema.Int):
       case schema.SchemaMapping.TotalMap.IntMap(_) => true
-      case _                                          => false
+      case _                                       => false
     assertEquals(Readers.readAs[IntLiteral]("123"), Result.Ok(IntLiteral(123)))
     assertEquals(Expr.IntConstant(456).decodeAs[IntLiteral], Result.Ok(IntLiteral(456)))
     assertEquals(calls, 2)
@@ -119,7 +119,7 @@ class PrimitiveDecodingSuite extends ScalanotationSuite:
 
     assertTotalMap(summon[Reader[LongLiteral]], RawSchema.Long):
       case schema.SchemaMapping.TotalMap.LongMap(_) => true
-      case _                                           => false
+      case _                                        => false
     assertEquals(Readers.readAs[LongLiteral]("123L"), Result.Ok(LongLiteral(123L)))
     assertEquals(Expr.LongConstant(456L).decodeAs[LongLiteral], Result.Ok(LongLiteral(456L)))
     assertEquals(longCalls, 2)
@@ -131,7 +131,7 @@ class PrimitiveDecodingSuite extends ScalanotationSuite:
 
     assertTotalMap(summon[Reader[FloatLiteral]], RawSchema.Float):
       case schema.SchemaMapping.TotalMap.FloatMap(_) => true
-      case _                                            => false
+      case _                                         => false
     assertEquals(Readers.readAs[FloatLiteral]("1.5f"), Result.Ok(FloatLiteral(1.5f)))
     assertEquals(Expr.FloatConstant(2.5f).decodeAs[FloatLiteral], Result.Ok(FloatLiteral(2.5f)))
     assertEquals(floatCalls, 2)
@@ -143,7 +143,7 @@ class PrimitiveDecodingSuite extends ScalanotationSuite:
 
     assertTotalMap(summon[Reader[DoubleLiteral]], RawSchema.Double):
       case schema.SchemaMapping.TotalMap.DoubleMap(_) => true
-      case _                                             => false
+      case _                                          => false
     assertEquals(Readers.readAs[DoubleLiteral]("1.25"), Result.Ok(DoubleLiteral(1.25d)))
     assertEquals(Expr.DoubleConstant(2.5d).decodeAs[DoubleLiteral], Result.Ok(DoubleLiteral(2.5d)))
     assertEquals(doubleCalls, 2)
