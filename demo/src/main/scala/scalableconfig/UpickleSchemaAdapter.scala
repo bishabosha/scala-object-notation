@@ -1,7 +1,7 @@
 package scalableconfig
 
 import scalanotation.DecodeError
-import scalanotation.RawSchema
+import scalanotation.internal.RawSchema
 import scalanotation.Reader
 import scalanotation.ReadWriter as SonReadWriter
 import scalanotation.RouterSchema
