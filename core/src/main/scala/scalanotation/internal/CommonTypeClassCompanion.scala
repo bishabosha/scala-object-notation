@@ -8,6 +8,7 @@ import steps.result.Result
 import scala.NamedTuple.NamedTuple
 import scala.deriving.Mirror
 import scala.util.NotGiven
+import scalanotation.schema.RawSchema
 
 private[scalanotation] trait CommonTypeClassCompanion[TC[_]]:
   private[scalanotation] def fromSchema[T](schema0: RawSchema[T]): TC[T]
@@ -328,7 +329,7 @@ private[scalanotation] trait CommonTypeClassCompanion[TC[_]]:
   val Builders: CommonBuilders[false, ? <: "Reader" | "Writer" | "ReadWriter"]
 
   given ExprSchema: TC[Expr] =
-    fromSchema(RawSchema.ExprRouterSchema)
+    fromSchema(scalanotation.schema.ExprSchema.ExprRouterSchema)
 
   given StringSchema: TC[String] =
     fromSchema(RawSchema.String)

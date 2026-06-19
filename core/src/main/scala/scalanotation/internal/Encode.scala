@@ -5,6 +5,8 @@ import scalanotation.RouterSchema
 import scalanotation.TextFormat
 
 import scala.{Option => ScalaOption}
+import scalanotation.schema
+import scalanotation.schema.RawSchema
 
 private[scalanotation] object Encode:
   private def missingWriteCapability(schema: RawSchema[?]): Nothing =
@@ -27,8 +29,8 @@ private[scalanotation] object Encode:
       )
     selected
 
-  private def mappedInput(mapping: RawSchema.SchemaMapping[?, ?], value: Any): Any =
-    mapping.asInstanceOf[RawSchema.SchemaMapping[Any, Any]].mapInput(value)
+  private def mappedInput(mapping: schema.SchemaMapping[?, ?], value: Any): Any =
+    mapping.asInstanceOf[schema.SchemaMapping[Any, Any]].mapInput(value)
 
   def writeExpr(schema: RawSchema[?], value: Any): Expr =
     schema match
@@ -69,17 +71,17 @@ private[scalanotation] object Encode:
           (sum.discriminatorField -> Expr.StringConstant(sumCase.name)) +:
             writeDiscriminatorPayload(sumCase.schema, value)
         )
-      case vector: RawSchema.Vector[?] =>
+      case vector: RawSchema.Vector[?, ?] =>
         if vector.write == null then missingWriteCapability(schema)
         Expr.VectorExpr(
           vector.write.iterator(value).map(writeExpr(vector.element, _)).toIndexedSeq
         )
-      case tupleOf: RawSchema.TupleOf[?] =>
+      case tupleOf: RawSchema.TupleOf[?, ?] =>
         if tupleOf.write == null then missingWriteCapability(schema)
         Expr.TupleExpr(
           tupleOf.write.iterator(value).map(writeExpr(tupleOf.element, _)).toIndexedSeq
         )
-      case pairSeq: RawSchema.PairSeq[?] =>
+      case pairSeq: RawSchema.PairSeq[?, ?, ?] =>
         if pairSeq.write == null then missingWriteCapability(schema)
         Expr.VectorExpr(
           pairSeq.write
@@ -94,7 +96,7 @@ private[scalanotation] object Encode:
             )
             .toIndexedSeq
         )
-      case dict: RawSchema.Dict[?] =>
+      case dict: RawSchema.Dict[?, ?] =>
         if dict.write == null then missingWriteCapability(schema)
         Expr.NamedTupleExpr(
           dict.write
@@ -166,21 +168,21 @@ private[scalanotation] object Encode:
     case sum: RawSchema.DiscriminatorSum[?] =>
       if sum.write == null then missingWriteCapability(schema)
       ExprRenderer.renderExpr(writeExpr(sum, value), out, depth)
-    case vector: RawSchema.Vector[?] =>
+    case vector: RawSchema.Vector[?, ?] =>
       val write = vector.write
       if write == null then missingWriteCapability(schema)
       val values = write.iterator(value)
       ExprRenderer.renderVector(out, depth, write.size(value)) { _ =>
         renderText(vector.element, values.next(), out, depth + 1)
       }
-    case tupleOf: RawSchema.TupleOf[?] =>
+    case tupleOf: RawSchema.TupleOf[?, ?] =>
       val write = tupleOf.write
       if write == null then missingWriteCapability(schema)
       val values = write.iterator(value)
       ExprRenderer.renderTuple(out, depth, write.size(value)) { _ =>
         renderTupleElement(tupleOf.element, values.next(), out, depth + 1)
       }
-    case pairSeq: RawSchema.PairSeq[?] =>
+    case pairSeq: RawSchema.PairSeq[?, ?, ?] =>
       val write = pairSeq.write
       if write == null then missingWriteCapability(schema)
       val values = write.iterator(value)
@@ -188,7 +190,7 @@ private[scalanotation] object Encode:
         val (key, elem) = values.next()
         renderPair(pairSeq, key, elem, out, depth + 1)
       }
-    case dict: RawSchema.Dict[?] =>
+    case dict: RawSchema.Dict[?, ?] =>
       val write = dict.write
       if write == null then missingWriteCapability(schema)
       val values = write.iterator(value)
@@ -256,7 +258,7 @@ private[scalanotation] object Encode:
     renderText(schema, value, out, depth)
 
   private def renderPair(
-      schema: RawSchema.PairSeq[?],
+      schema: RawSchema.PairSeq[?, ?, ?],
       key: Any,
       value: Any,
       out: ExprRenderer.Output,

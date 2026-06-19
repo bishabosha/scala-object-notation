@@ -1,6 +1,6 @@
 package scalanotation
 
-import scalanotation.internal.RawSchema
+import scalanotation.schema.RawSchema
 import scalanotation.macros.TypedFactories
 import steps.result.Result
 

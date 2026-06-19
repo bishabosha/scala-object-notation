@@ -8,7 +8,7 @@ import scala.deriving.Mirror
 import scala.reflect.ClassTag
 import scala.util.NotGiven
 
-import scalanotation.internal.RawSchema
+import scalanotation.schema.RawSchema
 
 sealed trait ReadWriter[T]:
   def schema: RawSchema[T]

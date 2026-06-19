@@ -4,10 +4,12 @@ import scalanotation.DecodeError
 import scalanotation.Expr
 import scalanotation.Reader
 import scalanotation.RouterSchema
-import scalanotation.internal.RawSchema.Field
+import scalanotation.schema.RawSchema.Field
 import steps.result.Result
 import steps.result.Result.eval.check
 import steps.result.Result.eval.raise
+import scalanotation.schema.RawSchema
+import scalanotation.schema.ExprSchema
 
 private[scalanotation] object ExprDecoder:
   def decodeExpr[A: Reader as reader](expr: Expr): Result[A, DecodeError] =
@@ -52,7 +54,7 @@ private[scalanotation] class ExprDecoder() extends PushSlots with SharedHelpers:
       case RawSchema.Ref(_, target) =>
         decodeBase(target(), expr)
       case router: RawSchema.Router[?] =>
-        if router eq RawSchema.ExprRouterSchema then
+        if router eq ExprSchema.ExprRouterSchema then
           Result.task {
             pushRef(expr)
           }
@@ -67,13 +69,13 @@ private[scalanotation] class ExprDecoder() extends PushSlots with SharedHelpers:
         decodeSum(sc, expr)
       case sc: RawSchema.DiscriminatorSum[?] =>
         decodeDiscriminatorSum(sc, expr)
-      case sc: RawSchema.Vector[?] =>
+      case sc: RawSchema.Vector[?, ?] =>
         decodeVector(sc, expr)
-      case sc: RawSchema.TupleOf[?] =>
+      case sc: RawSchema.TupleOf[?, ?] =>
         decodeTupleOf(sc, expr)
-      case sc: RawSchema.PairSeq[?] =>
+      case sc: RawSchema.PairSeq[?, ?, ?] =>
         decodePairSeq(sc, expr)
-      case sc: RawSchema.Dict[?] =>
+      case sc: RawSchema.Dict[?, ?] =>
         decodeDict(sc, expr)
       case sc: RawSchema.Option[?] =>
         expr match
@@ -176,7 +178,7 @@ private[scalanotation] class ExprDecoder() extends PushSlots with SharedHelpers:
       case Expr.NullConstant       => RouterConstruct.Null
 
   private def decodeVector(
-      schema: RawSchema.Vector[?],
+      schema: RawSchema.Vector[?, ?],
       expr: Expr
   ): Result[Unit, DecodeError] =
     withRead(schema, _.read): read =>
@@ -194,7 +196,7 @@ private[scalanotation] class ExprDecoder() extends PushSlots with SharedHelpers:
             raise(DecodeError.ExpectedType(schema.describeSelf, describeExpr(other)))
 
   private def decodeTupleOf(
-      schema: RawSchema.TupleOf[?],
+      schema: RawSchema.TupleOf[?, ?],
       expr: Expr
   ): Result[Unit, DecodeError] =
     withRead(schema, _.read): read =>
@@ -212,7 +214,7 @@ private[scalanotation] class ExprDecoder() extends PushSlots with SharedHelpers:
             raise(DecodeError.ExpectedType(schema.describeSelf, describeExpr(other)))
 
   private def decodePairSeq(
-      schema: RawSchema.PairSeq[?],
+      schema: RawSchema.PairSeq[?, ?, ?],
       expr: Expr
   ): Result[Unit, DecodeError] = Result.task:
     expr match
@@ -324,7 +326,7 @@ private[scalanotation] class ExprDecoder() extends PushSlots with SharedHelpers:
   }
 
   private def decodeDict(
-      schema: RawSchema.Dict[?],
+      schema: RawSchema.Dict[?, ?],
       expr: Expr
   ): Result[Unit, DecodeError] =
     withRead(schema, _.read): read =>
@@ -355,7 +357,7 @@ private[scalanotation] class ExprDecoder() extends PushSlots with SharedHelpers:
           val fieldExpr = fieldExprs(0)
           val caseName  = fieldExpr.name
           val value     = fieldExpr.value
-          val sumCase   = RawSchema.findCase(schema.cases, caseName) match
+          val sumCase   = RawSchema.findCase(schema, caseName) match
             case null => raise(DecodeError.UnexpectedField(caseName).atPath(s".$caseName"))
             case c    => c
           checkOrRaise(decodeBase(sumCase.schema, value))(_.atPath(s".$caseName"))
@@ -380,7 +382,7 @@ private[scalanotation] class ExprDecoder() extends PushSlots with SharedHelpers:
             _.atPath(s".$discriminatorField")
           )
           val caseName = pullStringStrict()
-          val sumCase  = RawSchema.findCase(schema.cases, caseName) match
+          val sumCase  = RawSchema.findCase(schema, caseName) match
             case null =>
               raise(DecodeError.UnexpectedField(caseName).atPath(s".$discriminatorField"))
             case c => c

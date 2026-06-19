@@ -8,6 +8,7 @@ import steps.result.Result.eval.check
 import steps.result.Result.eval.raise
 
 import scala.compiletime.uninitialized
+import scalanotation.schema.RawSchema
 
 private[scalanotation] object TokenDecoder:
 
@@ -17,7 +18,7 @@ private[scalanotation] object TokenDecoder:
     * borrows a second instance instead of corrupting the active one.
     */
   private[scalanotation] enum PoolHolder:
-    case RealPoolHolder(pool: Internal.Pool[TokenDecoder])
+    case RealPoolHolder(pool: PublicInternal.Pool[TokenDecoder])
     case NoPoolHolder
 
   private def pooled(): TokenDecoder =

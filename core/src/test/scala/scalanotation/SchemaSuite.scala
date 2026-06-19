@@ -4,7 +4,8 @@ import java.time.LocalDate
 import java.time.format.DateTimeParseException
 
 import scalanotation.internal.PublicInternal
-import scalanotation.internal.RawSchema
+import scalanotation.schema.RawSchema
+import scalanotation.schema
 import steps.result.Result
 
 import scala.collection.immutable.ListMap
@@ -145,7 +146,7 @@ class SchemaSuite extends ScalanotationSuite:
         assertEquals(base.asInstanceOf[Any], RawSchema.Int)
         assertEquals(mapping.resultMap, null)
         mapping.totalMaps match
-          case RawSchema.SchemaMapping.TotalMap.AnyMap(_) => ()
+          case schema.SchemaMapping.TotalMap.AnyMap(_) => ()
           case other => fail(s"Expected a pure mapped reader schema, got $other")
         assertEquals(mapping.inputMap, null)
         assertEquals(mappedReader.schema.describeSelf, "Int")
@@ -158,7 +159,7 @@ class SchemaSuite extends ScalanotationSuite:
         assertEquals(base.asInstanceOf[Any], RawSchema.Int)
         assertEquals(mapping.resultMap, null)
         mapping.totalMaps match
-          case RawSchema.SchemaMapping.TotalMap.AnyMap(_) => ()
+          case schema.SchemaMapping.TotalMap.AnyMap(_) => ()
           case other => fail(s"Expected a composed pure mapped reader schema, got $other")
       case other =>
         fail(s"Expected a mapped reader schema, got $other")
@@ -180,7 +181,7 @@ class SchemaSuite extends ScalanotationSuite:
         assertEquals(base.asInstanceOf[Any], RawSchema.Int)
         assertEquals(mapping.resultMap, null)
         mapping.totalMaps match
-          case RawSchema.SchemaMapping.TotalMap.AnyMap(_) => ()
+          case schema.SchemaMapping.TotalMap.AnyMap(_) => ()
           case other => fail(s"Expected a pure mapped read-writer schema, got $other")
         assert(mapping.inputMap != null)
       case other =>
@@ -191,7 +192,7 @@ class SchemaSuite extends ScalanotationSuite:
         assertEquals(base.asInstanceOf[Any], RawSchema.Null)
         assertEquals(mapping.resultMap, null)
         mapping.totalMaps match
-          case RawSchema.SchemaMapping.TotalMap.AnyMap(_) => ()
+          case schema.SchemaMapping.TotalMap.AnyMap(_) => ()
           case other => fail(s"Expected a pure mapped nullary schema, got $other")
         assertEquals(mapping.inputMap, null)
       case other =>
@@ -211,7 +212,7 @@ class SchemaSuite extends ScalanotationSuite:
         assertEquals(base.asInstanceOf[Any], RawSchema.Int)
         assertEquals(mapping.resultMap, null)
         mapping.totalMaps match
-          case RawSchema.SchemaMapping.TotalMap.AnyMap(_) => ()
+          case schema.SchemaMapping.TotalMap.AnyMap(_) => ()
           case other => fail(s"Expected a composed pure mapped read-writer schema, got $other")
         assert(mapping.inputMap != null)
       case other =>
@@ -273,8 +274,8 @@ class SchemaSuite extends ScalanotationSuite:
           RawSchema.routerCase(router, router.router.recordIndex).nn.name,
           "NamedTupleExpr"
         )
-        router.cases(RawSchema.ExprRouter.NamedTupleCase).schema match
-          case dict: RawSchema.Dict[?] =>
+        router.cases(schema.ExprSchema.ExprRouter.NamedTupleCase).schema match
+          case dict: RawSchema.Dict[?, ?] =>
             dict.element match
               case ref: RawSchema.Ref[?] =>
                 assertEquals(ref.name, "Expr")
@@ -351,7 +352,7 @@ class SchemaSuite extends ScalanotationSuite:
           "TupleArr"
         )
         router.cases(0).schema match
-          case dict: RawSchema.Dict[?] =>
+          case dict: RawSchema.Dict[?, ?] =>
             dict.element match
               case ref: RawSchema.Ref[?] =>
                 assertEquals(ref.name, "MiniNode")
