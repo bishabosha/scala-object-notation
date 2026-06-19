@@ -5,7 +5,7 @@ import scalanotation.internal.Encode
 import scalanotation.internal.ExprRenderer
 import scalanotation.internal.IdentifierSyntax
 
-import scalanotation.internal.RawSchema
+import scalanotation.schema.RawSchema
 
 import scala.deriving.Mirror
 import scala.util.NotGiven

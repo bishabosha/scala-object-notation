@@ -4,7 +4,8 @@ import java.time.LocalDate
 import java.time.format.DateTimeParseException
 
 import scalanotation.internal.PublicInternal
-import scalanotation.internal.RawSchema
+import scalanotation.schema.RawSchema
+import scalanotation.schema
 import steps.result.Result
 
 import scala.collection.mutable
@@ -90,7 +91,7 @@ class PrimitiveDecodingSuite extends ScalanotationSuite:
     final case class DoubleLiteral(value: Double)
 
     def assertTotalMap[T](reader: Reader[T], base: RawSchema[?])(
-        isExpected: RawSchema.SchemaMapping.TotalMap[?, ?] => Boolean
+        isExpected: schema.SchemaMapping.TotalMap[?, ?] => Boolean
     ): Unit =
       reader.schema match
         case RawSchema.Mapped(mappedBase, mapping) if mappedBase == base =>
@@ -105,7 +106,7 @@ class PrimitiveDecodingSuite extends ScalanotationSuite:
       IntLiteral(value)
 
     assertTotalMap(summon[Reader[IntLiteral]], RawSchema.Int):
-      case RawSchema.SchemaMapping.TotalMap.IntMap(_) => true
+      case schema.SchemaMapping.TotalMap.IntMap(_) => true
       case _                                          => false
     assertEquals(Readers.readAs[IntLiteral]("123"), Result.Ok(IntLiteral(123)))
     assertEquals(Expr.IntConstant(456).decodeAs[IntLiteral], Result.Ok(IntLiteral(456)))
@@ -117,7 +118,7 @@ class PrimitiveDecodingSuite extends ScalanotationSuite:
       LongLiteral(value)
 
     assertTotalMap(summon[Reader[LongLiteral]], RawSchema.Long):
-      case RawSchema.SchemaMapping.TotalMap.LongMap(_) => true
+      case schema.SchemaMapping.TotalMap.LongMap(_) => true
       case _                                           => false
     assertEquals(Readers.readAs[LongLiteral]("123L"), Result.Ok(LongLiteral(123L)))
     assertEquals(Expr.LongConstant(456L).decodeAs[LongLiteral], Result.Ok(LongLiteral(456L)))
@@ -129,7 +130,7 @@ class PrimitiveDecodingSuite extends ScalanotationSuite:
       FloatLiteral(value)
 
     assertTotalMap(summon[Reader[FloatLiteral]], RawSchema.Float):
-      case RawSchema.SchemaMapping.TotalMap.FloatMap(_) => true
+      case schema.SchemaMapping.TotalMap.FloatMap(_) => true
       case _                                            => false
     assertEquals(Readers.readAs[FloatLiteral]("1.5f"), Result.Ok(FloatLiteral(1.5f)))
     assertEquals(Expr.FloatConstant(2.5f).decodeAs[FloatLiteral], Result.Ok(FloatLiteral(2.5f)))
@@ -141,7 +142,7 @@ class PrimitiveDecodingSuite extends ScalanotationSuite:
       DoubleLiteral(value)
 
     assertTotalMap(summon[Reader[DoubleLiteral]], RawSchema.Double):
-      case RawSchema.SchemaMapping.TotalMap.DoubleMap(_) => true
+      case schema.SchemaMapping.TotalMap.DoubleMap(_) => true
       case _                                             => false
     assertEquals(Readers.readAs[DoubleLiteral]("1.25"), Result.Ok(DoubleLiteral(1.25d)))
     assertEquals(Expr.DoubleConstant(2.5d).decodeAs[DoubleLiteral], Result.Ok(DoubleLiteral(2.5d)))

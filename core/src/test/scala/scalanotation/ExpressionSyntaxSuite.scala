@@ -4,7 +4,7 @@ import java.time.LocalDate
 import java.time.format.DateTimeParseException
 
 import scalanotation.internal.PublicInternal
-import scalanotation.internal.RawSchema
+import scalanotation.schema.RawSchema
 import steps.result.Result
 
 import scala.collection.mutable
@@ -124,12 +124,12 @@ class ExpressionSyntaxSuite extends ScalanotationSuite:
   test("reject parenthesized single expressions"):
     Readers.readAs[Expr]("(1)") match
       case Result.Err(error) =>
-        assertEquals(error.rootCause, DecodeError.ExpectedType("Tuple[...]", "(...)"))
+        assertEquals(error.rootCause, DecodeError.ExpectedType("Tuple", "(...)"))
       case Result.Ok(value) => fail(s"Expected a decode failure, got $value")
 
     Readers.readAs[Expr]("((1))") match
       case Result.Err(error) =>
-        assertEquals(error.rootCause, DecodeError.ExpectedType("Tuple[...]", "(...)"))
+        assertEquals(error.rootCause, DecodeError.ExpectedType("Tuple", "(...)"))
       case Result.Ok(value) => fail(s"Expected a decode failure, got $value")
 
   test("reject singleton comma tuple literal expressions"):
