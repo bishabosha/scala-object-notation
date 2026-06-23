@@ -185,117 +185,132 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
           if fields.length > SeenFieldMaskLimit then fieldSetPool.borrow().reset(fields.length)
           else null
         try
-          Result.task {
-            schema.isValidNamedTuple(namesPool).check
+          schema.isValidNamedTuple(namesPool) match
+            case err: Result.Err[DecodeError] => err
+            case _                            =>
+              var state: read.State            = read.init(fields.length, slots)
+              var fieldIndex                   = 0
+              var seenFieldMask                = 0L
+              var lastFieldName: String | Null = null
 
-            var state: read.State            = read.init(fields.length, slots)
-            var fieldIndex                   = 0
-            var seenFieldMask                = 0L
-            var lastFieldName: String | Null = null
+              def actualNameAlreadySeen(): Boolean =
+                val actualIndex = currentFieldIndexOf(fields)
+                actualIndex >= 0 && fieldIndexAlreadySeen(
+                  jumboSeenFields,
+                  seenFieldMask,
+                  actualIndex
+                )
 
-            def actualNameAlreadySeen(): Boolean =
-              val actualIndex = currentFieldIndexOf(fields)
-              actualIndex >= 0 && fieldIndexAlreadySeen(
-                jumboSeenFields,
-                seenFieldMask,
-                actualIndex
-              )
+              def markFieldSeen(index: Int): Unit =
+                val seenFields = jumboSeenFields
+                if seenFields != null then seenFields.markSeen(index)
+                else seenFieldMask |= 1L << index
 
-            def markFieldSeen(index: Int): Unit =
-              val seenFields = jumboSeenFields
-              if seenFields != null then seenFields.markSeen(index)
-              else seenFieldMask |= 1L << index
-
-            val parsed =
-              parseNamedTupleStructureByCurrentName(schema, allowEmpty = fields.isEmpty) {
-                (nameOffset, parsedFieldIndex) =>
-                  if !isFieldNameStart(currentKind()) then
-                    raise(DecodeError.ExpectedFieldName(describeCurrent()).atToken(currentSpan()))
-                  def actualFieldErr(err: String => DecodeError): DecodeError =
-                    val actualName = currentFieldName()
-                    err(actualName).atPath(s".${actualName}").atToken(spanAt(nameOffset))
-                  val validated: DecodeError | Field = {
-                    if schema.allowSkippedNullableFields then
-                      val expectedBeforeSkip =
-                        if fieldIndex < fields.length then fields(fieldIndex) else null
-                      while fieldIndex < fields.length
-                        && !currentFieldNameMatches(fields(fieldIndex).name)
-                        && TokenDecoder.isNullable(fields(fieldIndex).schema)
-                      do
-                        state = read.add(state, fieldIndex, None)
-                        fieldIndex += 1
-
-                      if fieldIndex >= fields.length then
-                        if actualNameAlreadySeen() then
-                          actualFieldErr(DecodeError.DuplicateField(_))
-                        else if expectedBeforeSkip == null then
-                          actualFieldErr(_ =>
-                            DecodeError.FieldCountMismatch(fields.length, parsedFieldIndex + 1)
-                          )
-                        else
-                          actualFieldErr(actualName =>
-                            DecodeError.FieldOrderMismatch(expectedBeforeSkip.name, actualName)
-                          )
-                      else
-                        val expectedField = fields(fieldIndex)
-                        if !currentFieldNameMatches(expectedField.name) then
-                          if actualNameAlreadySeen() then
-                            actualFieldErr(DecodeError.DuplicateField(_))
-                          else
-                            actualFieldErr(actualName =>
-                              DecodeError.FieldOrderMismatch(expectedField.name, actualName)
-                            )
-                        else expectedField
-                    else if parsedFieldIndex >= fields.length then
-                      if actualNameAlreadySeen() then actualFieldErr(DecodeError.DuplicateField(_))
-                      else
-                        actualFieldErr(_ =>
-                          DecodeError.FieldCountMismatch(fields.length, parsedFieldIndex + 1)
+              val parsedResult: NamedTupleParseResult | Result.Err[DecodeError] =
+                if currentKind() == TokenKind.LParen then
+                  advance()
+                  parsePartialNamedTupleStructureByCurrentNameResult {
+                    (nameOffset, parsedFieldIndex) =>
+                      if !isFieldNameStart(currentKind()) then
+                        Result.Err(
+                          DecodeError.ExpectedFieldName(describeCurrent()).atToken(currentSpan())
                         )
-                    else
-                      val expectedField = fields(parsedFieldIndex)
-                      if !currentFieldNameMatches(expectedField.name) then
-                        if actualNameAlreadySeen() then
-                          actualFieldErr(DecodeError.DuplicateField(_))
-                        else
-                          actualFieldErr(actualName =>
-                            DecodeError.FieldOrderMismatch(expectedField.name, actualName)
-                          )
-                      else expectedField
+                      else
+                        val validated: DecodeError | Field = {
+                          if schema.allowSkippedNullableFields then
+                            val expectedBeforeSkip =
+                              if fieldIndex < fields.length then fields(fieldIndex) else null
+                            while fieldIndex < fields.length
+                              && !currentFieldNameMatches(fields(fieldIndex).name)
+                              && TokenDecoder.isNullable(fields(fieldIndex).schema)
+                            do
+                              state = read.add(state, fieldIndex, None)
+                              fieldIndex += 1
+
+                            if fieldIndex >= fields.length then
+                              if actualNameAlreadySeen() then duplicateCurrentFieldError(nameOffset)
+                              else if expectedBeforeSkip == null then
+                                currentFieldCountMismatchError(
+                                  nameOffset,
+                                  fields.length,
+                                  parsedFieldIndex + 1
+                                )
+                              else
+                                currentFieldOrderMismatchError(
+                                  nameOffset,
+                                  expectedBeforeSkip.name
+                                )
+                            else
+                              val expectedField = fields(fieldIndex)
+                              if !currentFieldNameMatches(expectedField.name) then
+                                if actualNameAlreadySeen() then
+                                  duplicateCurrentFieldError(nameOffset)
+                                else currentFieldOrderMismatchError(nameOffset, expectedField.name)
+                              else expectedField
+                          else if parsedFieldIndex >= fields.length then
+                            if actualNameAlreadySeen() then duplicateCurrentFieldError(nameOffset)
+                            else
+                              currentFieldCountMismatchError(
+                                nameOffset,
+                                fields.length,
+                                parsedFieldIndex + 1
+                              )
+                          else
+                            val expectedField = fields(parsedFieldIndex)
+                            if !currentFieldNameMatches(expectedField.name) then
+                              if actualNameAlreadySeen() then duplicateCurrentFieldError(nameOffset)
+                              else currentFieldOrderMismatchError(nameOffset, expectedField.name)
+                            else expectedField
+                        }
+                        validated match
+                          case expectedField: Field =>
+                            val decodedIndex =
+                              if schema.allowSkippedNullableFields then fieldIndex
+                              else parsedFieldIndex
+                            parseNamedFieldStartNoPush() match
+                              case err: Result.Err[DecodeError] => err
+                              case _                            =>
+                                decodeBase(expectedField.schema) match
+                                  case Result.Err(error) =>
+                                    Result.Err(
+                                      error
+                                        .atPath(s".${expectedField.name}")
+                                        .atToken(spanAt(nameOffset))
+                                    )
+                                  case _ =>
+                                    state = addSlot(read)(state, decodedIndex)
+                                    markFieldSeen(decodedIndex)
+                                    fieldIndex = decodedIndex + 1
+                                    lastFieldName = expectedField.name
+                                    Result.done
+                          case err: DecodeError => Result.Err(err)
                   }
-                  validated match
-                    case expectedField: Field =>
-                      val decodedIndex =
-                        if schema.allowSkippedNullableFields then fieldIndex else parsedFieldIndex
-                      parseNamedFieldStartNoPush().check
-                      checkOrRaise(decodeBase(expectedField.schema))(
-                        _.atPath(s".${expectedField.name}").atToken(spanAt(nameOffset))
-                      )
-                      state = addSlot(read)(state, decodedIndex)
-                      markFieldSeen(decodedIndex)
-                      fieldIndex = decodedIndex + 1
-                      lastFieldName = expectedField.name
-                    case err: DecodeError => raise(err)
-              }
+                else
+                  Result.Err(
+                    DecodeError
+                      .ExpectedType(schema.describeSelf, describeCurrent())
+                      .atToken(currentSpan())
+                  )
 
-            if schema.allowSkippedNullableFields && fields.nonEmpty && parsed.fieldCount == 0 then
-              raise(DecodeError.UnitValueNotAllowed().atToken(spanAt(parsed.closingOffset)))
+              parsedResult match
+                case err: Result.Err[DecodeError]  => err
+                case parsed: NamedTupleParseResult =>
+                  if fields.nonEmpty && parsed.fieldCount == 0 then
+                    Result.Err(
+                      DecodeError.UnitValueNotAllowed().atToken(spanAt(parsed.closingOffset))
+                    )
+                  else
+                    if schema.allowSkippedNullableFields then
+                      state = fillSkippedNullableFields(read)(fields, state, fieldIndex, "")
+                      fieldIndex = pullSkipFillIndex()
 
-            if schema.allowSkippedNullableFields then
-              state = fillSkippedNullableFields(read)(fields, state, fieldIndex, "")
-              fieldIndex = pullSkipFillIndex()
-
-            val decodedFieldCount =
-              if schema.allowSkippedNullableFields then fieldIndex else parsed.fieldCount
-            if decodedFieldCount != fields.length then
-              def err =
-                var err0 = DecodeError.FieldCountMismatch(fields.length, parsed.fieldCount)
-                if lastFieldName != null then err0 = err0.atPath(s".${lastFieldName}")
-                err0.atToken(spanAt(parsed.closingOffset))
-              raise(err)
-
-            pushRef(read.finish(state))
-          }
+                    val decodedFieldCount =
+                      if schema.allowSkippedNullableFields then fieldIndex else parsed.fieldCount
+                    if decodedFieldCount != fields.length then
+                      Result.Err(fieldCountMismatchAtClosing(fields, parsed, lastFieldName))
+                    else
+                      pushRef(read.finish(state))
+                      Result.done
         finally if jumboSeenFields != null then fieldSetPool.release(jumboSeenFields)
       }
     }
@@ -316,6 +331,41 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
   ): Boolean =
     if jumboSeenFields != null then jumboSeenFields.isSeen(index)
     else (seenFieldMask & (1L << index)) != 0L
+
+  private def duplicateCurrentFieldError(nameOffset: Int): DecodeError =
+    val actualName = currentFieldName()
+    DecodeError.DuplicateField(actualName).atPath(s".${actualName}").atToken(spanAt(nameOffset))
+
+  private def currentFieldCountMismatchError(
+      nameOffset: Int,
+      expected: Int,
+      actual: Int
+  ): DecodeError =
+    val actualName = currentFieldName()
+    DecodeError
+      .FieldCountMismatch(expected, actual)
+      .atPath(s".${actualName}")
+      .atToken(
+        spanAt(nameOffset)
+      )
+
+  private def currentFieldOrderMismatchError(nameOffset: Int, expected: String): DecodeError =
+    val actualName = currentFieldName()
+    DecodeError
+      .FieldOrderMismatch(expected, actualName)
+      .atPath(s".${actualName}")
+      .atToken(
+        spanAt(nameOffset)
+      )
+
+  private def fieldCountMismatchAtClosing(
+      fields: IArray[Field],
+      parsed: NamedTupleParseResult,
+      lastFieldName: String | Null
+  ): DecodeError =
+    var err = DecodeError.FieldCountMismatch(fields.length, parsed.fieldCount)
+    if lastFieldName != null then err = err.atPath(s".${lastFieldName}")
+    err.atToken(spanAt(parsed.closingOffset))
 
   protected final def decodeSum(schema: RawSchema.Sum[?]): Result[Unit, DecodeError] =
     Result.task {
@@ -427,109 +477,113 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
           if fields.length > SeenFieldMaskLimit then fieldSetPool.borrow().reset(fields.length)
           else null
         try
-          Result.task {
-            schema.isValidNamedTuple(namesPool).check
-            var state: read.State            = read.init(fields.length, slots)
-            var fieldIndex                   = 0
-            var seenFieldMask                = 0L
-            var lastFieldName: String | Null = null
+          schema.isValidNamedTuple(namesPool) match
+            case err: Result.Err[DecodeError] => err
+            case _                            =>
+              var state: read.State            = read.init(fields.length, slots)
+              var fieldIndex                   = 0
+              var seenFieldMask                = 0L
+              var lastFieldName: String | Null = null
 
-            def actualNameAlreadySeen(): Boolean =
-              val actualIndex = currentFieldIndexOf(fields)
-              actualIndex >= 0 && fieldIndexAlreadySeen(
-                jumboSeenFields,
-                seenFieldMask,
-                actualIndex
-              )
+              def actualNameAlreadySeen(): Boolean =
+                val actualIndex = currentFieldIndexOf(fields)
+                actualIndex >= 0 && fieldIndexAlreadySeen(
+                  jumboSeenFields,
+                  seenFieldMask,
+                  actualIndex
+                )
 
-            def markFieldSeen(index: Int): Unit =
-              val seenFields = jumboSeenFields
-              if seenFields != null then seenFields.markSeen(index)
-              else seenFieldMask |= 1L << index
+              def markFieldSeen(index: Int): Unit =
+                val seenFields = jumboSeenFields
+                if seenFields != null then seenFields.markSeen(index)
+                else seenFieldMask |= 1L << index
 
-            val parsed = parsePartialNamedTupleStructureByCurrentName(schema) {
-              (nameOffset, parsedFieldIndex) =>
-                if !isFieldNameStart(currentKind()) then
-                  raise(DecodeError.ExpectedFieldName(describeCurrent()).atToken(currentSpan()))
-                def actualFieldErr(err: String => DecodeError): DecodeError =
-                  val actualName = currentFieldName()
-                  err(actualName).atPath(s".${actualName}").atToken(spanAt(nameOffset))
-                val validated: DecodeError | Field = {
-                  if currentFieldNameMatches(alreadySeenField) then
-                    actualFieldErr(DecodeError.DuplicateField(_))
-                  else if schema.allowSkippedNullableFields then
-                    val expectedBeforeSkip =
-                      if fieldIndex < fields.length then fields(fieldIndex) else null
-                    while fieldIndex < fields.length
-                      && !currentFieldNameMatches(fields(fieldIndex).name)
-                      && TokenDecoder.isNullable(fields(fieldIndex).schema)
-                    do
-                      state = read.add(state, fieldIndex, None)
-                      fieldIndex += 1
-                    if fieldIndex >= fields.length then
-                      if actualNameAlreadySeen() then actualFieldErr(DecodeError.DuplicateField(_))
-                      else if expectedBeforeSkip == null then
-                        actualFieldErr(_ =>
-                          DecodeError.FieldCountMismatch(fields.length, parsedFieldIndex + 1)
-                        )
-                      else
-                        actualFieldErr(actualName =>
-                          DecodeError.FieldOrderMismatch(expectedBeforeSkip.name, actualName)
-                        )
-                    else
-                      val expectedField = fields(fieldIndex)
-                      if !currentFieldNameMatches(expectedField.name) then
-                        if actualNameAlreadySeen() then
-                          actualFieldErr(DecodeError.DuplicateField(_))
-                        else
-                          actualFieldErr(actualName =>
-                            DecodeError.FieldOrderMismatch(expectedField.name, actualName)
-                          )
-                      else expectedField
-                  else if parsedFieldIndex >= fields.length then
-                    if actualNameAlreadySeen() then actualFieldErr(DecodeError.DuplicateField(_))
-                    else
-                      actualFieldErr(_ =>
-                        DecodeError.FieldCountMismatch(fields.length, parsedFieldIndex + 1)
-                      )
-                  else
-                    val expectedField = fields(parsedFieldIndex)
-                    if !currentFieldNameMatches(expectedField.name) then
-                      if actualNameAlreadySeen() then actualFieldErr(DecodeError.DuplicateField(_))
-                      else
-                        actualFieldErr(actualName =>
-                          DecodeError.FieldOrderMismatch(expectedField.name, actualName)
-                        )
-                    else expectedField
-                }
-                validated match
-                  case expectedField: Field =>
-                    val decodedIndex =
-                      if schema.allowSkippedNullableFields then fieldIndex else parsedFieldIndex
-                    parseNamedFieldStartNoPush().check
-                    checkOrRaise(decodeBase(expectedField.schema))(
-                      _.atPath(s".${expectedField.name}").atToken(spanAt(nameOffset))
+              val parsedResult = parsePartialNamedTupleStructureByCurrentNameResult {
+                (nameOffset, parsedFieldIndex) =>
+                  if !isFieldNameStart(currentKind()) then
+                    Result.Err(
+                      DecodeError.ExpectedFieldName(describeCurrent()).atToken(currentSpan())
                     )
-                    state = addSlot(read)(state, decodedIndex)
-                    markFieldSeen(decodedIndex)
-                    fieldIndex = decodedIndex + 1
-                    lastFieldName = expectedField.name
-                  case err: DecodeError => raise(err)
-            }
+                  else
+                    val validated: DecodeError | Field = {
+                      if currentFieldNameMatches(alreadySeenField) then
+                        duplicateCurrentFieldError(nameOffset)
+                      else if schema.allowSkippedNullableFields then
+                        val expectedBeforeSkip =
+                          if fieldIndex < fields.length then fields(fieldIndex) else null
+                        while fieldIndex < fields.length
+                          && !currentFieldNameMatches(fields(fieldIndex).name)
+                          && TokenDecoder.isNullable(fields(fieldIndex).schema)
+                        do
+                          state = read.add(state, fieldIndex, None)
+                          fieldIndex += 1
+                        if fieldIndex >= fields.length then
+                          if actualNameAlreadySeen() then duplicateCurrentFieldError(nameOffset)
+                          else if expectedBeforeSkip == null then
+                            currentFieldCountMismatchError(
+                              nameOffset,
+                              fields.length,
+                              parsedFieldIndex + 1
+                            )
+                          else currentFieldOrderMismatchError(nameOffset, expectedBeforeSkip.name)
+                        else
+                          val expectedField = fields(fieldIndex)
+                          if !currentFieldNameMatches(expectedField.name) then
+                            if actualNameAlreadySeen() then duplicateCurrentFieldError(nameOffset)
+                            else currentFieldOrderMismatchError(nameOffset, expectedField.name)
+                          else expectedField
+                      else if parsedFieldIndex >= fields.length then
+                        if actualNameAlreadySeen() then duplicateCurrentFieldError(nameOffset)
+                        else
+                          currentFieldCountMismatchError(
+                            nameOffset,
+                            fields.length,
+                            parsedFieldIndex + 1
+                          )
+                      else
+                        val expectedField = fields(parsedFieldIndex)
+                        if !currentFieldNameMatches(expectedField.name) then
+                          if actualNameAlreadySeen() then duplicateCurrentFieldError(nameOffset)
+                          else currentFieldOrderMismatchError(nameOffset, expectedField.name)
+                        else expectedField
+                    }
+                    validated match
+                      case expectedField: Field =>
+                        val decodedIndex =
+                          if schema.allowSkippedNullableFields then fieldIndex else parsedFieldIndex
+                        parseNamedFieldStartNoPush() match
+                          case err: Result.Err[DecodeError] => err
+                          case _                            =>
+                            decodeBase(expectedField.schema) match
+                              case Result.Err(error) =>
+                                Result.Err(
+                                  error
+                                    .atPath(s".${expectedField.name}")
+                                    .atToken(spanAt(nameOffset))
+                                )
+                              case _ =>
+                                state = addSlot(read)(state, decodedIndex)
+                                markFieldSeen(decodedIndex)
+                                fieldIndex = decodedIndex + 1
+                                lastFieldName = expectedField.name
+                                Result.done
+                      case err: DecodeError => Result.Err(err)
+              }
 
-            if schema.allowSkippedNullableFields then
-              state = fillSkippedNullableFields(read)(fields, state, fieldIndex, "")
-              fieldIndex = pullSkipFillIndex()
+              parsedResult match
+                case err: Result.Err[DecodeError]  => err
+                case parsed: NamedTupleParseResult =>
+                  if schema.allowSkippedNullableFields then
+                    state = fillSkippedNullableFields(read)(fields, state, fieldIndex, "")
+                    fieldIndex = pullSkipFillIndex()
 
-            val decodedFieldCount =
-              if schema.allowSkippedNullableFields then fieldIndex else parsed.fieldCount
-            if decodedFieldCount != fields.length then
-              var err = DecodeError.FieldCountMismatch(fields.length, parsed.fieldCount)
-              if lastFieldName != null then err = err.atPath(s".${lastFieldName}")
-              raise(err.atToken(spanAt(parsed.closingOffset)))
-
-            pushRef(read.finish(state))
-          }
+                  val decodedFieldCount =
+                    if schema.allowSkippedNullableFields then fieldIndex else parsed.fieldCount
+                  if decodedFieldCount != fields.length then
+                    Result.Err(fieldCountMismatchAtClosing(fields, parsed, lastFieldName))
+                  else
+                    pushRef(read.finish(state))
+                    Result.done
         finally if jumboSeenFields != null then fieldSetPool.release(jumboSeenFields)
       }
     }
