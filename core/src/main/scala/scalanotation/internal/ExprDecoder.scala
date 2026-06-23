@@ -267,7 +267,7 @@ private[scalanotation] class ExprDecoder() extends PushSlots with SharedHelpers:
   private def decodeNamedTuple(
       schema: RawSchema.NamedTuple[?],
       expr: Expr
-  ): Result[Unit, DecodeError] = namesPool.withBorrowed { seenNames =>
+  ): Result[Unit, DecodeError] =
     withRead(schema, _.read): read =>
       Result.task:
         schema.isValidNamedTuple(namesPool).check
@@ -323,7 +323,6 @@ private[scalanotation] class ExprDecoder() extends PushSlots with SharedHelpers:
             pushRef(read.finish(state))
           case other =>
             raise(DecodeError.ExpectedType(schema.describeSelf, describeExpr(other)))
-  }
 
   private def decodeDict(
       schema: RawSchema.Dict[?, ?],

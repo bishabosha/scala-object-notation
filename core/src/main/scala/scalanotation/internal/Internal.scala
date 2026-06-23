@@ -76,6 +76,36 @@ private[internal] object Internal {
 
         def clear(): Unit = seen.underlying0.clear()
 
+  final class JumboFieldSet:
+    private var bits: Array[Long] = new Array[Long](4)
+    private var words: Int        = 0
+
+    def reset(fieldCount: Int): this.type =
+      val requiredWords = (fieldCount + java.lang.Long.SIZE - 1) >>> 6
+      if bits.length < requiredWords then bits = new Array[Long](requiredWords)
+      else java.util.Arrays.fill(bits, 0, requiredWords, 0L)
+      words = requiredWords
+      this
+
+    def markSeen(index: Int): Unit =
+      val word = index >>> 6
+      bits(word) |= 1L << (index & 63)
+
+    def isSeen(index: Int): Boolean =
+      val word = index >>> 6
+      (bits(word) & (1L << (index & 63))) != 0L
+
+    def clear(): Unit =
+      java.util.Arrays.fill(bits, 0, words, 0L)
+      words = 0
+
+  object JumboFieldSet:
+    given Alloc[JumboFieldSet]:
+      def alloc(): JumboFieldSet            = new JumboFieldSet
+      def prepare(t: JumboFieldSet): t.type =
+        t.clear()
+        t
+
   trait Alloc[T] {
     def alloc(): T
     def prepare(t: T): t.type
@@ -106,6 +136,9 @@ private[internal] object Internal {
     // skips the slots path and must not pay for the pool either.
     @threadUnsafe
     private[internal] lazy val slotsPool = Internal.LocalPool[scalanotation.BuilderSlots]()
+
+    @threadUnsafe
+    private[internal] lazy val fieldSetPool = Internal.LocalPool[Internal.JumboFieldSet]()
 
     private[internal] inline def withBorrowSlots[T](
         factory: scalanotation.TypedFactory.OfProduct[?] | Null
