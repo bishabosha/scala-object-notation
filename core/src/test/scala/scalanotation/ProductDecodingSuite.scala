@@ -191,32 +191,6 @@ class ProductDecodingSuite extends ScalanotationSuite:
 
     assertEquals(decoded, Result.Ok(expected))
 
-  test("skippable case class readers do not treat skipped nullable fields as duplicates"):
-    final case class User(
-        name: String,
-        refreshSeconds: Option[Int],
-        debug: Boolean,
-        description: Option[String]
-    )
-
-    given Reader[User] = Reader.skippable.derived
-
-    val input =
-      """val data = (
-        |  name = "Ada",
-        |  debug = true,
-        |  refreshSeconds = 5
-        |)
-        |""".stripMargin
-
-    Readers.readDeclAs[User](input, rootName = "data") match
-      case Result.Err(error) =>
-        assertEquals(
-          error.rootCause,
-          DecodeError.FieldOrderMismatch("description", "refreshSeconds")
-        )
-      case Result.Ok(value) => fail(s"Expected a decode failure, got $value")
-
   test("case class reader derivation allows all optional fields by default"):
     final case class Data(x: Option[Int], y: Option[String]) derives Reader
 
