@@ -10,8 +10,11 @@ import steps.result.Result.eval.raise
 import scala.util.boundary.Label
 import scalanotation.schema.RawSchema
 
-private[internal] trait BaseDecoders extends SharedHelpers:
+private[scalanotation] trait BaseDecoders extends SharedHelpers:
   self: TokenStream =>
+
+  @deprecated("unused", "0.4.1")
+  inline def __access(): TokenKind.type = TokenKind // preserves bincompat.
 
   protected type Resulting[+A, +E] = Label[Result.Err[E]] ?=> A
 
@@ -274,7 +277,7 @@ private[internal] trait BaseDecoders extends SharedHelpers:
     parsed
   }
 
-  private inline def parsePartialNamedTupleStructure(
+  protected inline def parsePartialNamedTupleStructure(
       schema: RawSchema[?]
   )(
       inline consumeFieldValue: Resulting[(String, Int, Int) => Unit, DecodeError]

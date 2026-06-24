@@ -10,7 +10,7 @@ import steps.result.Result.eval.raise
 import scalanotation.schema.RawSchema
 import scalanotation.internal.Internal.breakErr
 
-private[internal] trait SchemaDecoders extends BaseDecoders:
+private[scalanotation] trait SchemaDecoders extends BaseDecoders:
   self: TokenStream =>
 
   protected final def decodeBase(schema: RawSchema[?]): Result[Unit, DecodeError] =
