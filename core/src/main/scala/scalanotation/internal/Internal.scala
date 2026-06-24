@@ -76,12 +76,52 @@ private[internal] object Internal {
 
         def clear(): Unit = seen.underlying0.clear()
 
+  final class FieldIndexSet:
+    private var bits: Array[Long] = new Array[Long](1)
+    private var words: Int        = 0
+
+    def reset(fieldCount: Int): this.type =
+      val requiredWords = (fieldCount + java.lang.Long.SIZE - 1) >>> 6
+      if bits.length < requiredWords then bits = new Array[Long](requiredWords)
+      else java.util.Arrays.fill(bits, 0, words, 0L)
+      words = requiredWords
+      this
+
+    def mark(index: Int): Unit =
+      bits(index >>> 6) |= 1L << (index & 63)
+
+    def contains(index: Int): Boolean =
+      (bits(index >>> 6) & (1L << (index & 63))) != 0L
+
+    def nextMarked(fromIndex: Int): Int =
+      var wordIndex = fromIndex >>> 6
+      if wordIndex >= words then -1
+      else
+        var word = bits(wordIndex) & (-1L << (fromIndex & 63))
+        while word == 0L do
+          wordIndex += 1
+          if wordIndex >= words then return -1
+          word = bits(wordIndex)
+        (wordIndex << 6) + java.lang.Long.numberOfTrailingZeros(word)
+
+    def clear(): Unit =
+      java.util.Arrays.fill(bits, 0, words, 0L)
+      words = 0
+
+  object FieldIndexSet:
+    given Alloc[FieldIndexSet]:
+      def alloc(): FieldIndexSet            = new FieldIndexSet
+      def prepare(t: FieldIndexSet): t.type =
+        t.clear()
+        t
+
   trait Alloc[T] {
     def alloc(): T
     def prepare(t: T): t.type
   }
 
   import scala.util.boundary.Label
+  import steps.result.Result
   inline def loop[A](inline body: Label[A] ?=> Unit): A = {
     boundary[A] {
       while true do body
@@ -89,11 +129,18 @@ private[internal] object Internal {
     }
   }
   object loop {
-    def never: Nothing                                       = ???
-    inline def task(inline body: Label[Unit] ?=> Unit): Unit = loop[Unit](body)
-    inline def break[A](a: A)(using Label[A]): A             = boundary.break(a)
-    inline def break()(using Label[Unit]): Unit              = boundary.break()
+    def never: Nothing                                                                = ???
+    inline def task[E](inline body: Label[Result[Unit, E]] ?=> Unit): Result[Unit, E] = loop(body)
+    inline def break[A](a: A)(using Label[A]): Nothing          = boundary.break(a)
+    inline def break()(using Label[Unit]): Nothing              = boundary.break()
+    inline def done[E](using Label[Result[Unit, E]])(): Nothing = boundary.break(Result.done)
   }
+
+  // TODO: publish version of steps with this method!
+  inline def breakErr[E](using label: boundary.Label[Result.Err[E]])(
+      inline r: Result.Err[E]
+  ): Nothing =
+    boundary.break(r)
 
   private[internal] abstract class PoolHolder:
     // TODO: should think how this could scale to making a global shared object.
@@ -106,6 +153,9 @@ private[internal] object Internal {
     // skips the slots path and must not pay for the pool either.
     @threadUnsafe
     private[internal] lazy val slotsPool = Internal.LocalPool[scalanotation.BuilderSlots]()
+
+    @threadUnsafe
+    private[internal] lazy val fieldIndexSetPool = Internal.LocalPool[Internal.FieldIndexSet]()
 
     private[internal] inline def withBorrowSlots[T](
         factory: scalanotation.TypedFactory.OfProduct[?] | Null

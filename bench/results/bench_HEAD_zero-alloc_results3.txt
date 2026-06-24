@@ -1,0 +1,271 @@
+Benchmark                                                             Mode  Cnt      Score     Error   Units
+ArbitraryMapBenchmark.decodeExpr64                                    avgt   10      3.995 ±   0.131   us/op
+ArbitraryMapBenchmark.decodeExpr64:gc.alloc.rate                      avgt   10   2231.286 ±  73.815  MB/sec
+ArbitraryMapBenchmark.decodeExpr64:gc.alloc.rate.norm                 avgt   10   9344.028 ±   0.001    B/op
+ArbitraryMapBenchmark.decodeExpr64:gc.count                           avgt   10     37.000            counts
+ArbitraryMapBenchmark.decodeExpr64:gc.time                            avgt   10     18.000                ms
+ArbitraryMapBenchmark.decodeExpr8                                     avgt   10      0.302 ±   0.001   us/op
+ArbitraryMapBenchmark.decodeExpr8:gc.alloc.rate                       avgt   10   3818.200 ±  17.480  MB/sec
+ArbitraryMapBenchmark.decodeExpr8:gc.alloc.rate.norm                  avgt   10   1208.002 ±   0.001    B/op
+ArbitraryMapBenchmark.decodeExpr8:gc.count                            avgt   10     64.000            counts
+ArbitraryMapBenchmark.decodeExpr8:gc.time                             avgt   10     31.000                ms
+ArbitraryMapBenchmark.decodeText64                                    avgt   10      9.694 ±   0.052   us/op
+ArbitraryMapBenchmark.decodeText64:gc.alloc.rate                      avgt   10   1665.226 ±   8.915  MB/sec
+ArbitraryMapBenchmark.decodeText64:gc.alloc.rate.norm                 avgt   10  16928.067 ±   0.001    B/op
+ArbitraryMapBenchmark.decodeText64:gc.count                           avgt   10     28.000            counts
+ArbitraryMapBenchmark.decodeText64:gc.time                            avgt   10     14.000                ms
+ArbitraryMapBenchmark.decodeText64Batched                             avgt   10      9.647 ±   0.081   us/op
+ArbitraryMapBenchmark.decodeText64Batched:gc.alloc.rate               avgt   10   1613.998 ±  13.465  MB/sec
+ArbitraryMapBenchmark.decodeText64Batched:gc.alloc.rate.norm          avgt   10  16328.067 ±   0.001    B/op
+ArbitraryMapBenchmark.decodeText64Batched:gc.count                    avgt   10     27.000            counts
+ArbitraryMapBenchmark.decodeText64Batched:gc.time                     avgt   10     13.000                ms
+ArbitraryMapBenchmark.decodeText8                                     avgt   10      1.086 ±   0.005   us/op
+ArbitraryMapBenchmark.decodeText8:gc.alloc.rate                       avgt   10   1734.895 ±   7.520  MB/sec
+ArbitraryMapBenchmark.decodeText8:gc.alloc.rate.norm                  avgt   10   1976.007 ±   0.001    B/op
+ArbitraryMapBenchmark.decodeText8:gc.count                            avgt   10     29.000            counts
+ArbitraryMapBenchmark.decodeText8:gc.time                             avgt   10     15.000                ms
+ArbitraryMapBenchmark.decodeText8Batched                              avgt   10      1.036 ±   0.014   us/op
+ArbitraryMapBenchmark.decodeText8Batched:gc.alloc.rate                avgt   10   1266.518 ±  17.049  MB/sec
+ArbitraryMapBenchmark.decodeText8Batched:gc.alloc.rate.norm           avgt   10   1376.007 ±   0.001    B/op
+ArbitraryMapBenchmark.decodeText8Batched:gc.count                     avgt   10     21.000            counts
+ArbitraryMapBenchmark.decodeText8Batched:gc.time                      avgt   10     13.000                ms
+ArbitraryMapBenchmark.writeExpr64                                     avgt   10      3.204 ±   0.016   us/op
+ArbitraryMapBenchmark.writeExpr64:gc.alloc.rate                       avgt   10   3278.772 ±  16.280  MB/sec
+ArbitraryMapBenchmark.writeExpr64:gc.alloc.rate.norm                  avgt   10  11016.025 ±   0.001    B/op
+ArbitraryMapBenchmark.writeExpr64:gc.count                            avgt   10     55.000            counts
+ArbitraryMapBenchmark.writeExpr64:gc.time                             avgt   10     34.000                ms
+ArbitraryMapBenchmark.writeExpr8                                      avgt   10      0.319 ±   0.014   us/op
+ArbitraryMapBenchmark.writeExpr8:gc.alloc.rate                        avgt   10   5362.918 ± 234.166  MB/sec
+ArbitraryMapBenchmark.writeExpr8:gc.alloc.rate.norm                   avgt   10   1792.003 ±   0.001    B/op
+ArbitraryMapBenchmark.writeExpr8:gc.count                             avgt   10     63.000            counts
+ArbitraryMapBenchmark.writeExpr8:gc.time                              avgt   10     81.000                ms
+ArbitraryMapBenchmark.writeText64                                     avgt   10      4.069 ±   0.239   us/op
+ArbitraryMapBenchmark.writeText64:gc.alloc.rate                       avgt   10   1991.268 ± 119.303  MB/sec
+ArbitraryMapBenchmark.writeText64:gc.alloc.rate.norm                  avgt   10   8488.028 ±   0.002    B/op
+ArbitraryMapBenchmark.writeText64:gc.count                            avgt   10     27.000            counts
+ArbitraryMapBenchmark.writeText64:gc.time                             avgt   10     19.000                ms
+ArbitraryMapBenchmark.writeText8                                      avgt   10      0.645 ±   0.040   us/op
+ArbitraryMapBenchmark.writeText8:gc.alloc.rate                        avgt   10   1871.546 ± 117.056  MB/sec
+ArbitraryMapBenchmark.writeText8:gc.alloc.rate.norm                   avgt   10   1264.004 ±   0.001    B/op
+ArbitraryMapBenchmark.writeText8:gc.count                             avgt   10     31.000            counts
+ArbitraryMapBenchmark.writeText8:gc.time                              avgt   10     25.000                ms
+DecodeBenchmark.declExprFlat                                          avgt   10      0.576 ±   0.040   us/op
+DecodeBenchmark.declExprFlat:gc.alloc.rate                            avgt   10   2402.350 ± 163.315  MB/sec
+DecodeBenchmark.declExprFlat:gc.alloc.rate.norm                       avgt   10   1448.004 ±   0.001    B/op
+DecodeBenchmark.declExprFlat:gc.count                                 avgt   10     40.000            counts
+DecodeBenchmark.declExprFlat:gc.time                                  avgt   10     22.000                ms
+DecodeBenchmark.declExprWithVec                                       avgt   10      2.553 ±   0.059   us/op
+DecodeBenchmark.declExprWithVec:gc.alloc.rate                         avgt   10   1096.954 ±  25.557  MB/sec
+DecodeBenchmark.declExprWithVec:gc.alloc.rate.norm                    avgt   10   2936.019 ±   0.001    B/op
+DecodeBenchmark.declExprWithVec:gc.count                              avgt   10     18.000            counts
+DecodeBenchmark.declExprWithVec:gc.time                               avgt   10     12.000                ms
+DecodeBenchmark.declExprWithVec2x                                     avgt   10      4.577 ±   0.071   us/op
+DecodeBenchmark.declExprWithVec2x:gc.alloc.rate                       avgt   10    930.028 ±  14.045  MB/sec
+DecodeBenchmark.declExprWithVec2x:gc.alloc.rate.norm                  avgt   10   4464.032 ±   0.001    B/op
+DecodeBenchmark.declExprWithVec2x:gc.count                            avgt   10     16.000            counts
+DecodeBenchmark.declExprWithVec2x:gc.time                             avgt   10     11.000                ms
+DecodeBenchmark.declFlat                                              avgt   10      0.433 ±   0.005   us/op
+DecodeBenchmark.declFlat:gc.alloc.rate                                avgt   10   2305.632 ±  25.535  MB/sec
+DecodeBenchmark.declFlat:gc.alloc.rate.norm                           avgt   10   1048.003 ±   0.001    B/op
+DecodeBenchmark.declFlat:gc.count                                     avgt   10     39.000            counts
+DecodeBenchmark.declFlat:gc.time                                      avgt   10     19.000                ms
+DecodeBenchmark.declFlat2x                                            avgt   10      0.719 ±   0.024   us/op
+DecodeBenchmark.declFlat2x:gc.alloc.rate                              avgt   10   1485.899 ±  50.148  MB/sec
+DecodeBenchmark.declFlat2x:gc.alloc.rate.norm                         avgt   10   1120.005 ±   0.001    B/op
+DecodeBenchmark.declFlat2x:gc.count                                   avgt   10     24.000            counts
+DecodeBenchmark.declFlat2x:gc.time                                    avgt   10     13.000                ms
+DecodeBenchmark.declWithVec                                           avgt   10      1.868 ±   0.012   us/op
+DecodeBenchmark.declWithVec:gc.alloc.rate                             avgt   10   1258.023 ±   7.727  MB/sec
+DecodeBenchmark.declWithVec:gc.alloc.rate.norm                        avgt   10   2464.013 ±   0.001    B/op
+DecodeBenchmark.declWithVec:gc.count                                  avgt   10     21.000            counts
+DecodeBenchmark.declWithVec:gc.time                                   avgt   10     12.000                ms
+DecodeBenchmark.declWithVec2x                                         avgt   10      3.710 ±   0.013   us/op
+DecodeBenchmark.declWithVec2x:gc.alloc.rate                           avgt   10    900.504 ±   3.133  MB/sec
+DecodeBenchmark.declWithVec2x:gc.alloc.rate.norm                      avgt   10   3504.026 ±   0.001    B/op
+DecodeBenchmark.declWithVec2x:gc.count                                avgt   10     16.000            counts
+DecodeBenchmark.declWithVec2x:gc.time                                 avgt   10     12.000                ms
+DecodeBenchmark.exprFlat                                              avgt   10      0.453 ±   0.004   us/op
+DecodeBenchmark.exprFlat:gc.alloc.rate                                avgt   10   2944.159 ±  22.606  MB/sec
+DecodeBenchmark.exprFlat:gc.alloc.rate.norm                           avgt   10   1400.003 ±   0.001    B/op
+DecodeBenchmark.exprFlat:gc.count                                     avgt   10     49.000            counts
+DecodeBenchmark.exprFlat:gc.time                                      avgt   10     24.000                ms
+DecodeBenchmark.exprNested                                            avgt   10      0.829 ±   0.005   us/op
+DecodeBenchmark.exprNested:gc.alloc.rate                              avgt   10   2456.831 ±  13.966  MB/sec
+DecodeBenchmark.exprNested:gc.alloc.rate.norm                         avgt   10   2136.006 ±   0.001    B/op
+DecodeBenchmark.exprNested:gc.count                                   avgt   10     41.000            counts
+DecodeBenchmark.exprNested:gc.time                                    avgt   10     20.000                ms
+DecodeBenchmark.exprNested2x                                          avgt   10      1.435 ±   0.007   us/op
+DecodeBenchmark.exprNested2x:gc.alloc.rate                            avgt   10   1791.049 ±   8.904  MB/sec
+DecodeBenchmark.exprNested2x:gc.alloc.rate.norm                       avgt   10   2696.010 ±   0.001    B/op
+DecodeBenchmark.exprNested2x:gc.count                                 avgt   10     30.000            counts
+DecodeBenchmark.exprNested2x:gc.time                                  avgt   10     16.000                ms
+DecodeBenchmark.exprTupleComma                                        avgt   10      0.273 ±   0.001   us/op
+DecodeBenchmark.exprTupleComma:gc.alloc.rate                          avgt   10   3411.461 ±  13.579  MB/sec
+DecodeBenchmark.exprTupleComma:gc.alloc.rate.norm                     avgt   10    976.002 ±   0.001    B/op
+DecodeBenchmark.exprTupleComma:gc.count                               avgt   10     57.000            counts
+DecodeBenchmark.exprTupleComma:gc.time                                avgt   10     27.000                ms
+DecodeBenchmark.exprTupleNestedComma                                  avgt   10      0.681 ±   0.003   us/op
+DecodeBenchmark.exprTupleNestedComma:gc.alloc.rate                    avgt   10   2799.779 ±  11.089  MB/sec
+DecodeBenchmark.exprTupleNestedComma:gc.alloc.rate.norm               avgt   10   2000.005 ±   0.001    B/op
+DecodeBenchmark.exprTupleNestedComma:gc.count                         avgt   10     47.000            counts
+DecodeBenchmark.exprTupleNestedComma:gc.time                          avgt   10     23.000                ms
+DecodeBenchmark.exprTupleSingle                                       avgt   10      0.102 ±   0.001   us/op
+DecodeBenchmark.exprTupleSingle:gc.alloc.rate                         avgt   10   8041.071 ±  32.027  MB/sec
+DecodeBenchmark.exprTupleSingle:gc.alloc.rate.norm                    avgt   10    864.001 ±   0.001    B/op
+DecodeBenchmark.exprTupleSingle:gc.count                              avgt   10    104.000            counts
+DecodeBenchmark.exprTupleSingle:gc.time                               avgt   10     48.000                ms
+DecodeBenchmark.exprWithVec                                           avgt   10      2.421 ±   0.010   us/op
+DecodeBenchmark.exprWithVec:gc.alloc.rate                             avgt   10   1137.330 ±   4.685  MB/sec
+DecodeBenchmark.exprWithVec:gc.alloc.rate.norm                        avgt   10   2888.017 ±   0.001    B/op
+DecodeBenchmark.exprWithVec:gc.count                                  avgt   10     19.000            counts
+DecodeBenchmark.exprWithVec:gc.time                                   avgt   10     12.000                ms
+DecodeBenchmark.exprWithVec2x                                         avgt   10      4.362 ±   0.015   us/op
+DecodeBenchmark.exprWithVec2x:gc.alloc.rate                           avgt   10    965.272 ±   3.279  MB/sec
+DecodeBenchmark.exprWithVec2x:gc.alloc.rate.norm                      avgt   10   4416.032 ±   0.001    B/op
+DecodeBenchmark.exprWithVec2x:gc.count                                avgt   10     16.000            counts
+DecodeBenchmark.exprWithVec2x:gc.time                                 avgt   10     12.000                ms
+DecodeBenchmark.flat                                                  avgt   10      0.346 ±   0.001   us/op
+DecodeBenchmark.flat:gc.alloc.rate                                    avgt   10   2757.900 ±   7.654  MB/sec
+DecodeBenchmark.flat:gc.alloc.rate.norm                               avgt   10   1000.002 ±   0.001    B/op
+DecodeBenchmark.flat:gc.count                                         avgt   10     47.000            counts
+DecodeBenchmark.flat:gc.time                                          avgt   10     23.000                ms
+DecodeBenchmark.flat2x                                                avgt   10      0.659 ±   0.003   us/op
+DecodeBenchmark.flat2x:gc.alloc.rate                                  avgt   10   1550.587 ±   7.186  MB/sec
+DecodeBenchmark.flat2x:gc.alloc.rate.norm                             avgt   10   1072.005 ±   0.001    B/op
+DecodeBenchmark.flat2x:gc.count                                       avgt   10     26.000            counts
+DecodeBenchmark.flat2x:gc.time                                        avgt   10     13.000                ms
+DecodeBenchmark.flatClass                                             avgt   10      0.363 ±   0.003   us/op
+DecodeBenchmark.flatClass:gc.alloc.rate                               avgt   10   2626.247 ±  18.082  MB/sec
+DecodeBenchmark.flatClass:gc.alloc.rate.norm                          avgt   10   1000.003 ±   0.001    B/op
+DecodeBenchmark.flatClass:gc.count                                    avgt   10     44.000            counts
+DecodeBenchmark.flatClass:gc.time                                     avgt   10     23.000                ms
+DecodeBenchmark.nested                                                avgt   10      0.687 ±   0.014   us/op
+DecodeBenchmark.nested:gc.alloc.rate                                  avgt   10   1755.102 ±  37.330  MB/sec
+DecodeBenchmark.nested:gc.alloc.rate.norm                             avgt   10   1264.005 ±   0.001    B/op
+DecodeBenchmark.nested:gc.count                                       avgt   10     30.000            counts
+DecodeBenchmark.nested:gc.time                                        avgt   10     16.000                ms
+DecodeBenchmark.nested2x                                              avgt   10      1.210 ±   0.005   us/op
+DecodeBenchmark.nested2x:gc.alloc.rate                                avgt   10   1116.144 ±   4.971  MB/sec
+DecodeBenchmark.nested2x:gc.alloc.rate.norm                           avgt   10   1416.008 ±   0.001    B/op
+DecodeBenchmark.nested2x:gc.count                                     avgt   10     19.000            counts
+DecodeBenchmark.nested2x:gc.time                                      avgt   10     12.000                ms
+DecodeBenchmark.nestedClass                                           avgt   10      0.802 ±   0.006   us/op
+DecodeBenchmark.nestedClass:gc.alloc.rate                             avgt   10   1512.790 ±  12.005  MB/sec
+DecodeBenchmark.nestedClass:gc.alloc.rate.norm                        avgt   10   1272.006 ±   0.001    B/op
+DecodeBenchmark.nestedClass:gc.count                                  avgt   10     25.000            counts
+DecodeBenchmark.nestedClass:gc.time                                   avgt   10     13.000                ms
+DecodeBenchmark.tupleComma                                            avgt   10      0.208 ±   0.004   us/op
+DecodeBenchmark.tupleComma:gc.alloc.rate                              avgt   10   3342.886 ±  62.663  MB/sec
+DecodeBenchmark.tupleComma:gc.alloc.rate.norm                         avgt   10    728.001 ±   0.001    B/op
+DecodeBenchmark.tupleComma:gc.count                                   avgt   10     56.000            counts
+DecodeBenchmark.tupleComma:gc.time                                    avgt   10     27.000                ms
+DecodeBenchmark.tupleNestedComma                                      avgt   10      0.385 ±   0.038   us/op
+DecodeBenchmark.tupleNestedComma:gc.alloc.rate                        avgt   10   2384.457 ± 239.185  MB/sec
+DecodeBenchmark.tupleNestedComma:gc.alloc.rate.norm                   avgt   10    960.003 ±   0.001    B/op
+DecodeBenchmark.tupleNestedComma:gc.count                             avgt   10     40.000            counts
+DecodeBenchmark.tupleNestedComma:gc.time                              avgt   10     21.000                ms
+DecodeBenchmark.tupleSingle                                           avgt   10      0.074 ±   0.001   us/op
+DecodeBenchmark.tupleSingle:gc.alloc.rate                             avgt   10   8444.525 ±  85.527  MB/sec
+DecodeBenchmark.tupleSingle:gc.alloc.rate.norm                        avgt   10    656.001 ±   0.001    B/op
+DecodeBenchmark.tupleSingle:gc.count                                  avgt   10    105.000            counts
+DecodeBenchmark.tupleSingle:gc.time                                   avgt   10     50.000                ms
+DecodeBenchmark.withIntArray                                          avgt   10      1.797 ±   0.024   us/op
+DecodeBenchmark.withIntArray:gc.alloc.rate                            avgt   10    904.076 ±  11.778  MB/sec
+DecodeBenchmark.withIntArray:gc.alloc.rate.norm                       avgt   10   1704.012 ±   0.001    B/op
+DecodeBenchmark.withIntArray:gc.count                                 avgt   10     15.000            counts
+DecodeBenchmark.withIntArray:gc.time                                  avgt   10     12.000                ms
+DecodeBenchmark.withIntArray2x                                        avgt   10      3.504 ±   0.018   us/op
+DecodeBenchmark.withIntArray2x:gc.alloc.rate                          avgt   10    668.296 ±   3.378  MB/sec
+DecodeBenchmark.withIntArray2x:gc.alloc.rate.norm                     avgt   10   2456.024 ±   0.001    B/op
+DecodeBenchmark.withIntArray2x:gc.count                               avgt   10     12.000            counts
+DecodeBenchmark.withIntArray2x:gc.time                                avgt   10     11.000                ms
+DecodeBenchmark.withIntArray2xNorm                                    avgt   10      0.011 ±   0.001   us/op
+DecodeBenchmark.withIntArray2xNorm:gc.alloc.rate                      avgt   10  38449.561 ± 376.952  MB/sec
+DecodeBenchmark.withIntArray2xNorm:gc.alloc.rate.norm                 avgt   10    440.000 ±   0.001    B/op
+DecodeBenchmark.withIntArray2xNorm:gc.count                           avgt   10    276.000            counts
+DecodeBenchmark.withIntArray2xNorm:gc.time                            avgt   10    134.000                ms
+DecodeBenchmark.withVec                                               avgt   10      1.854 ±   0.004   us/op
+DecodeBenchmark.withVec:gc.alloc.rate                                 avgt   10   1242.892 ±   2.950  MB/sec
+DecodeBenchmark.withVec:gc.alloc.rate.norm                            avgt   10   2416.013 ±   0.001    B/op
+DecodeBenchmark.withVec:gc.count                                      avgt   10     21.000            counts
+DecodeBenchmark.withVec:gc.time                                       avgt   10     14.000                ms
+DecodeBenchmark.withVec2x                                             avgt   10      3.550 ±   0.036   us/op
+DecodeBenchmark.withVec2x:gc.alloc.rate                               avgt   10    928.238 ±   9.312  MB/sec
+DecodeBenchmark.withVec2x:gc.alloc.rate.norm                          avgt   10   3456.025 ±   0.001    B/op
+DecodeBenchmark.withVec2x:gc.count                                    avgt   10     15.000            counts
+DecodeBenchmark.withVec2x:gc.time                                     avgt   10     11.000                ms
+DecodeBenchmark.withVec2xNorm                                         avgt   10      0.431 ±   0.002   us/op
+DecodeBenchmark.withVec2xNorm:gc.alloc.rate                           avgt   10   6476.034 ±  29.491  MB/sec
+DecodeBenchmark.withVec2xNorm:gc.alloc.rate.norm                      avgt   10   2928.003 ±   0.001    B/op
+DecodeBenchmark.withVec2xNorm:gc.count                                avgt   10    108.000            counts
+DecodeBenchmark.withVec2xNorm:gc.time                                 avgt   10     49.000                ms
+TypedDecodeBenchmark.flatBatched                                      avgt   10      0.329 ±   0.001   us/op
+TypedDecodeBenchmark.flatBatched:gc.alloc.rate                        avgt   10    463.826 ±   1.825  MB/sec
+TypedDecodeBenchmark.flatBatched:gc.alloc.rate.norm                   avgt   10    160.002 ±   0.001    B/op
+TypedDecodeBenchmark.flatBatched:gc.count                             avgt   10      8.000            counts
+TypedDecodeBenchmark.flatBatched:gc.time                              avgt   10      8.000                ms
+TypedDecodeBenchmark.flatClassBatched                                 avgt   10      0.358 ±   0.001   us/op
+TypedDecodeBenchmark.flatClassBatched:gc.alloc.rate                   avgt   10    426.708 ±   1.623  MB/sec
+TypedDecodeBenchmark.flatClassBatched:gc.alloc.rate.norm              avgt   10    160.002 ±   0.001    B/op
+TypedDecodeBenchmark.flatClassBatched:gc.count                        avgt   10      7.000            counts
+TypedDecodeBenchmark.flatClassBatched:gc.time                         avgt   10      7.000                ms
+TypedDecodeBenchmark.flatClassTyped                                   avgt   10      0.356 ±   0.004   us/op
+TypedDecodeBenchmark.flatClassTyped:gc.alloc.rate                     avgt   10   2762.711 ±  27.454  MB/sec
+TypedDecodeBenchmark.flatClassTyped:gc.alloc.rate.norm                avgt   10   1032.002 ±   0.001    B/op
+TypedDecodeBenchmark.flatClassTyped:gc.count                          avgt   10     46.000            counts
+TypedDecodeBenchmark.flatClassTyped:gc.time                           avgt   10     22.000                ms
+TypedDecodeBenchmark.flatClassTypedBatched                            avgt   10      0.330 ±   0.002   us/op
+TypedDecodeBenchmark.flatClassTypedBatched:gc.alloc.rate              avgt   10    370.228 ±   2.484  MB/sec
+TypedDecodeBenchmark.flatClassTypedBatched:gc.alloc.rate.norm         avgt   10    128.002 ±   0.001    B/op
+TypedDecodeBenchmark.flatClassTypedBatched:gc.count                   avgt   10      6.000            counts
+TypedDecodeBenchmark.flatClassTypedBatched:gc.time                    avgt   10      6.000                ms
+TypedDecodeBenchmark.primitive10Class                                 avgt   10      0.964 ±   0.004   us/op
+TypedDecodeBenchmark.primitive10Class:gc.alloc.rate                   avgt   10   1155.244 ±   5.332  MB/sec
+TypedDecodeBenchmark.primitive10Class:gc.alloc.rate.norm              avgt   10   1168.007 ±   0.001    B/op
+TypedDecodeBenchmark.primitive10Class:gc.count                        avgt   10     19.000            counts
+TypedDecodeBenchmark.primitive10Class:gc.time                         avgt   10     12.000                ms
+TypedDecodeBenchmark.primitive10ClassBatched                          avgt   10      0.975 ±   0.019   us/op
+TypedDecodeBenchmark.primitive10ClassBatched:gc.alloc.rate            avgt   10    109.530 ±   2.164  MB/sec
+TypedDecodeBenchmark.primitive10ClassBatched:gc.alloc.rate.norm       avgt   10    112.007 ±   0.001    B/op
+TypedDecodeBenchmark.primitive10ClassBatched:gc.count                 avgt   10      2.000            counts
+TypedDecodeBenchmark.primitive10ClassBatched:gc.time                  avgt   10      2.000                ms
+TypedDecodeBenchmark.primitive10ClassTyped                            avgt   10      1.024 ±   0.006   us/op
+TypedDecodeBenchmark.primitive10ClassTyped:gc.alloc.rate              avgt   10   1087.219 ±   6.325  MB/sec
+TypedDecodeBenchmark.primitive10ClassTyped:gc.alloc.rate.norm         avgt   10   1168.007 ±   0.001    B/op
+TypedDecodeBenchmark.primitive10ClassTyped:gc.count                   avgt   10     18.000            counts
+TypedDecodeBenchmark.primitive10ClassTyped:gc.time                    avgt   10     13.000                ms
+TypedDecodeBenchmark.primitive10ClassTypedBatched                     avgt   10      0.990 ±   0.009   us/op
+TypedDecodeBenchmark.primitive10ClassTypedBatched:gc.alloc.rate       avgt   10    107.894 ±   1.005  MB/sec
+TypedDecodeBenchmark.primitive10ClassTypedBatched:gc.alloc.rate.norm  avgt   10    112.007 ±   0.001    B/op
+TypedDecodeBenchmark.primitive10ClassTypedBatched:gc.count            avgt   10      2.000            counts
+TypedDecodeBenchmark.primitive10ClassTypedBatched:gc.time             avgt   10      2.000                ms
+TypedDecodeBenchmark.primitive10NamedTuple                            avgt   10      0.996 ±   0.003   us/op
+TypedDecodeBenchmark.primitive10NamedTuple:gc.alloc.rate              avgt   10   1118.133 ±   3.882  MB/sec
+TypedDecodeBenchmark.primitive10NamedTuple:gc.alloc.rate.norm         avgt   10   1168.007 ±   0.001    B/op
+TypedDecodeBenchmark.primitive10NamedTuple:gc.count                   avgt   10     19.000            counts
+TypedDecodeBenchmark.primitive10NamedTuple:gc.time                    avgt   10     12.000                ms
+TypedDecodeBenchmark.primitive10NamedTupleBatched                     avgt   10      1.063 ±   0.011   us/op
+TypedDecodeBenchmark.primitive10NamedTupleBatched:gc.alloc.rate       avgt   10    244.070 ±   2.431  MB/sec
+TypedDecodeBenchmark.primitive10NamedTupleBatched:gc.alloc.rate.norm  avgt   10    272.007 ±   0.001    B/op
+TypedDecodeBenchmark.primitive10NamedTupleBatched:gc.count            avgt   10      4.000            counts
+TypedDecodeBenchmark.primitive10NamedTupleBatched:gc.time             avgt   10      5.000                ms
+TypedDecodeBenchmark.withIntArray2xBatched                            avgt   10      3.466 ±   0.021   us/op
+TypedDecodeBenchmark.withIntArray2xBatched:gc.alloc.rate              avgt   10    438.000 ±   2.674  MB/sec
+TypedDecodeBenchmark.withIntArray2xBatched:gc.alloc.rate.norm         avgt   10   1592.024 ±   0.001    B/op
+TypedDecodeBenchmark.withIntArray2xBatched:gc.count                   avgt   10      7.000            counts
+TypedDecodeBenchmark.withIntArray2xBatched:gc.time                    avgt   10      7.000                ms
+TypedDecodeBenchmark.withIntArrayBatched                              avgt   10      1.752 ±   0.008   us/op
+TypedDecodeBenchmark.withIntArrayBatched:gc.alloc.rate                avgt   10    470.287 ±   2.113  MB/sec
+TypedDecodeBenchmark.withIntArrayBatched:gc.alloc.rate.norm           avgt   10    864.012 ±   0.001    B/op
+TypedDecodeBenchmark.withIntArrayBatched:gc.count                     avgt   10      8.000            counts
+TypedDecodeBenchmark.withIntArrayBatched:gc.time                      avgt   10      8.000                ms
+TypedDecodeBenchmark.withVec2xBatched                                 avgt   10      3.493 ±   0.014   us/op
+TypedDecodeBenchmark.withVec2xBatched:gc.alloc.rate                   avgt   10    707.633 ±   2.838  MB/sec
+TypedDecodeBenchmark.withVec2xBatched:gc.alloc.rate.norm              avgt   10   2592.024 ±   0.001    B/op
+TypedDecodeBenchmark.withVec2xBatched:gc.count                        avgt   10     12.000            counts
+TypedDecodeBenchmark.withVec2xBatched:gc.time                         avgt   10     10.000                ms
+TypedDecodeBenchmark.withVecBatched                                   avgt   10      1.780 ±   0.006   us/op
+TypedDecodeBenchmark.withVecBatched:gc.alloc.rate                     avgt   10    831.233 ±   2.646  MB/sec
+TypedDecodeBenchmark.withVecBatched:gc.alloc.rate.norm                avgt   10   1552.012 ±   0.001    B/op
+TypedDecodeBenchmark.withVecBatched:gc.count                          avgt   10     14.000            counts
+TypedDecodeBenchmark.withVecBatched:gc.time                           avgt   10     11.000                ms

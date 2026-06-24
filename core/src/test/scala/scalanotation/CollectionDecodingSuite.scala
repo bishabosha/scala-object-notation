@@ -37,7 +37,7 @@ class CollectionDecodingSuite extends ScalanotationSuite:
       -1
 
   private object PrimitiveIntTable:
-    final val EmptyKey = 0
+    inline val EmptyKey = 0
 
   private final class PrimitiveIntTableBuilder:
     private val keys   = new Array[Int](8)
