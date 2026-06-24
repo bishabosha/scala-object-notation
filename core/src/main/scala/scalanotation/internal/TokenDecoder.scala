@@ -258,9 +258,9 @@ private final class TokenDecoder private (
       importOffset: Int
   ): Result[Unit, DecodeError] =
     Result.task:
-      expectImportIdentifier("language", importOffset).check
+      acceptImportIdentifier("language", importOffset).check
       expectImportDot(importOffset).check
-      expectImportIdentifier("experimental", importOffset).check
+      acceptImportIdentifier("experimental", importOffset).check
       expectImportDot(importOffset).check
       currentKind() match
         case TokenKind.Identifier if currentName() == "dedentedStringLiterals" =>
@@ -275,13 +275,18 @@ private final class TokenDecoder private (
         case _ =>
           raise(DecodeError.ExpectedIdentifier(describeCurrent()).atToken(currentSpan()))
 
-  private def expectImportIdentifier(
+  private def acceptImportIdentifier(
       expected: String,
       importOffset: Int
   ): Result[Unit, DecodeError] =
     Result.task:
-      expectIdentifier().check
-      if pullStringStrict() != expected then raise(unsupportedExperimentalImport(importOffset))
+      currentKind() match
+        case TokenKind.Identifier if currentName() == expected =>
+          advance()
+        case TokenKind.Identifier =>
+          raise(unsupportedExperimentalImport(importOffset))
+        case _ =>
+          raise(DecodeError.ExpectedIdentifier(describeCurrent()).atToken(currentSpan()))
 
   private def expectImportDot(importOffset: Int): Result[Unit, DecodeError] =
     Result.task:
