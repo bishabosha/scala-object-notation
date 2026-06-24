@@ -192,3 +192,27 @@ trait BenchModule extends Cross.Module[String], ScalaObjectNotationModule, JmhMo
     super.sources() ++ versionSources()
   }
   def runJmhMem(args: String*) = runJmh(("-prof" +: "gc" +: args.toSeq)*)
+  def runJmhMemJit(args: String*) = runJmh(
+    (
+      Seq(
+        "-prof",
+        "gc",
+        "-prof",
+        "comp",
+        "-wi",
+        "15",
+        "-w",
+        "2s",
+        "-i",
+        "15",
+        "-r",
+        "2s",
+        "-f",
+        "3",
+        "-foe",
+        "true",
+        "-v",
+        "EXTRA"
+      ) ++ args.toSeq
+    )*
+  )
