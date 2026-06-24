@@ -388,47 +388,26 @@ private[scalanotation] final class Tokenizer private[internal] (
     val delimiterStart = index
     val delimiterCount = consumeQuoteRun()
     val contentStart   = index
-    val chars          = new StringBuilder
-    val offsets        = new Array[Int](input.length - contentStart)
-    var offsetCount    = 0
-
-    def appendContent(ch: Char, offset: Int): Unit =
-      chars.append(ch)
-      offsets(offsetCount) = offset
-      offsetCount += 1
+    var contentEnd     = -1
+    var sawCR          = false
 
     var done = false
     while !done do
       if isAtEnd then failAt("unclosed multi-line string literal", delimiterStart)
       else if currentChar() == '\'' then
-        val runLength = quoteRunLength()
+        val quoteStart = index
+        val runLength  = quoteRunLength()
         if runLength >= delimiterCount then
-          val contentQuotes = runLength - delimiterCount
-          var i             = 0
-          while i < contentQuotes do
-            appendContent('\'', index + i)
-            i += 1
-          index += runLength
+          contentEnd = quoteStart + (runLength - delimiterCount)
+          index = quoteStart + runLength
           done = true
-        else
-          var i = 0
-          while i < runLength do
-            appendContent('\'', index + i)
-            i += 1
-          index += runLength
+        else index = quoteStart + runLength
       else
-        val offset = index
-        currentChar() match
-          case '\r' =>
-            advance()
-            if !isAtEnd && currentChar() == '\n' then advance()
-            appendContent('\n', offset)
-          case other =>
-            advance()
-            appendContent(other, offset)
+        if currentChar() == '\r' then sawCR = true
+        index += 1
 
     kind = TokenKind.StringLit
-    str = trimDedentedString(chars.result(), offsets, offsetCount, contentStart, index)
+    str = trimDedentedString(contentStart, contentEnd, sawCR)
 
   private def consumeQuoteRun(): Int =
     var count = 0
@@ -443,89 +422,116 @@ private[scalanotation] final class Tokenizer private[internal] (
     i
 
   private def trimDedentedString(
-      content: String,
-      offsets: Array[Int],
-      contentLength: Int,
       contentStart: Int,
-      closingEnd: Int
+      contentEnd: Int,
+      sawCR: Boolean
   ): String =
-    def offsetAt(index: Int): Int =
-      if index >= 0 && index < contentLength then offsets(index)
-      else if index <= 0 then contentStart
-      else closingEnd
-
-    var firstLineEnd = 0
-    while firstLineEnd < contentLength && isIndentWhitespace(content.charAt(firstLineEnd)) do
+    var firstLineEnd = contentStart
+    while firstLineEnd < contentEnd && isIndentWhitespace(input.charAt(firstLineEnd)) do
       firstLineEnd += 1
-    if firstLineEnd >= contentLength || content.charAt(firstLineEnd) != '\n' then
+    if firstLineEnd >= contentEnd || !isLineBreak(input.charAt(firstLineEnd)) then
       failAt(
         "Dedented string literal must start with newline after opening quotes",
-        offsetAt(firstLineEnd)
+        firstLineEnd
       )
-    val bodyStart = firstLineEnd + 1
+    val bodyStart = afterLineBreak(firstLineEnd)
 
-    var closingLineBreak = contentLength - 1
-    while closingLineBreak >= 0 && isIndentWhitespace(content.charAt(closingLineBreak)) do
+    var closingLineBreak = contentEnd - 1
+    while closingLineBreak >= contentStart && isIndentWhitespace(input.charAt(closingLineBreak)) do
       closingLineBreak -= 1
-    if closingLineBreak < 0 || content.charAt(closingLineBreak) != '\n' then
+    if closingLineBreak < contentStart || !isLineBreak(input.charAt(closingLineBreak)) then
       failAt(
         "Last line of dedented string literal must contain only whitespace before closing delimiter",
-        offsetAt(closingLineBreak)
+        math.max(closingLineBreak, contentStart)
       )
+    if input.charAt(closingLineBreak) == '\n'
+      && closingLineBreak > contentStart
+      && input.charAt(closingLineBreak - 1) == '\r'
+    then closingLineBreak -= 1
 
-    val closingIndent = content.substring(closingLineBreak + 1, contentLength)
-    val bodyEnd       = closingLineBreak
+    val closingIndentStart = afterLineBreak(closingLineBreak)
+    val bodyEnd            = closingLineBreak
     if bodyEnd <= bodyStart then ""
-    else dedentLines(content, offsets, bodyStart, bodyEnd, closingIndent)
+    else dedentLines(bodyStart, bodyEnd, closingIndentStart, contentEnd, sawCR)
 
   private def dedentLines(
-      content: String,
-      offsets: Array[Int],
       bodyStart: Int,
       bodyEnd: Int,
-      closingIndent: String
+      closingIndentStart: Int,
+      closingIndentEnd: Int,
+      sawCR: Boolean
   ): String =
-    if closingIndent.isEmpty then content.substring(bodyStart, bodyEnd)
+    if closingIndentStart == closingIndentEnd then
+      if sawCR then normalizedSubstring(bodyStart, bodyEnd) else input.substring(bodyStart, bodyEnd)
     else
-      val out       = new StringBuilder
-      var lineStart = bodyStart
+      val out           = new StringBuilder
+      val closingIndent = closingIndentEnd - closingIndentStart
+      var lineStart     = bodyStart
       while lineStart < bodyEnd do
         var lineEnd = lineStart
-        while lineEnd < bodyEnd && content.charAt(lineEnd) != '\n' do lineEnd += 1
+        while lineEnd < bodyEnd && !isLineBreak(input.charAt(lineEnd)) do lineEnd += 1
 
         val cut =
-          if lineHasPrefix(content, lineStart, lineEnd, closingIndent) then closingIndent.length
-          else if isIndentOnlyLine(content, lineStart, lineEnd) then 0
+          if lineHasPrefix(lineStart, lineEnd, closingIndentStart, closingIndentEnd) then
+            closingIndent
+          else if isIndentOnlyLine(lineStart, lineEnd) then 0
           else
             failAt(
               "Line in dedented string literal must be indented at least as much as the closing delimiter",
-              offsets(lineStart)
+              lineStart
             )
-        out.append(content.substring(lineStart + cut, lineEnd))
+        out.append(input.substring(lineStart + cut, lineEnd))
         if lineEnd < bodyEnd then
           out.append('\n')
-          lineStart = lineEnd + 1
+          lineStart = afterLineBreak(lineEnd)
         else lineStart = bodyEnd
       out.result()
 
   private def lineHasPrefix(
-      content: String,
       lineStart: Int,
       lineEnd: Int,
-      prefix: String
+      prefixStart: Int,
+      prefixEnd: Int
   ): Boolean =
-    lineEnd - lineStart >= prefix.length
-      && content.regionMatches(lineStart, prefix, 0, prefix.length)
+    val prefixLength = prefixEnd - prefixStart
+    lineEnd - lineStart >= prefixLength
+    && input.regionMatches(lineStart, input, prefixStart, prefixLength)
 
-  private def isIndentOnlyLine(content: String, lineStart: Int, lineEnd: Int): Boolean =
+  private def isIndentOnlyLine(lineStart: Int, lineEnd: Int): Boolean =
     var i = lineStart
     while i < lineEnd do
-      if !isIndentWhitespace(content.charAt(i)) then return false
+      if !isIndentWhitespace(input.charAt(i)) then return false
       i += 1
     true
 
+  private def normalizedSubstring(from: Int, until: Int): String =
+    var i = from
+    while i < until && input.charAt(i) != '\r' do i += 1
+    if i >= until then input.substring(from, until)
+    else
+      val out = new StringBuilder(until - from)
+      out.append(input.substring(from, i))
+      while i < until do
+        input.charAt(i) match
+          case '\r' =>
+            out.append('\n')
+            i += 1
+            if i < until && input.charAt(i) == '\n' then i += 1
+          case ch =>
+            out.append(ch)
+            i += 1
+      out.result()
+
   private def isIndentWhitespace(ch: Char): Boolean =
     ch == ' ' || ch == '\t' || ch == '\f'
+
+  private def isLineBreak(ch: Char): Boolean =
+    ch == '\n' || ch == '\r'
+
+  private def afterLineBreak(offset: Int): Int =
+    if input.charAt(offset) == '\r' && offset + 1 < input.length && input.charAt(offset + 1) == '\n'
+    then offset + 2
+    else offset + 1
 
   private def scanChar(): Unit =
     advance()

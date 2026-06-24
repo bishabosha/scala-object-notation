@@ -12,7 +12,9 @@ import scalanotation.Readers
 @Fork(1)
 class DedentedStringBenchmark:
   private val concatEscapesInput =
-    "\"alpha\\n\" + \"beta\\n\" + \"gamma\\n\" + \"delta\""
+    """import language.experimental.dedentedStringLiterals
+      |"alpha\n" + "beta\n" + "gamma\n" + "delta"
+      |""".stripMargin
 
   private val dedentedInput =
     """import language.experimental.dedentedStringLiterals
@@ -25,7 +27,7 @@ class DedentedStringBenchmark:
       |""".stripMargin
 
   @Benchmark def concatEscapes: Any =
-    Readers.readAs[String](concatEscapesInput)
+    Readers.experimental.readAs[String](concatEscapesInput)
 
   @Benchmark def dedented: Any =
     Readers.experimental.readAs[String](dedentedInput)
