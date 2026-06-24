@@ -10,7 +10,7 @@ import steps.result.Result.eval.raise
 import scala.util.boundary.Label
 import scalanotation.schema.RawSchema
 
-private[scalanotation] trait BaseDecoders extends SharedHelpers:
+private[internal] trait BaseDecoders extends SharedHelpers:
   self: TokenStream =>
 
   protected type Resulting[+A, +E] = Label[Result.Err[E]] ?=> A
@@ -241,6 +241,18 @@ private[scalanotation] trait BaseDecoders extends SharedHelpers:
         pushString(actualName)
       else raise(DecodeError.ExpectedEquals(describeCurrent()).atToken(currentSpan()))
 
+  /** parses `<name> =` without materializing or pushing the field name */
+  protected final def parseNamedFieldStartNoPush(): Result[Unit, DecodeError] =
+    Result.task:
+      currentKind() match
+        case TokenKind.Identifier | TokenKind.VectorId | TokenKind.EmptyTupleId |
+            TokenKind.TupleId | TokenKind.Plus | TokenKind.Minus =>
+          advance()
+        case _ =>
+          raise(DecodeError.ExpectedFieldName(describeCurrent()).atToken(currentSpan()))
+      if currentKind() == TokenKind.Equals then advance()
+      else raise(DecodeError.ExpectedEquals(describeCurrent()).atToken(currentSpan()))
+
   protected inline def parseNamedTupleStructure(
       schema: RawSchema[?],
       allowEmpty: Boolean
@@ -262,7 +274,7 @@ private[scalanotation] trait BaseDecoders extends SharedHelpers:
     parsed
   }
 
-  protected inline def parsePartialNamedTupleStructure(
+  private inline def parsePartialNamedTupleStructure(
       schema: RawSchema[?]
   )(
       inline consumeFieldValue: Resulting[(String, Int, Int) => Unit, DecodeError]
@@ -272,6 +284,67 @@ private[scalanotation] trait BaseDecoders extends SharedHelpers:
       case err: Result.Err[DecodeError]  =>
         scala.util.boundary.break(err) // TODO: replace with Result.breakErr
   }
+
+  protected inline def parseKnownNamedTupleStructure(
+      schema: RawSchema[?],
+      allowEmpty: Boolean
+  )(
+      inline consumeFieldValue: (Int, Int) => Result[Unit, DecodeError]
+  ): NamedTupleParseResult | Result.Err[DecodeError] =
+    if currentKind() == TokenKind.LParen then
+      advance()
+      parsePartialKnownNamedTupleStructure(schema)(consumeFieldValue) match
+        case parsed: NamedTupleParseResult =>
+          if !allowEmpty && parsed.fieldCount == 0 then
+            Result.Err(DecodeError.UnitValueNotAllowed().atToken(spanAt(parsed.closingOffset)))
+          else parsed
+        case err: Result.Err[DecodeError] => err
+    else
+      Result.Err(
+        DecodeError.ExpectedType(schema.describeSelf, describeCurrent()).atToken(currentSpan())
+      )
+
+  protected inline def parsePartialKnownNamedTupleStructure(
+      schema: RawSchema[?]
+  )(
+      inline consumeFieldValue: (Int, Int) => Result[Unit, DecodeError]
+  ): NamedTupleParseResult | Result.Err[DecodeError] =
+    currentKind() match
+      case TokenKind.RParen =>
+        val closingOffset = currentOffset()
+        advance()
+        namedTupleParseResult.push(0, null, closingOffset)
+      case _ =>
+        var fieldIndex: Int    = 0
+        var closingOffset: Int = 0
+        val err                = loop.task {
+          val nameOffset = currentOffset()
+          currentKind() match
+            case TokenKind.Identifier | TokenKind.VectorId | TokenKind.EmptyTupleId |
+                TokenKind.TupleId | TokenKind.Plus | TokenKind.Minus =>
+              consumeFieldValue(nameOffset, fieldIndex).check
+              fieldIndex += 1
+              currentKind() match
+                case TokenKind.Comma =>
+                  advance()
+                  if currentKind() == TokenKind.RParen then
+                    closingOffset = currentOffset()
+                    loop.done()
+                case TokenKind.RParen =>
+                  closingOffset = currentOffset()
+                  loop.done()
+                case _ =>
+                  raise(
+                    DecodeError.ExpectedRParen(describeCurrent()).atToken(currentSpan())
+                  )
+            case _ =>
+              raise(DecodeError.ExpectedFieldName(describeCurrent()).atToken(currentSpan()))
+        }
+        err match
+          case err: Result.Err[DecodeError] => err
+          case _                            =>
+            advance()
+            namedTupleParseResult.push(fieldIndex, null, closingOffset)
 
   protected inline def parsePartialNamedTupleStructureInner(
       schema: RawSchema[?]

@@ -118,7 +118,7 @@ private final class TokenDecoder private (
     debug: Boolean,
     private[internal] val slotsPooling: Boolean,
     scanOnInit: Boolean
-) extends TokenStream(input, debug, cacheNamesOnInit = slotsPooling, scanOnInit),
+) extends TokenStream(input, debug, scanOnInit),
       SchemaDecoders {
   def this(input: String, debug: Boolean) =
     this(input, debug, slotsPooling = true, scanOnInit = true)

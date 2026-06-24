@@ -2,38 +2,42 @@ package scalanotation.internal
 
 import scalanotation.DecodeError
 import steps.result.Result
+import scala.annotation.publicInBinary
 
 /** Unboxed token kind constants. The decoder's happy path only ever inspects these (plus the
   * unboxed offset slots in [[TokenStream]]); boxed [[Token]] values and [[DecodeError.Span]]s are
   * materialized lazily, only when a [[DecodeError]] needs to be constructed (or for
   * debugging/tests).
   */
+// FIXME: publicInBinary is needed, or else to access from a trait it goes
+// through inline accessor, and then inline vals can't be inlined anymore
+@publicInBinary
 private[scalanotation] object TokenKind:
-  final val PackageKw    = 0
-  final val ValKw        = 1
-  final val VectorId     = 2
-  final val TrueKw       = 3
-  final val FalseKw      = 4
-  final val NullKw       = 5
-  final val EmptyTupleId = 6
-  final val TupleId      = 7
-  final val Keyword      = 8
-  final val Identifier   = 9
-  final val IntLit       = 10
-  final val LongLit      = 11
-  final val FloatLit     = 12
-  final val DoubleLit    = 13
-  final val StringLit    = 14
-  final val CharLit      = 15
-  final val Equals       = 16
-  final val Dot          = 17
-  final val Plus         = 18
-  final val Minus        = 19
-  final val Comma        = 20
-  final val Semicolon    = 21
-  final val LParen       = 22
-  final val RParen       = 23
-  final val Eof          = 24
+  inline val PackageKw    = 0
+  inline val ValKw        = 1
+  inline val VectorId     = 2
+  inline val TrueKw       = 3
+  inline val FalseKw      = 4
+  inline val NullKw       = 5
+  inline val EmptyTupleId = 6
+  inline val TupleId      = 7
+  inline val Keyword      = 8
+  inline val Identifier   = 9
+  inline val IntLit       = 10
+  inline val LongLit      = 11
+  inline val FloatLit     = 12
+  inline val DoubleLit    = 13
+  inline val StringLit    = 14
+  inline val CharLit      = 15
+  inline val Equals       = 16
+  inline val Dot          = 17
+  inline val Plus         = 18
+  inline val Minus        = 19
+  inline val Comma        = 20
+  inline val Semicolon    = 21
+  inline val LParen       = 22
+  inline val RParen       = 23
+  inline val Eof          = 24
 
 /** Boxed token representation — only materialized for debugging and tests; the decode path works on
   * the unboxed slots of [[TokenStream]].
@@ -83,21 +87,13 @@ private[scalanotation] final class TokenizeException(val message: String, val of
   */
 private[scalanotation] final class Tokenizer private[internal] (
     private var input: String,
-    private var index: Int,
-    // Whether token payloads are materialized. Lookahead scouts read only token kinds, so they
-    // disable this to skip per-name, string and numeric payload work.
-    private var internNames: Boolean,
-    // Whether interned names are cached in [[internTable]]. One-shot scanners disable this so the
-    // fixed table is not allocated per decode; names are still materialized, just uncached.
-    private var cacheNames: Boolean
+    private var index: Int
 ):
-  def this(input: String) = this(input, 0, internNames = true, cacheNames = true)
+  def this(input: String) = this(input, 0)
 
   import Tokenizer.*
 
-  /** Repositions this scanner at the start of a new input, for reuse from a pool. The name cache is
-    * kept: interned names stay useful across inputs.
-    */
+  /** Repositions this scanner at the start of a new input, for reuse from a pool. */
   private[internal] def reset(newInput: String): Unit =
     input = newInput
     index = 0
@@ -128,61 +124,6 @@ private[scalanotation] final class Tokenizer private[internal] (
   private[internal] var str: String | Null = null
   private[internal] var num: Long          = 0L
   private[internal] var dbl: Double        = 0.0
-
-  // Bounded, direct-mapped intern table for identifier and field-name strings, keyed by content.
-  // A hash collision overwrites the prior entry rather than growing, so the table never leaks; the
-  // cost is only that a colliding name re-allocates. Because entries can be dropped, callers must
-  // compare names by value (never by reference). Allocated lazily on first cached intern and kept
-  // across [[reset]] so the cache stays warm for a pooled scanner; substrings copy their chars
-  // (JDK 7u6+), so cached names never pin old inputs.
-  private var internTable: Array[String | Null] | Null = null
-
-  private def internTableOrAlloc(): Array[String | Null] =
-    val table = internTable
-    if table != null then table
-    else
-      val fresh = new Array[String | Null](InternTableSize)
-      internTable = fresh
-      fresh
-
-  /** Interns the input slice `[from, until)`. With caching, a hit returns the cached instance with
-    * no allocation and a miss allocates the substring, stores it (overwriting any colliding entry)
-    * and returns it. Without caching, it is a plain substring. Only called when [[internNames]].
-    */
-  private def internSlice(from: Int, until: Int): String =
-    if !cacheNames then input.substring(from, until)
-    else
-      val table = internTableOrAlloc()
-      val len   = until - from
-      var h     = 0
-      var i     = from
-      while i < until do
-        h = h * 31 + input.charAt(i)
-        i += 1
-      val slot     = h & (table.length - 1)
-      val existing = table(slot)
-      if existing != null && existing.length == len && input.regionMatches(from, existing, 0, len)
-      then existing
-      else
-        val name = input.substring(from, until)
-        table(slot) = name
-        name
-
-  /** Interns an already-materialized name — a quoted identifier, whose value can differ from its
-    * input slice because of escapes, so it cannot be interned by offsets. Shares the intern table:
-    * `String.hashCode` is the same 31-polynomial as [[internSlice]]'s hash, so equal content lands
-    * in the same slot. A no-op when caching is disabled.
-    */
-  private def internString(s: String): String =
-    if !cacheNames then s
-    else
-      val table    = internTableOrAlloc()
-      val slot     = s.hashCode & (table.length - 1)
-      val existing = table(slot)
-      if existing != null && existing == s then existing
-      else
-        table(slot) = s
-        s
 
   private def sliceEquals(from: Int, until: Int, expected: String): Boolean =
     val len = until - from
@@ -220,66 +161,35 @@ private[scalanotation] final class Tokenizer private[internal] (
     while !isAtEnd && isIdentifierPart(currentChar()) do advance()
     if index > start && input.charAt(index - 1) == '_' then
       while !isAtEnd && isOperatorPart(currentChar()) do advance()
-    if !internNames then
-      kind =
-        if sliceEquals(start, index, KW_true) then TokenKind.TrueKw
-        else if sliceEquals(start, index, KW_false) then TokenKind.FalseKw
-        else if sliceEquals(start, index, KW_null) then TokenKind.NullKw
-        else if sliceEquals(start, index, KW_Vector) then TokenKind.VectorId
-        else if sliceEquals(start, index, KW_EmptyTuple) then TokenKind.EmptyTupleId
-        else if sliceEquals(start, index, KW_Tuple) then TokenKind.TupleId
-        else TokenKind.Identifier
-    else
-      // intern first (allocation-free on a hit), then classify the cached string: the hard
-      // keywords need no `str`, identifiers and reserved keywords carry the interned name
-      val name = internSlice(start, index)
-      name match
-        case KW_package    => kind = TokenKind.PackageKw
-        case KW_val        => kind = TokenKind.ValKw
-        case KW_true       => kind = TokenKind.TrueKw
-        case KW_false      => kind = TokenKind.FalseKw
-        case KW_null       => kind = TokenKind.NullKw
-        case KW_Vector     => kind = TokenKind.VectorId
-        case KW_EmptyTuple => kind = TokenKind.EmptyTupleId
-        case KW_Tuple      => kind = TokenKind.TupleId
-        case _             =>
-          kind =
-            if reservedIdentifierKeywords.contains(name) then TokenKind.Keyword
-            else TokenKind.Identifier
-          str = name
+    kind =
+      if sliceEquals(start, index, KW_package) then TokenKind.PackageKw
+      else if sliceEquals(start, index, KW_val) then TokenKind.ValKw
+      else if sliceEquals(start, index, KW_true) then TokenKind.TrueKw
+      else if sliceEquals(start, index, KW_false) then TokenKind.FalseKw
+      else if sliceEquals(start, index, KW_null) then TokenKind.NullKw
+      else if sliceEquals(start, index, KW_Vector) then TokenKind.VectorId
+      else if sliceEquals(start, index, KW_EmptyTuple) then TokenKind.EmptyTupleId
+      else if sliceEquals(start, index, KW_Tuple) then TokenKind.TupleId
+      else if reservedIdentifierKeywordSlice(start, index) then TokenKind.Keyword
+      else TokenKind.Identifier
 
   private def scanQuotedIdentifier(): Unit =
     advance()
-    if !internNames then
-      while !isAtEnd && currentChar() != '`' do
-        currentChar() match
-          case '\n' | '\r' =>
-            fail("Quoted identifier cannot contain a raw newline")
-          case '\\' =>
-            advance()
-            if isAtEnd then fail("Unterminated quoted identifier")
-            scanEscape()
-          case _ =>
-            advance()
-      if isAtEnd then fail("Unterminated quoted identifier")
-      advance()
-      kind = TokenKind.Identifier
-    else
-      val builder = new StringBuilder
-      while !isAtEnd && currentChar() != '`' do
-        currentChar() match
-          case '\n' | '\r' =>
-            fail("Quoted identifier cannot contain a raw newline")
-          case '\\' =>
-            advance()
-            if isAtEnd then fail("Unterminated quoted identifier")
-            builder.append(scanEscape())
-          case _ =>
-            builder.append(advance())
-      if isAtEnd then fail("Unterminated quoted identifier")
-      advance()
-      kind = TokenKind.Identifier
-      str = internString(builder.result())
+    val builder = new StringBuilder
+    while !isAtEnd && currentChar() != '`' do
+      currentChar() match
+        case '\n' | '\r' =>
+          fail("Quoted identifier cannot contain a raw newline")
+        case '\\' =>
+          advance()
+          if isAtEnd then fail("Unterminated quoted identifier")
+          builder.append(scanEscape())
+        case _ =>
+          builder.append(advance())
+    if isAtEnd then fail("Unterminated quoted identifier")
+    advance()
+    kind = TokenKind.Identifier
+    str = builder.result()
 
   private def scanEscape(): Char =
     if currentChar() == 'u' then scanUnicodeEscape()
@@ -312,7 +222,7 @@ private[scalanotation] final class Tokenizer private[internal] (
     while !isAtEnd && isOperatorPart(currentChar()) do advance()
     val len = index - start
     // the fixed punctuation operators are classified straight from the slice — `=` especially is
-    // scanned once per named-tuple field, so it must never allocate or touch the intern table
+    // scanned once per named-tuple field, so it must never allocate
     if len == 1 then
       input.charAt(start) match
         case '=' => kind = TokenKind.Equals
@@ -322,20 +232,18 @@ private[scalanotation] final class Tokenizer private[internal] (
     else classifyOperatorIdentifier()
 
   private def classifyOperatorIdentifier(): Unit =
-    if !internNames then
-      // Scouts only need to distinguish fixed punctuation from generic identifiers, so neither
-      // keyword classification nor interning is needed for operator identifiers.
-      kind = TokenKind.Identifier
-    else
-      val op = internSlice(start, index)
-      op match
-        case KW_colon | KW_leftArrow | KW_arrow | KW_subtype | KW_supertype | KW_hash | KW_at |
-            KW_tlArrow | KW_ctxArrow =>
-          kind = TokenKind.Keyword
-          str = op
-        case _ =>
-          kind = TokenKind.Identifier
-          str = op
+    kind =
+      if sliceEquals(start, index, KW_colon)
+        || sliceEquals(start, index, KW_leftArrow)
+        || sliceEquals(start, index, KW_arrow)
+        || sliceEquals(start, index, KW_subtype)
+        || sliceEquals(start, index, KW_supertype)
+        || sliceEquals(start, index, KW_hash)
+        || sliceEquals(start, index, KW_at)
+        || sliceEquals(start, index, KW_tlArrow)
+        || sliceEquals(start, index, KW_ctxArrow)
+      then TokenKind.Keyword
+      else TokenKind.Identifier
 
   private def scanPrefixedInteger(): Unit =
     advance()
@@ -421,54 +329,38 @@ private[scalanotation] final class Tokenizer private[internal] (
         kind = TokenKind.LongLit
       case 'f' | 'F' =>
         kind = TokenKind.FloatLit
-        if internNames then dbl = parseFloatLiteral(normalizedDigits(sawSeparator)).toDouble
+        dbl = parseFloatLiteral(normalizedDigits(sawSeparator)).toDouble
       case 'd' | 'D' =>
         kind = TokenKind.DoubleLit
-        if internNames then dbl = parseDoubleLiteral(normalizedDigits(sawSeparator))
+        dbl = parseDoubleLiteral(normalizedDigits(sawSeparator))
       case _ if hasDot || hasExponent =>
         kind = TokenKind.DoubleLit
-        if internNames then dbl = parseDoubleLiteral(normalizedDigits(sawSeparator))
+        dbl = parseDoubleLiteral(normalizedDigits(sawSeparator))
       case _ =>
         kind = TokenKind.IntLit
 
   private def scanString(): Unit =
     advance()
-    if !internNames then
-      var done = false
-      while !done do
-        if isAtEnd then fail("Unterminated string literal")
-        currentChar() match
-          case '"' =>
-            advance()
-            done = true
-          case '\\' =>
-            advance()
-            if isAtEnd then fail("Unterminated string literal")
-            decodeEscape(advance())
-          case _ =>
-            advance()
+    // fast path: an escape-free string is a slice of the input, no builder needed
+    val contentStart = index
+    while !isAtEnd && currentChar() != '"' && currentChar() != '\\' do advance()
+    if isAtEnd then fail("Unterminated string literal")
+    if currentChar() == '"' then
+      str = input.substring(contentStart, index)
+      advance()
       kind = TokenKind.StringLit
     else
-      // fast path: an escape-free string is a slice of the input, no builder needed
-      val contentStart = index
-      while !isAtEnd && currentChar() != '"' && currentChar() != '\\' do advance()
+      val value = new StringBuilder(input.substring(contentStart, index))
+      while !isAtEnd && currentChar() != '"' do
+        if currentChar() == '\\' then
+          advance()
+          if isAtEnd then fail("Unterminated string literal")
+          value.append(decodeEscape(advance()))
+        else value.append(advance())
       if isAtEnd then fail("Unterminated string literal")
-      if currentChar() == '"' then
-        str = input.substring(contentStart, index)
-        advance()
-        kind = TokenKind.StringLit
-      else
-        val value = new StringBuilder(input.substring(contentStart, index))
-        while !isAtEnd && currentChar() != '"' do
-          if currentChar() == '\\' then
-            advance()
-            if isAtEnd then fail("Unterminated string literal")
-            value.append(decodeEscape(advance()))
-          else value.append(advance())
-        if isAtEnd then fail("Unterminated string literal")
-        advance()
-        kind = TokenKind.StringLit
-        str = value.result()
+      advance()
+      kind = TokenKind.StringLit
+      str = value.result()
 
   private def scanChar(): Unit =
     advance()
@@ -483,7 +375,7 @@ private[scalanotation] final class Tokenizer private[internal] (
       fail("Character literal must contain exactly one character")
     advance()
     kind = TokenKind.CharLit
-    if internNames then num = value.toLong
+    num = value.toLong
 
   private def decodeEscape(ch: Char): Char =
     ch match
@@ -587,12 +479,14 @@ private[scalanotation] final class Tokenizer private[internal] (
   private def failAt(message: String, offset: Int): Nothing =
     throw TokenizeException(message, offset)
 
-private[scalanotation] object Tokenizer:
-  // capacity of the per-scanner intern table; power of two so the hash maps in with a bitmask.
-  // Sized for the distinct identifier/field-name count of a typical decode with headroom; a
-  // higher-diversity input (e.g. a large dict) simply sees more collisions and re-allocates.
-  private final val InternTableSize = 512
+  private def reservedIdentifierKeywordSlice(from: Int, until: Int): Boolean =
+    var index = 0
+    while index < Tokenizer.reservedIdentifierKeywords.length do
+      if sliceEquals(from, until, Tokenizer.reservedIdentifierKeywords(index)) then return true
+      index += 1
+    false
 
+private[scalanotation] object Tokenizer:
   private val KW_val        = "val"
   private val KW_package    = "package"
   private val KW_true       = "true"
@@ -611,8 +505,8 @@ private[scalanotation] object Tokenizer:
   private val KW_tlArrow    = "=>>"
   private val KW_ctxArrow   = "?=>"
 
-  private val reservedIdentifierKeywords: Set[String] =
-    Set(
+  private val reservedIdentifierKeywords: Array[String] =
+    Array(
       "abstract",
       "case",
       "catch",
@@ -732,8 +626,9 @@ private[scalanotation] object Tokenizer:
       case TokenKind.NullKw       => Token.NullKw(span)
       case TokenKind.EmptyTupleId => Token.EmptyTupleId(span)
       case TokenKind.TupleId      => Token.TupleId(span)
-      case TokenKind.Keyword      => Token.Keyword(scanner.str.nn, span)
-      case TokenKind.Identifier   => Token.Identifier(scanner.str.nn, span)
+      case TokenKind.Keyword      => Token.Keyword(raw, span)
+      case TokenKind.Identifier   =>
+        Token.Identifier(if scanner.str == null then raw else scanner.str.nn, span)
       // no sign context here: the boxed token carries the positive interpretation, and a literal
       // only valid with a leading '-' (MinValue's magnitude) is rejected like any other overflow
       case TokenKind.IntLit =>
@@ -769,14 +664,13 @@ private[scalanotation] object Tokenizer:
 private[scalanotation] abstract class TokenStream private[internal] (
     private var input: String,
     private var debug: Boolean,
-    cacheNamesOnInit: Boolean,
     scanOnInit: Boolean
 ) extends PushSlots {
   def this(input: String, debug: Boolean) =
-    this(input, debug, cacheNamesOnInit = true, scanOnInit = true)
+    this(input, debug, scanOnInit = true)
 
   private val scanner =
-    Tokenizer(input, 0, internNames = true, cacheNames = cacheNamesOnInit)
+    Tokenizer(input, 0)
 
   // vectorized slots: a tiny ring holding current, first lookahead, and second lookahead
   private val kinds  = new Array[Int](3)
@@ -845,11 +739,47 @@ private[scalanotation] abstract class TokenStream private[internal] (
   // payload accessors — happy path, unboxed where primitive. Int and Long take the sign decoded
   // from the preceding token: the value is interpreted here, in place from the input slice, so
   // MinValue (whose magnitude overflows the positive range) parses once the sign is known.
-  protected def currentName(): String        = strs(cur).nn
+  protected def currentName(): String        = nameAt(cur)
   protected def currentStringValue(): String = strs(cur).nn
   protected def currentCharValue(): Char     = nums(cur).toChar
   protected def currentFloatValue(): Float   = dbls(cur).toFloat
   protected def currentDoubleValue(): Double = dbls(cur)
+
+  private def nameAt(slot: Int): String =
+    val cached = strs(slot)
+    if cached != null then cached
+    else
+      val name = input.substring(starts(slot), ends(slot))
+      strs(slot) = name
+      name
+
+  protected def currentFieldName(): String =
+    currentKind() match
+      case TokenKind.Identifier   => currentName()
+      case TokenKind.VectorId     => "Vector"
+      case TokenKind.EmptyTupleId => "EmptyTuple"
+      case TokenKind.TupleId      => "Tuple"
+      case TokenKind.Plus         => "+"
+      case TokenKind.Minus        => "-"
+      case _                      => currentName()
+
+  protected def currentFieldNameMatches(expected: String): Boolean =
+    currentKind() match
+      case TokenKind.Identifier =>
+        val cached = strs(cur)
+        if cached != null then cached == expected
+        else sliceMatches(cur, expected)
+      case TokenKind.VectorId     => expected == "Vector"
+      case TokenKind.EmptyTupleId => expected == "EmptyTuple"
+      case TokenKind.TupleId      => expected == "Tuple"
+      case TokenKind.Plus         => expected == "+"
+      case TokenKind.Minus        => expected == "-"
+      case _                      => false
+
+  private def sliceMatches(slot: Int, expected: String): Boolean =
+    val from = starts(slot)
+    val len  = ends(slot) - from
+    len == expected.length && input.regionMatches(from, expected, 0, len)
 
   protected def currentIntValue(negative: Boolean): Int =
     Tokenizer.intValueAt(input, starts(cur), ends(cur), negative)
@@ -874,8 +804,8 @@ private[scalanotation] abstract class TokenStream private[internal] (
       case TokenKind.NullKw       => "'null'"
       case TokenKind.EmptyTupleId => "'EmptyTuple'"
       case TokenKind.TupleId      => "'Tuple'"
-      case TokenKind.Keyword      => s"'${strs(slot)}'"
-      case TokenKind.Identifier   => s"identifier '${strs(slot)}'"
+      case TokenKind.Keyword      => s"'$raw'"
+      case TokenKind.Identifier   => s"identifier '${nameAt(slot)}'"
       case TokenKind.IntLit       => s"integer literal '$raw'"
       case TokenKind.LongLit      => s"long literal '$raw'"
       case TokenKind.FloatLit     => s"float literal '$raw'"
