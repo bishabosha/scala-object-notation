@@ -649,3 +649,15 @@ Compile the demo module:
 ```bash
 ./mill demo.compile
 ```
+
+Run benchmarks with memory profiling:
+
+```bash
+./mill bench.HEAD.runJmhMem
+```
+
+Run benchmarks with memory profiling, extra iterations and JIT profiling: (and filter specific tests)
+
+```bash
+./mill bench.HEAD.runJmhMemJit 'TypedDecodeBenchmark\.(withVecBatched|withIntArrayBatched|primitive10ClassTypedBatched)'
+```
