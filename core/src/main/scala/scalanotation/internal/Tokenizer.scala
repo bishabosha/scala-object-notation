@@ -4,15 +4,7 @@ import scalanotation.DecodeError
 import steps.result.Result
 import scala.annotation.publicInBinary
 
-/** Unboxed token kind constants. The decoder's happy path only ever inspects these (plus the
-  * unboxed offset slots in [[TokenStream]]); boxed [[Token]] values and [[DecodeError.Span]]s are
-  * materialized lazily, only when a [[DecodeError]] needs to be constructed (or for
-  * debugging/tests).
-  */
-// FIXME: publicInBinary is needed, or else to access from a trait it goes
-// through inline accessor, and then inline vals can't be inlined anymore
-@publicInBinary
-private[scalanotation] object TokenKind:
+private[scalanotation] trait TokenKinds:
   inline val PackageKw    = 0
   inline val ValKw        = 1
   inline val VectorId     = 2
@@ -38,6 +30,14 @@ private[scalanotation] object TokenKind:
   inline val LParen       = 22
   inline val RParen       = 23
   inline val Eof          = 24
+
+/** Unboxed token kind constants. The decoder's happy path only ever inspects these (plus the
+  * unboxed offset slots in [[TokenStream]]); boxed [[Token]] values and [[DecodeError.Span]]s are
+  * materialized lazily, only when a [[DecodeError]] needs to be constructed (or for
+  * debugging/tests).
+  */
+// FIXME: publicInBinary is needed, or else extending a base trait, otherwise inlining doesnt see through
+private[scalanotation] object TokenKind extends TokenKinds
 
 /** Boxed token representation — only materialized for debugging and tests; the decode path works on
   * the unboxed slots of [[TokenStream]].
