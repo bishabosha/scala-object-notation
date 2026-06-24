@@ -81,24 +81,40 @@ private[scalanotation] final class TokenizeException(val message: String, val of
     extends Exception
     with scala.util.control.NoStackTrace
 
+private[scalanotation] object ExperimentalFlags:
+  final val None: Int       = 0
+  final val AllowSIP72: Int = 1 << 0
+
+  inline def enabled(flags: Int, flag: Int): Boolean =
+    (flags & flag) != 0
+
 /** A streaming scanner: [[scanNext]] scans a single token into the unboxed slot fields. Callers own
   * buffering (see [[TokenStream]]); the scanner itself holds no token history, so memory use is
   * bounded regardless of input size.
   */
 private[scalanotation] final class Tokenizer private[internal] (
     private var input: String,
-    private var index: Int
+    private var index: Int,
+    private var experimentalFlags: Int
 ):
-  def this(input: String) = this(input, 0)
+  def this(input: String) =
+    this(input, 0, ExperimentalFlags.None)
 
   import Tokenizer.*
 
   /** Repositions this scanner at the start of a new input, for reuse from a pool. */
-  private[internal] def reset(newInput: String): Unit =
+  private[internal] def reset(
+      newInput: String,
+      newExperimentalFlags: Int = ExperimentalFlags.None
+  ): Unit =
     input = newInput
     index = 0
+    experimentalFlags = newExperimentalFlags
     kind = TokenKind.Eof
     str = null
+
+  private[internal] def setExperimentalFlags(newExperimentalFlags: Int): Unit =
+    experimentalFlags = newExperimentalFlags
 
   /** Tokenize the rest of the input into boxed [[Token]]s for tests and debugging; the decode path
     * streams tokens through [[TokenStream]] without materializing them.
@@ -140,18 +156,19 @@ private[scalanotation] final class Tokenizer private[internal] (
 
   private def scanToken(): Unit =
     currentChar() match
-      case '('                         => advance(); kind = TokenKind.LParen
-      case ')'                         => advance(); kind = TokenKind.RParen
-      case '.'                         => advance(); kind = TokenKind.Dot
-      case ','                         => advance(); kind = TokenKind.Comma
-      case ';'                         => advance(); kind = TokenKind.Semicolon
-      case '`'                         => scanQuotedIdentifier()
-      case '"'                         => scanString()
-      case '\''                        => scanChar()
-      case ch if isIdentifierStart(ch) => scanIdentifier()
-      case ch if ch.isDigit            => scanNumber()
-      case ch if isOperatorPart(ch)    => scanOperator()
-      case ch                          => fail(s"Unexpected character '$ch'")
+      case '('                            => advance(); kind = TokenKind.LParen
+      case ')'                            => advance(); kind = TokenKind.RParen
+      case '.'                            => advance(); kind = TokenKind.Dot
+      case ','                            => advance(); kind = TokenKind.Comma
+      case ';'                            => advance(); kind = TokenKind.Semicolon
+      case '`'                            => scanQuotedIdentifier()
+      case '"'                            => scanString()
+      case '\'' if canStartDedentedString => scanDedentedString()
+      case '\''                           => scanChar()
+      case ch if isIdentifierStart(ch)    => scanIdentifier()
+      case ch if ch.isDigit               => scanNumber()
+      case ch if isOperatorPart(ch)       => scanOperator()
+      case ch                             => fail(s"Unexpected character '$ch'")
 
   /** the raw source text of the token scanned so far — used in error messages only */
   private def rawText: String = input.substring(start, index)
@@ -361,6 +378,154 @@ private[scalanotation] final class Tokenizer private[internal] (
       advance()
       kind = TokenKind.StringLit
       str = value.result()
+
+  private def canStartDedentedString: Boolean =
+    ExperimentalFlags.enabled(experimentalFlags, ExperimentalFlags.AllowSIP72)
+      && peekCompare('\'')
+      && peekCompare('\'', 2)
+
+  private def scanDedentedString(): Unit =
+    val delimiterStart = index
+    val delimiterCount = consumeQuoteRun()
+    val contentStart   = index
+    val chars          = new StringBuilder
+    val offsets        = new Array[Int](input.length - contentStart)
+    var offsetCount    = 0
+
+    def appendContent(ch: Char, offset: Int): Unit =
+      chars.append(ch)
+      offsets(offsetCount) = offset
+      offsetCount += 1
+
+    var done = false
+    while !done do
+      if isAtEnd then failAt("unclosed multi-line string literal", delimiterStart)
+      else if currentChar() == '\'' then
+        val runLength = quoteRunLength()
+        if runLength >= delimiterCount then
+          val contentQuotes = runLength - delimiterCount
+          var i             = 0
+          while i < contentQuotes do
+            appendContent('\'', index + i)
+            i += 1
+          index += runLength
+          done = true
+        else
+          var i = 0
+          while i < runLength do
+            appendContent('\'', index + i)
+            i += 1
+          index += runLength
+      else
+        val offset = index
+        currentChar() match
+          case '\r' =>
+            advance()
+            if !isAtEnd && currentChar() == '\n' then advance()
+            appendContent('\n', offset)
+          case other =>
+            advance()
+            appendContent(other, offset)
+
+    kind = TokenKind.StringLit
+    str = trimDedentedString(chars.result(), offsets, offsetCount, contentStart, index)
+
+  private def consumeQuoteRun(): Int =
+    var count = 0
+    while !isAtEnd && currentChar() == '\'' do
+      advance()
+      count += 1
+    count
+
+  private def quoteRunLength(): Int =
+    var i = 0
+    while index + i < input.length && input.charAt(index + i) == '\'' do i += 1
+    i
+
+  private def trimDedentedString(
+      content: String,
+      offsets: Array[Int],
+      contentLength: Int,
+      contentStart: Int,
+      closingEnd: Int
+  ): String =
+    def offsetAt(index: Int): Int =
+      if index >= 0 && index < contentLength then offsets(index)
+      else if index <= 0 then contentStart
+      else closingEnd
+
+    var firstLineEnd = 0
+    while firstLineEnd < contentLength && isIndentWhitespace(content.charAt(firstLineEnd)) do
+      firstLineEnd += 1
+    if firstLineEnd >= contentLength || content.charAt(firstLineEnd) != '\n' then
+      failAt(
+        "Dedented string literal must start with newline after opening quotes",
+        offsetAt(firstLineEnd)
+      )
+    val bodyStart = firstLineEnd + 1
+
+    var closingLineBreak = contentLength - 1
+    while closingLineBreak >= 0 && isIndentWhitespace(content.charAt(closingLineBreak)) do
+      closingLineBreak -= 1
+    if closingLineBreak < 0 || content.charAt(closingLineBreak) != '\n' then
+      failAt(
+        "Last line of dedented string literal must contain only whitespace before closing delimiter",
+        offsetAt(closingLineBreak)
+      )
+
+    val closingIndent = content.substring(closingLineBreak + 1, contentLength)
+    val bodyEnd       = closingLineBreak
+    if bodyEnd <= bodyStart then ""
+    else dedentLines(content, offsets, bodyStart, bodyEnd, closingIndent)
+
+  private def dedentLines(
+      content: String,
+      offsets: Array[Int],
+      bodyStart: Int,
+      bodyEnd: Int,
+      closingIndent: String
+  ): String =
+    if closingIndent.isEmpty then content.substring(bodyStart, bodyEnd)
+    else
+      val out       = new StringBuilder
+      var lineStart = bodyStart
+      while lineStart < bodyEnd do
+        var lineEnd = lineStart
+        while lineEnd < bodyEnd && content.charAt(lineEnd) != '\n' do lineEnd += 1
+
+        val cut =
+          if lineHasPrefix(content, lineStart, lineEnd, closingIndent) then closingIndent.length
+          else if isIndentOnlyLine(content, lineStart, lineEnd) then 0
+          else
+            failAt(
+              "Line in dedented string literal must be indented at least as much as the closing delimiter",
+              offsets(lineStart)
+            )
+        out.append(content.substring(lineStart + cut, lineEnd))
+        if lineEnd < bodyEnd then
+          out.append('\n')
+          lineStart = lineEnd + 1
+        else lineStart = bodyEnd
+      out.result()
+
+  private def lineHasPrefix(
+      content: String,
+      lineStart: Int,
+      lineEnd: Int,
+      prefix: String
+  ): Boolean =
+    lineEnd - lineStart >= prefix.length
+      && content.regionMatches(lineStart, prefix, 0, prefix.length)
+
+  private def isIndentOnlyLine(content: String, lineStart: Int, lineEnd: Int): Boolean =
+    var i = lineStart
+    while i < lineEnd do
+      if !isIndentWhitespace(content.charAt(i)) then return false
+      i += 1
+    true
+
+  private def isIndentWhitespace(ch: Char): Boolean =
+    ch == ' ' || ch == '\t' || ch == '\f'
 
   private def scanChar(): Unit =
     advance()
@@ -670,7 +835,9 @@ private[scalanotation] abstract class TokenStream private[internal] (
     this(input, debug, scanOnInit = true)
 
   private val scanner =
-    Tokenizer(input, 0)
+    Tokenizer(input, 0, ExperimentalFlags.None)
+
+  private var experimentalFlags = ExperimentalFlags.None
 
   // vectorized slots: a tiny ring holding current, first lookahead, and second lookahead
   private val kinds  = new Array[Int](3)
@@ -689,7 +856,8 @@ private[scalanotation] abstract class TokenStream private[internal] (
   protected def resetStream(newInput: String, newDebug: Boolean): Unit =
     input = newInput
     debug = newDebug
-    scanner.reset(newInput)
+    experimentalFlags = ExperimentalFlags.None
+    scanner.reset(newInput, experimentalFlags)
     strs(0) = null // release references to the previous input's strings
     strs(1) = null
     strs(2) = null
@@ -709,6 +877,10 @@ private[scalanotation] abstract class TokenStream private[internal] (
       Console.err.println(
         Tokenizer.materialize(input, scanner)
       ) // TODO: should allow logger customization in the future
+
+  protected final def addExperimentalFlags(flags: Int): Unit =
+    experimentalFlags |= flags
+    scanner.setExperimentalFlags(experimentalFlags)
 
   protected def currentKind(): Int   = kinds(cur)
   protected def currentOffset(): Int = starts(cur)
