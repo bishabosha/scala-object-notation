@@ -152,6 +152,60 @@ leave them to the garbage collector.
 For completeness, `BatchContext.garbageCollected` is the no-pooling context. The plain `Readers`
 API is equivalent to using it.
 
+## Experimental Features
+
+Experimental syntax lives behind `Readers.experimental`, so the normal readers stay predictable.
+Put any supported experimental imports at the top of the input: before an expression, or after the
+optional package statement and before declarations.
+
+### SIP-72
+
+SIP-72 adds dedented multiline string literals. See the
+[proposal](https://github.com/scala/improvement-proposals/pull/112) for the full design context.
+To use them, opt in with:
+
+```scala
+import language.experimental.dedentedStringLiterals
+```
+
+After that import, string values can use `'''` delimiters:
+
+```scala
+import scalanotation.*
+import steps.result.Result
+
+val input =
+  """import language.experimental.dedentedStringLiterals
+    |'''
+    |host = "127.0.0.1"
+    |port = 8080
+    |'''
+    |""".stripMargin
+
+val decoded = Readers.experimental.readAs[String](input)
+assert(decoded == Result.Ok("host = \"127.0.0.1\"\nport = 8080"))
+```
+
+The opening `'''` delimiter must be followed by a newline, and the
+closing delimiter must sit on its own line with only indentation before it. That closing indentation
+is removed from each content line, and line endings inside the literal are normalized to `\n`.
+
+For declaration inputs, keep the same order you would use in Scala source: package first, then the
+experimental import, then the declaration:
+
+```scala
+package example.config
+
+import language.experimental.dedentedStringLiterals
+
+val conf = (
+  message = '''
+    hello
+    world
+    '''
+)
+```
+
 ## Dynamic Data
 
 `scalanotation.Expr` is an algebraic data type representing the syntax of Scala Object Notation:
