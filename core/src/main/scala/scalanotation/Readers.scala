@@ -50,6 +50,34 @@ object Readers:
       using BatchContext.garbageCollected.holder
     )
 
+  object experimental:
+    def readAs[T: Reader as reader](
+        input: String,
+        debugTokens: Boolean = false
+    ): Result[T, DecodeError] =
+      TokenDecoder.decodeExperimentalExpression(input, debugTokens, reader)(
+        using BatchContext.garbageCollected.holder
+      )
+
+    def readDeclsAs[T: Reader as reader](
+        input: String,
+        debugTokens: Boolean = false,
+        packageName: String = ""
+    ): Result[Expr.SourceFile[T], DecodeError] =
+      TokenDecoder.decodeExperimentalAnyRoot(input, debugTokens, packageName, reader)(
+        using BatchContext.garbageCollected.holder
+      )
+
+    def readDeclAs[T: Reader as reader](
+        input: String,
+        rootName: String,
+        debugTokens: Boolean = false,
+        packageName: String = ""
+    ): Result[T, DecodeError] =
+      TokenDecoder.decodeExperimental(input, debugTokens, rootName, packageName, reader)(
+        using BatchContext.garbageCollected.holder
+      )
+
   /** Variants of the read methods that reuse decoder machinery across calls, as configured by the
     * given [[BatchContext]] — see its factories for the pooling options. Results are identical to
     * the plain methods; only the allocation behaviour differs.

@@ -1,0 +1,11 @@
+Benchmark
+DedentedStringBenchmark.concatEscapes                                 avgt   10      0.207 ±   0.007   us/op
+DedentedStringBenchmark.concatEscapes:gc.alloc.rate                   avgt   10   5678.333 ± 197.844  MB/sec
+DedentedStringBenchmark.concatEscapes:gc.alloc.rate.norm              avgt   10   1232.001 ±   0.001    B/op
+DedentedStringBenchmark.concatEscapes:gc.count                        avgt   10     95.000            counts
+DedentedStringBenchmark.concatEscapes:gc.time                         avgt   10     54.000                ms
+DedentedStringBenchmark.dedented                                      avgt   10      0.267 ±   0.002   us/op
+DedentedStringBenchmark.dedented:gc.alloc.rate                        avgt   10   4146.506 ±  23.587  MB/sec
+DedentedStringBenchmark.dedented:gc.alloc.rate.norm                   avgt   10   1160.002 ±   0.001    B/op
+DedentedStringBenchmark.dedented:gc.count                             avgt   10     69.000            counts
+DedentedStringBenchmark.dedented:gc.time                              avgt   10     34.000                ms

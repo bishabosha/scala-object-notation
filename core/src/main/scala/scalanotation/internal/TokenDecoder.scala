@@ -63,6 +63,18 @@ private[scalanotation] object TokenDecoder:
     catchingTokenErrors(input):
       withPooled(ctx, input, debugTokens)(_.decodeRoot(decoder, rootName, packageName))
 
+  private[scalanotation] def decodeExperimental[T](
+      input: String,
+      debugTokens: Boolean,
+      rootName: String,
+      packageName: String,
+      decoder: Reader[T]
+  )(using ctx: PoolHolder): Result[T, DecodeError] =
+    catchingTokenErrors(input):
+      withPooled(ctx, input, debugTokens)(
+        _.decodeExperimentalRoot(decoder, rootName, packageName)
+      )
+
   private[scalanotation] def decodeAnyRoot[T](
       input: String,
       debugTokens: Boolean,
@@ -72,6 +84,15 @@ private[scalanotation] object TokenDecoder:
     catchingTokenErrors(input):
       withPooled(ctx, input, debugTokens)(_.decodeAnyRoot(decoder, packageName))
 
+  private[scalanotation] def decodeExperimentalAnyRoot[T](
+      input: String,
+      debugTokens: Boolean,
+      packageName: String,
+      decoder: Reader[T]
+  )(using ctx: PoolHolder): Result[Expr.SourceFile[T], DecodeError] =
+    catchingTokenErrors(input):
+      withPooled(ctx, input, debugTokens)(_.decodeExperimentalAnyRoot(decoder, packageName))
+
   private[scalanotation] def decodeExpression[T](
       input: String,
       debugTokens: Boolean,
@@ -79,6 +100,14 @@ private[scalanotation] object TokenDecoder:
   )(using ctx: PoolHolder): Result[T, DecodeError] =
     catchingTokenErrors(input):
       withPooled(ctx, input, debugTokens)(_.decodeExpression(decoder))
+
+  private[scalanotation] def decodeExperimentalExpression[T](
+      input: String,
+      debugTokens: Boolean,
+      decoder: Reader[T]
+  )(using ctx: PoolHolder): Result[T, DecodeError] =
+    catchingTokenErrors(input):
+      withPooled(ctx, input, debugTokens)(_.decodeExperimentalExpression(decoder))
 
   /** tokens are scanned lazily while decoding, so malformed input can surface anywhere in the
     * decode as a [[TokenizeException]] — converted to a [[DecodeError]] here.
@@ -149,12 +178,46 @@ private final class TokenDecoder private (
       expectEof().check
       value.asInstanceOf[T]
 
+  def decodeExperimentalRoot[T](
+      schema: Reader[T],
+      rootName: String,
+      packageName: String
+  ): Result[T, DecodeError] =
+    Result:
+      expectPackageStatement(packageName).check
+      acceptExperimentalImports().check
+      expectVal().check
+      expectIdentifier().check
+      val declaredName = pullStringStrict()
+      if declaredName != rootName then raise(DecodeError.UnexpectedRoot(declaredName))
+      expectEquals().check
+      decodeBase(schema.schema).check
+      val value = pullAny()
+      expectEof().check
+      value.asInstanceOf[T]
+
   def decodeAnyRoot[T](
       schema: Reader[T],
       packageName: String
   ): Result[Expr.SourceFile[T], DecodeError] =
     Result:
       expectPackageStatement(packageName).check
+      expectVal().check
+      expectIdentifier().check
+      val declaredName = pullStringStrict()
+      expectEquals().check
+      decodeBase(schema.schema).check
+      val value = pullAny().asInstanceOf[T]
+      expectEof().check
+      Expr.SourceFile(Map(declaredName -> value))
+
+  def decodeExperimentalAnyRoot[T](
+      schema: Reader[T],
+      packageName: String
+  ): Result[Expr.SourceFile[T], DecodeError] =
+    Result:
+      expectPackageStatement(packageName).check
+      acceptExperimentalImports().check
       expectVal().check
       expectIdentifier().check
       val declaredName = pullStringStrict()
@@ -171,4 +234,64 @@ private final class TokenDecoder private (
       expectEof().check
       value.asInstanceOf[T]
 
+  def decodeExperimentalExpression[T](schema: Reader[T]): Result[T, DecodeError] =
+    Result:
+      acceptExperimentalImports().check
+      decodeBase(schema.schema).check
+      val value = pullAny()
+      expectEof().check
+      value.asInstanceOf[T]
+
+  private def acceptExperimentalImports(): Result[Unit, DecodeError] = Result.task:
+    var done = false
+    while !done do
+      currentKind() match
+        case TokenKind.Keyword if currentName() == "import" =>
+          val importOffset = currentOffset()
+          advance()
+          acceptDedentedStringLiteralsImport(importOffset).check
+          acceptStatementSeparator()
+        case _ =>
+          done = true
+
+  private def acceptDedentedStringLiteralsImport(
+      importOffset: Int
+  ): Result[Unit, DecodeError] =
+    Result.task:
+      expectImportIdentifier("language", importOffset).check
+      expectImportDot(importOffset).check
+      expectImportIdentifier("experimental", importOffset).check
+      expectImportDot(importOffset).check
+      currentKind() match
+        case TokenKind.Identifier if currentName() == "dedentedStringLiterals" =>
+          addExperimentalFlags(ExperimentalFlags.AllowSIP72)
+          advance()
+          currentKind() match
+            case TokenKind.Dot | TokenKind.Comma =>
+              raise(unsupportedExperimentalImport(importOffset))
+            case _ => ()
+        case TokenKind.Identifier =>
+          raise(unsupportedExperimentalImport(importOffset))
+        case _ =>
+          raise(DecodeError.ExpectedIdentifier(describeCurrent()).atToken(currentSpan()))
+
+  private def expectImportIdentifier(
+      expected: String,
+      importOffset: Int
+  ): Result[Unit, DecodeError] =
+    Result.task:
+      expectIdentifier().check
+      if pullStringStrict() != expected then raise(unsupportedExperimentalImport(importOffset))
+
+  private def expectImportDot(importOffset: Int): Result[Unit, DecodeError] =
+    Result.task:
+      if currentKind() == TokenKind.Dot then advance()
+      else raise(unsupportedExperimentalImport(importOffset))
+
+  private def unsupportedExperimentalImport(importOffset: Int): DecodeError =
+    DecodeError
+      .Custom(
+        "Unsupported experimental import; only import language.experimental.dedentedStringLiterals is supported"
+      )
+      .atToken(spanAt(importOffset))
 }
