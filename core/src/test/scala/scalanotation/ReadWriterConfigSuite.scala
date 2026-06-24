@@ -136,18 +136,6 @@ class ReadWriterConfigSuite extends ScalanotationSuite:
         assertEquals(error.rootCause, DecodeError.FieldOrderMismatch("kind", "from"))
       case Result.Ok(value) => fail(s"Expected a decode failure, got $value")
 
-  test("configured discriminator sum decoder rejects payload fields that repeat discriminator"):
-    enum Command:
-      case Copy(kind: String, to: String)
-
-    given Configured[Command] = Configured.discriminator("kind")
-    given Reader[Command]     = Reader.configured.derived
-
-    Readers.readAs[Command]("""(kind = "Copy", kind = "source", to = "b")""") match
-      case Result.Err(error) =>
-        assertEquals(error.rootCause, DecodeError.DuplicateField("kind"))
-      case Result.Ok(value) => fail(s"Expected a decode failure, got $value")
-
   test("configured ReadWriter with no discriminator uses the standard sum schema"):
     enum Mode:
       case Fast

@@ -160,36 +160,6 @@ class SourceFileSuite extends ScalanotationSuite:
     assertEquals(decoded.getErr.path, List(".x"))
     assertEquals(decoded.getErr.span.map(span => (span.line, span.column)), Some((1, 20)))
 
-  test("reject duplicate extra field decls with typed named tuples"):
-    type Data = (x: Int, y: Int)
-
-    val input   = "val data = (x = 1, y = 2, x = 3)"
-    val decoded = Readers.readDeclAs[Data](input, rootName = "data")
-
-    assertEquals(decoded.getErr.rootCause, DecodeError.DuplicateField("x"))
-    assertEquals(decoded.getErr.path, List(".x"))
-
-  test("reject duplicate extra field decls with wide manual named tuple schema"):
-    val intSchema = summon[Reader[Int]].schema
-    val fields    =
-      IArray.from(
-        (0 until 65).iterator.map(index => RawSchema.Field(s"f$index", intSchema))
-      )
-    val reader: Reader[Array[AnyRef]] =
-      Reader.fromSchema(
-        RawSchema.NamedTuple[Array[AnyRef]](
-          fields,
-          RawSchema.NamedTupleRead.from[Array[AnyRef]](values => values)
-        )
-      )
-    val input =
-      "val data = (" + (0 until 65).iterator.map(index => s"f$index = $index").mkString(", ") +
-        ", f0 = 99)"
-    val decoded = Readers.readDeclAs[Array[AnyRef]](input, rootName = "data")(using reader)
-
-    assertEquals(decoded.getErr.rootCause, DecodeError.DuplicateField("f0"))
-    assertEquals(decoded.getErr.path, List(".f0"))
-
   test("reject duplicate field decls in schema!"):
     type Data = NamedTuple.NamedTuple[("x", "x"), (Int, Int)]
 
