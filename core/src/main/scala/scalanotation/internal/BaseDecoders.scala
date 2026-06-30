@@ -91,9 +91,16 @@ private[scalanotation] trait BaseDecoders extends SharedHelpers:
     if currentKind() == TokenKind.Equals then advance()
     else raise(DecodeError.ExpectedEquals(describeCurrent()).atToken(currentSpan()))
 
+  protected final def expectArrow(): Result[Unit, DecodeError] = Result.task:
+    if currentKind() == TokenKind.Arrow then advance()
+    else raise(expectedArrowError())
+
   protected final def expectEof(): Result[Unit, DecodeError] = Result.task:
     if currentKind() != TokenKind.Eof then
       raise(DecodeError.ExpectedEof(describeCurrent()).atToken(currentSpan()))
+
+  protected final def collectionLiteralsEnabled: Boolean =
+    experimentalFlagEnabled(ExperimentalFlags.AllowCollectionLiterals)
 
   protected inline def eval[T](inline op: T): T =
     def exprToEval(): T = op
@@ -393,15 +400,23 @@ private[scalanotation] trait BaseDecoders extends SharedHelpers:
   protected inline def parseVectorStructure(schema: RawSchema[?])(
       inline consumeElementValue: Resulting[Int => Unit, DecodeError]
   ): Resulting[Unit, DecodeError] = {
-    if currentKind() == TokenKind.VectorId && peekKind() == TokenKind.LParen then
+    val closingKind =
+      if currentKind() == TokenKind.VectorId && peekKind() == TokenKind.LParen then TokenKind.RParen
+      else if collectionLiteralsEnabled && currentKind() == TokenKind.LBracket then
+        TokenKind.RBracket
+      else
+        raise(
+          DecodeError.ExpectedType(schema.describeSelf, describeCurrent()).atToken(currentSpan())
+        )
+
+    if closingKind == TokenKind.RParen then
       advance()
       advance()
-    else
-      raise(DecodeError.ExpectedType(schema.describeSelf, describeCurrent()).atToken(currentSpan()))
+    else advance()
 
     var indexInVector = 0
 
-    if currentKind() == TokenKind.RParen then advance()
+    if currentKind() == closingKind then advance()
     else
       var done = false
       while !done do
@@ -411,11 +426,19 @@ private[scalanotation] trait BaseDecoders extends SharedHelpers:
         currentKind() match
           case TokenKind.Comma =>
             advance()
-            if currentKind() == TokenKind.RParen then done = true
-          case TokenKind.RParen => done = true
-          case _                =>
-            raise(DecodeError.ExpectedRParen(describeCurrent()).atToken(currentSpan()))
+            if currentKind() == closingKind then done = true
+          case kind if kind == closingKind => done = true
+          case _                           =>
+            raise(expectedClosingError(closingKind))
 
-      if currentKind() == TokenKind.RParen then advance()
-      else raise(DecodeError.ExpectedRParen(describeCurrent()).atToken(currentSpan()))
+      if currentKind() == closingKind then advance()
+      else raise(expectedClosingError(closingKind))
   }
+
+  protected final def expectedArrowError(): DecodeError =
+    DecodeError.Custom(s"Expected '->' but found ${describeCurrent()}").atToken(currentSpan())
+
+  private def expectedClosingError(closingKind: Int): DecodeError =
+    if closingKind == TokenKind.RParen then
+      DecodeError.ExpectedRParen(describeCurrent()).atToken(currentSpan())
+    else DecodeError.Custom(s"Expected ']' but found ${describeCurrent()}").atToken(currentSpan())

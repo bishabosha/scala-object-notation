@@ -206,6 +206,41 @@ val conf = (
 )
 ```
 
+### Collection Literals
+
+Collection literals add `[...]` as an experimental shorthand for `Vector(...)`.
+To use them, opt in with:
+
+```scala
+import language.experimental.collectionLiterals
+```
+
+After that import, sequence values can use bracket syntax:
+
+```scala
+import scalanotation.*
+import steps.result.Result
+
+val input =
+  """import language.experimental.collectionLiterals
+    |[1, 2, 3]
+    |""".stripMargin
+
+val decoded = Readers.experimental.readAs[Vector[Int]](input)
+assert(decoded == Result.Ok(Vector(1, 2, 3)))
+```
+
+The `->` pair operator can be used inside collection literals for pair-sequence schemas:
+
+```scala
+import language.experimental.collectionLiterals
+
+["abc" -> 1, "def" -> 2]
+```
+
+Chained pairs associate left-to-right, matching Scala operator syntax:
+`1 -> "abc" -> true` decodes as `((1, "abc"), true)`.
+
 ## Dynamic Data
 
 `scalanotation.Expr` is an algebraic data type representing the syntax of Scala Object Notation:

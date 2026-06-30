@@ -29,7 +29,10 @@ private[scalanotation] trait TokenKinds:
   inline val Semicolon    = 21
   inline val LParen       = 22
   inline val RParen       = 23
-  inline val Eof          = 24
+  inline val LBracket     = 24
+  inline val RBracket     = 25
+  inline val Arrow        = 26
+  inline val Eof          = 27
 
 /** Unboxed token kind constants. The decoder's happy path only ever inspects these (plus the
   * unboxed offset slots in [[TokenStream]]); boxed [[Token]] values and [[DecodeError.Span]]s are
@@ -67,6 +70,9 @@ private[scalanotation] enum Token:
   case Semicolon(span: DecodeError.Span)
   case LParen(span: DecodeError.Span)
   case RParen(span: DecodeError.Span)
+  case LBracket(span: DecodeError.Span)
+  case RBracket(span: DecodeError.Span)
+  case Arrow(span: DecodeError.Span)
   case Eof(span: DecodeError.Span)
 
   def span: DecodeError.Span
@@ -82,8 +88,9 @@ private[scalanotation] final class TokenizeException(val message: String, val of
     with scala.util.control.NoStackTrace
 
 private[scalanotation] object ExperimentalFlags:
-  final val None: Int       = 0
-  final val AllowSIP72: Int = 1 << 0
+  final val None: Int                    = 0
+  final val AllowSIP72: Int              = 1 << 0
+  final val AllowCollectionLiterals: Int = 1 << 1
 
   inline def enabled(flags: Int, flag: Int): Boolean =
     (flags & flag) != 0
@@ -161,6 +168,8 @@ private[scalanotation] final class Tokenizer private[internal] (
       case '.'                            => advance(); kind = TokenKind.Dot
       case ','                            => advance(); kind = TokenKind.Comma
       case ';'                            => advance(); kind = TokenKind.Semicolon
+      case '['                            => advance(); kind = TokenKind.LBracket
+      case ']'                            => advance(); kind = TokenKind.RBracket
       case '`'                            => scanQuotedIdentifier()
       case '"'                            => scanString()
       case '\'' if canStartDedentedString => scanDedentedString()
@@ -246,6 +255,7 @@ private[scalanotation] final class Tokenizer private[internal] (
         case '+' => kind = TokenKind.Plus
         case '-' => kind = TokenKind.Minus
         case _   => classifyOperatorIdentifier()
+    else if len == 2 && sliceEquals(start, index, KW_pairArrow) then kind = TokenKind.Arrow
     else classifyOperatorIdentifier()
 
   private def classifyOperatorIdentifier(): Unit =
@@ -668,6 +678,7 @@ private[scalanotation] object Tokenizer:
   private val KW_Tuple      = "Tuple"
   private val KW_colon      = ":"
   private val KW_leftArrow  = "<-"
+  private val KW_pairArrow  = "->"
   private val KW_arrow      = "=>"
   private val KW_subtype    = "<:"
   private val KW_supertype  = ">:"
@@ -818,6 +829,9 @@ private[scalanotation] object Tokenizer:
       case TokenKind.Semicolon => Token.Semicolon(span)
       case TokenKind.LParen    => Token.LParen(span)
       case TokenKind.RParen    => Token.RParen(span)
+      case TokenKind.LBracket  => Token.LBracket(span)
+      case TokenKind.RBracket  => Token.RBracket(span)
+      case TokenKind.Arrow     => Token.Arrow(span)
       case _                   => Token.Eof(span)
 
   /** Tokenize the whole input into boxed [[Token]]s — for tests and debugging only; the decode path
@@ -887,6 +901,9 @@ private[scalanotation] abstract class TokenStream private[internal] (
   protected final def addExperimentalFlags(flags: Int): Unit =
     experimentalFlags |= flags
     scanner.setExperimentalFlags(experimentalFlags)
+
+  protected final def experimentalFlagEnabled(flag: Int): Boolean =
+    ExperimentalFlags.enabled(experimentalFlags, flag)
 
   protected def currentKind(): Int   = kinds(cur)
   protected def currentOffset(): Int = starts(cur)
@@ -998,5 +1015,8 @@ private[scalanotation] abstract class TokenStream private[internal] (
       case TokenKind.Semicolon    => "';'"
       case TokenKind.LParen       => "'('"
       case TokenKind.RParen       => "')'"
+      case TokenKind.LBracket     => "'['"
+      case TokenKind.RBracket     => "']'"
+      case TokenKind.Arrow        => "'->'"
       case _                      => "end of input"
 }

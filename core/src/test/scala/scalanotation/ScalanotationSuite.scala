@@ -28,6 +28,9 @@ abstract class ScalanotationSuite extends FunSuite:
       case Token.Semicolon(_)        => ";"
       case Token.LParen(_)           => "("
       case Token.RParen(_)           => ")"
+      case Token.LBracket(_)         => "["
+      case Token.RBracket(_)         => "]"
+      case Token.Arrow(_)            => "->"
       case Token.Eof(_)              => "eof"
       case token                     =>
         fail(
