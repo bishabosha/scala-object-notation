@@ -136,6 +136,9 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
         )
       decodeBase(routerCase.schema).check
       if allowTopLevelArrow && collectionLiteralsEnabled && currentKind() == TokenKind.Arrow then
+        // TODO: Router cases are intended for dynamic representations that are likely boxed.
+        // Therefore acceptable to `pullAny`.
+        // therefore await direct use-case that would require to implement a pool of "cached typed slots".
         val firstValue = pullAny()
         decodeRouterArrowTupleCase(schema, firstValue).check
 
@@ -155,10 +158,10 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
               .ExpectedType(schema.describeSelf, "'->'")
               .atToken(spanAt(arrowOffset))
           )
-        decodeCachedPairAsTupleCase(tupleCase.schema, cachedFirstValue, arrowOffset).check
+        decodeCachedPairAsRouterTupleCase(tupleCase.schema, cachedFirstValue, arrowOffset).check
         cachedFirstValue = pullAny()
 
-  private def decodeCachedPairAsTupleCase(
+  private def decodeCachedPairAsRouterTupleCase(
       schema: RawSchema[?],
       firstValue: Any,
       arrowOffset: Int
@@ -166,15 +169,15 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
     schema match
       case mapped: RawSchema.Mapped[?, ?] =>
         Result.task {
-          decodeCachedPairAsTupleCase(mapped.base, firstValue, arrowOffset).check
+          decodeCachedPairAsRouterTupleCase(mapped.base, firstValue, arrowOffset).check
           mapSlot(mapped.mapping).check
         }
       case RawSchema.Ref(_, target) =>
-        decodeCachedPairAsTupleCase(target(), firstValue, arrowOffset)
+        decodeCachedPairAsRouterTupleCase(target(), firstValue, arrowOffset)
       case tupleOf: RawSchema.TupleOf[?, ?] =>
-        decodeCachedPairAsTupleOf(tupleOf, firstValue)
+        decodeCachedPairAsRouterTupleOf(tupleOf, firstValue)
       case tuple: RawSchema.Tuple[?] =>
-        decodeCachedPairAsFixedTuple(tuple, firstValue, arrowOffset)
+        decodeCachedPairAsRouterFixedTuple(tuple, firstValue, arrowOffset)
       case other =>
         Result.Err(
           DecodeError
@@ -182,7 +185,7 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
             .atToken(spanAt(arrowOffset))
         )
 
-  private def decodeCachedPairAsTupleOf[Elem, Repr, A](
+  private def decodeCachedPairAsRouterTupleOf[Elem, Repr, A](
       schema: RawSchema.TupleOf[?, ?],
       firstValue: Any
   ): Result[Unit, DecodeError] =
@@ -196,7 +199,7 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
         pushRef(read.finish(state))
     }
 
-  private def decodeCachedPairAsFixedTuple[Repr, A](
+  private def decodeCachedPairAsRouterFixedTuple[Repr, A](
       schema: RawSchema.Tuple[?],
       firstValue: Any,
       arrowOffset: Int
