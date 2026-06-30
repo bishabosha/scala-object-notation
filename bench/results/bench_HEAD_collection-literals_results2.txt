@@ -1,0 +1,41 @@
+Benchmark                                                          Mode  Cnt     Score    Error   Units
+PairSeqArrowSyntaxBenchmark.decodeExpr                             avgt   10     1.872 ±  0.020   us/op
+PairSeqArrowSyntaxBenchmark.decodeExpr:gc.alloc.rate               avgt   10  2114.607 ± 22.502  MB/sec
+PairSeqArrowSyntaxBenchmark.decodeExpr:gc.alloc.rate.norm          avgt   10  4152.013 ±  0.001    B/op
+PairSeqArrowSyntaxBenchmark.decodeExpr:gc.count                    avgt   10    35.000           counts
+PairSeqArrowSyntaxBenchmark.decodeExpr:gc.time                     avgt   10    17.000               ms
+PairSeqArrowSyntaxBenchmark.decodeExprBatched                      avgt   10     1.596 ±  0.019   us/op
+PairSeqArrowSyntaxBenchmark.decodeExprBatched:gc.alloc.rate        avgt   10  2122.964 ± 25.382  MB/sec
+PairSeqArrowSyntaxBenchmark.decodeExprBatched:gc.alloc.rate.norm   avgt   10  3552.011 ±  0.001    B/op
+PairSeqArrowSyntaxBenchmark.decodeExprBatched:gc.count             avgt   10    36.000           counts
+PairSeqArrowSyntaxBenchmark.decodeExprBatched:gc.time              avgt   10    18.000               ms
+PairSeqArrowSyntaxBenchmark.decodeTyped                            avgt   10     0.956 ±  0.008   us/op
+PairSeqArrowSyntaxBenchmark.decodeTyped:gc.alloc.rate              avgt   10  1979.671 ± 15.899  MB/sec
+PairSeqArrowSyntaxBenchmark.decodeTyped:gc.alloc.rate.norm         avgt   10  1984.007 ±  0.001    B/op
+PairSeqArrowSyntaxBenchmark.decodeTyped:gc.count                   avgt   10    34.000           counts
+PairSeqArrowSyntaxBenchmark.decodeTyped:gc.time                    avgt   10    17.000               ms
+PairSeqArrowSyntaxBenchmark.decodeTypedBatched                     avgt   10     0.898 ±  0.008   us/op
+PairSeqArrowSyntaxBenchmark.decodeTypedBatched:gc.alloc.rate       avgt   10  1469.423 ± 12.603  MB/sec
+PairSeqArrowSyntaxBenchmark.decodeTypedBatched:gc.alloc.rate.norm  avgt   10  1384.006 ±  0.001    B/op
+PairSeqArrowSyntaxBenchmark.decodeTypedBatched:gc.count            avgt   10    24.000           counts
+PairSeqArrowSyntaxBenchmark.decodeTypedBatched:gc.time             avgt   10    14.000               ms
+PairSeqTupleSyntaxBenchmark.decodeExpr                             avgt   10     2.075 ±  0.018   us/op
+PairSeqTupleSyntaxBenchmark.decodeExpr:gc.alloc.rate               avgt   10  1819.529 ± 15.689  MB/sec
+PairSeqTupleSyntaxBenchmark.decodeExpr:gc.alloc.rate.norm          avgt   10  3960.014 ±  0.001    B/op
+PairSeqTupleSyntaxBenchmark.decodeExpr:gc.count                    avgt   10    30.000           counts
+PairSeqTupleSyntaxBenchmark.decodeExpr:gc.time                     avgt   10    15.000               ms
+PairSeqTupleSyntaxBenchmark.decodeExprBatched                      avgt   10     2.016 ±  0.020   us/op
+PairSeqTupleSyntaxBenchmark.decodeExprBatched:gc.alloc.rate        avgt   10  1589.189 ± 16.076  MB/sec
+PairSeqTupleSyntaxBenchmark.decodeExprBatched:gc.alloc.rate.norm   avgt   10  3360.014 ±  0.001    B/op
+PairSeqTupleSyntaxBenchmark.decodeExprBatched:gc.count             avgt   10    27.000           counts
+PairSeqTupleSyntaxBenchmark.decodeExprBatched:gc.time              avgt   10    14.000               ms
+PairSeqTupleSyntaxBenchmark.decodeTyped                            avgt   10     0.903 ±  0.005   us/op
+PairSeqTupleSyntaxBenchmark.decodeTyped:gc.alloc.rate              avgt   10  2043.604 ± 11.215  MB/sec
+PairSeqTupleSyntaxBenchmark.decodeTyped:gc.alloc.rate.norm         avgt   10  1936.006 ±  0.001    B/op
+PairSeqTupleSyntaxBenchmark.decodeTyped:gc.count                   avgt   10    34.000           counts
+PairSeqTupleSyntaxBenchmark.decodeTyped:gc.time                    avgt   10    16.000               ms
+PairSeqTupleSyntaxBenchmark.decodeTypedBatched                     avgt   10     0.863 ±  0.003   us/op
+PairSeqTupleSyntaxBenchmark.decodeTypedBatched:gc.alloc.rate       avgt   10  1476.369 ±  5.849  MB/sec
+PairSeqTupleSyntaxBenchmark.decodeTypedBatched:gc.alloc.rate.norm  avgt   10  1336.006 ±  0.001    B/op
+PairSeqTupleSyntaxBenchmark.decodeTypedBatched:gc.count            avgt   10    25.000           counts
+PairSeqTupleSyntaxBenchmark.decodeTypedBatched:gc.time             avgt   10    14.000               ms

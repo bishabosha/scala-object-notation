@@ -246,7 +246,7 @@ private final class TokenDecoder private (
     var done = false
     while !done do
       currentKind() match
-        case TokenKind.Keyword if currentName() == "import" =>
+        case TokenKind.Keyword if currentNameMatches("import") =>
           val importOffset = currentOffset()
           advance()
           acceptExperimentalImport(importOffset).check
@@ -263,14 +263,14 @@ private final class TokenDecoder private (
       acceptImportIdentifier("experimental", importOffset).check
       expectImportDot(importOffset).check
       currentKind() match
-        case TokenKind.Identifier if currentName() == "dedentedStringLiterals" =>
+        case TokenKind.Identifier if currentNameMatches("dedentedStringLiterals") =>
           addExperimentalFlags(ExperimentalFlags.AllowSIP72)
           advance()
           currentKind() match
             case TokenKind.Dot | TokenKind.Comma =>
               raise(unsupportedExperimentalImport(importOffset))
             case _ => ()
-        case TokenKind.Identifier if currentName() == "collectionLiterals" =>
+        case TokenKind.Identifier if currentNameMatches("collectionLiterals") =>
           addExperimentalFlags(ExperimentalFlags.AllowCollectionLiterals)
           advance()
           currentKind() match
@@ -288,7 +288,7 @@ private final class TokenDecoder private (
   ): Result[Unit, DecodeError] =
     Result.task:
       currentKind() match
-        case TokenKind.Identifier if currentName() == expected =>
+        case TokenKind.Identifier if currentNameMatches(expected) =>
           advance()
         case TokenKind.Identifier =>
           raise(unsupportedExperimentalImport(importOffset))

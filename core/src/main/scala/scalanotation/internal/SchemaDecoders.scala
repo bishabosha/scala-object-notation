@@ -142,11 +142,11 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
       firstValue: Any
   ): Result[Unit, DecodeError] =
     Result.task:
+      val tupleCase        = RawSchema.routerCase(schema, schema.router.tupleIndex)
       var cachedFirstValue = firstValue
       while currentKind() == TokenKind.Arrow do
         val arrowOffset = currentOffset()
-        expectArrow().check
-        val tupleCase = RawSchema.routerCase(schema, schema.router.tupleIndex)
+        advance()
         if tupleCase == null then
           raise(
             DecodeError
@@ -714,7 +714,8 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
       read: Reader.PairSeqBuilder[Key, Elem, Repr, A]
   ): Result[Unit, DecodeError] =
     Result.task:
-      var state = read.init()
+      var state           = read.init()
+      val allowArrowPairs = collectionLiteralsEnabled
       parseVectorStructure(schema) { index =>
         if currentKind() == TokenKind.LParen then
           val tupleOffset = currentOffset()
@@ -752,10 +753,11 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
                   raise(DecodeError.FieldCountMismatch(2, 3).atToken(currentSpan()))
             case _ =>
               raise(DecodeError.ExpectedRParen(describeCurrent()).atToken(currentSpan()))
-        else if collectionLiteralsEnabled then
+        else if allowArrowPairs then
           checkOrRaise(decodeBase(schema.key))(_.atPath(s"[$index][0]"))
           state = addPairKeySlot(read)(state)
-          expectArrow().check
+          if currentKind() == TokenKind.Arrow then advance()
+          else raise(expectedArrowError())
           checkOrRaise(decodeBase(schema.value))(_.atPath(s"[$index][1]"))
           state = addPairValueSlot(read)(state)
         else

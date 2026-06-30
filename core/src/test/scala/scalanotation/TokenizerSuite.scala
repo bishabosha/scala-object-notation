@@ -109,6 +109,7 @@ class TokenizerSuite extends ScalanotationSuite:
       "@@",
       "?==>",
       "=>>>",
+      "->>",
       "++",
       "--",
       "=="
