@@ -199,8 +199,8 @@ class CollectionLiteralSuite extends ScalanotationSuite:
   test("read complex arrow values in PairSeq"):
     val input = s"""$ExperimentalImport
                    |[
-                   |  1 -> "one" -> true,
-                   |  2 -> [false, 3 -> "three"]
+                   |  (1, "one" -> true),
+                   |  (2, [false, 3 -> "three"])
                    |]
                    |""".stripMargin
 
@@ -225,6 +225,24 @@ class CollectionLiteralSuite extends ScalanotationSuite:
               )
             )
           )
+        )
+      )
+    )
+
+  test("read chained arrow pair elements as tuple keys in PairSeq"):
+    val input = s"""$ExperimentalImport
+                   |[
+                   |  1 -> "one" -> true,
+                   |  2 -> "two" -> false
+                   |]
+                   |""".stripMargin
+
+    assertEquals(
+      Readers.experimental.readAs[ListMap[(Int, String), Boolean]](input),
+      Result.Ok(
+        ListMap(
+          (1, "one") -> true,
+          (2, "two") -> false
         )
       )
     )
@@ -259,6 +277,135 @@ class CollectionLiteralSuite extends ScalanotationSuite:
               Expr.StringConstant("one")
             )
           ) -> 2
+        )
+      )
+    )
+
+  test("read chained arrow pair element as Expr key in PairSeq"):
+    val input = s"""$ExperimentalImport
+                   |[1 -> "one" -> true]
+                   |""".stripMargin
+
+    assertEquals(
+      Readers.experimental.readAs[ListMap[Expr, Expr]](input),
+      Result.Ok(
+        ListMap(
+          Expr.TupleExpr(
+            IndexedSeq(
+              Expr.IntConstant(1),
+              Expr.StringConstant("one")
+            )
+          ) -> Expr.BooleanConstant(true)
+        )
+      )
+    )
+
+  test("read arrow pair elements with complex Expr keys and values in PairSeq"):
+    val input = s"""$ExperimentalImport
+                   |[
+                   |  1 -> "one" -> true,
+                   |  [2 -> "two", false] -> (kind = "vector-key", value = 3 -> "three"),
+                   |  Tuple(4 -> "four") -> ["tuple-value", 5 -> "five"]
+                   |]
+                   |""".stripMargin
+
+    assertEquals(
+      Readers.experimental.readAs[ListMap[Expr, Expr]](input),
+      Result.Ok(
+        ListMap(
+          Expr.TupleExpr(
+            IndexedSeq(
+              Expr.IntConstant(1),
+              Expr.StringConstant("one")
+            )
+          ) -> Expr.BooleanConstant(true),
+          Expr.VectorExpr(
+            IndexedSeq(
+              Expr.TupleExpr(
+                IndexedSeq(
+                  Expr.IntConstant(2),
+                  Expr.StringConstant("two")
+                )
+              ),
+              Expr.BooleanConstant(false)
+            )
+          ) -> Expr.NamedTupleExpr(
+            IndexedSeq(
+              "kind"  -> Expr.StringConstant("vector-key"),
+              "value" -> Expr.TupleExpr(
+                IndexedSeq(
+                  Expr.IntConstant(3),
+                  Expr.StringConstant("three")
+                )
+              )
+            )
+          ),
+          Expr.TupleExpr(
+            IndexedSeq(
+              Expr.TupleExpr(
+                IndexedSeq(
+                  Expr.IntConstant(4),
+                  Expr.StringConstant("four")
+                )
+              )
+            )
+          ) -> Expr.VectorExpr(
+            IndexedSeq(
+              Expr.StringConstant("tuple-value"),
+              Expr.TupleExpr(
+                IndexedSeq(
+                  Expr.IntConstant(5),
+                  Expr.StringConstant("five")
+                )
+              )
+            )
+          )
+        )
+      )
+    )
+
+  test("read tuple pair elements with arrow Expr keys and values in PairSeq"):
+    val input = s"""$ExperimentalImport
+                   |[
+                   |  (1 -> "one", "value" -> true),
+                   |  (["key" -> 2], (nested = 3 -> "three"))
+                   |]
+                   |""".stripMargin
+
+    assertEquals(
+      Readers.experimental.readAs[ListMap[Expr, Expr]](input),
+      Result.Ok(
+        ListMap(
+          Expr.TupleExpr(
+            IndexedSeq(
+              Expr.IntConstant(1),
+              Expr.StringConstant("one")
+            )
+          ) -> Expr.TupleExpr(
+            IndexedSeq(
+              Expr.StringConstant("value"),
+              Expr.BooleanConstant(true)
+            )
+          ),
+          Expr.VectorExpr(
+            IndexedSeq(
+              Expr.TupleExpr(
+                IndexedSeq(
+                  Expr.StringConstant("key"),
+                  Expr.IntConstant(2)
+                )
+              )
+            )
+          ) -> Expr.NamedTupleExpr(
+            IndexedSeq(
+              "nested" -> Expr.TupleExpr(
+                IndexedSeq(
+                  Expr.IntConstant(3),
+                  Expr.StringConstant("three")
+                )
+              )
+            )
+          )
         )
       )
     )

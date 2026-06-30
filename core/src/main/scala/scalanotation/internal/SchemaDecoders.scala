@@ -238,7 +238,7 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
     withBorrowSlots(read.slotsFactory) { pooled =>
       Result.task {
         if allowTopLevelArrow && collectionLiteralsEnabled && !currentStartsTupleLike then
-          decodeArrowTupleViaExpr(schema).check
+          decodeArrowFixedTuple(schema, read, pooled).check
         else
           val slots         = schema.slots
           val state0        = read.initPooled(slots.length, pooled)
@@ -268,6 +268,25 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
       ExprDecoder().decodeInto(reader, expr) match
         case Result.Ok(value)  => pushRef(value)
         case Result.Err(error) => raise(error)
+
+  private def decodeArrowFixedTuple[Repr, A](
+      schema: RawSchema.Tuple[?],
+      read: Reader.TupleBuilder[Repr, A],
+      pooled: scalanotation.BuilderSlots | Null
+  ): Result[Unit, DecodeError] =
+    Result.task:
+      val slots = schema.slots
+      if slots.length != 2 then
+        raise(DecodeError.FieldCountMismatch(slots.length, 2).atToken(currentSpan()))
+
+      var state = read.initPooled(slots.length, pooled)
+      checkOrRaise(decodeBase(slots(0), allowTopLevelArrow = true))(_.atPath("[0]"))
+      state = addSlot(read)(state, 0)
+      if currentKind() == TokenKind.Arrow then advance()
+      else raise(expectedArrowError())
+      checkOrRaise(decodeBase(slots(1), allowTopLevelArrow = false))(_.atPath("[1]"))
+      state = addSlot(read)(state, 1)
+      pushRef(read.finish(state))
 
   protected final def decodeTupleSlotValue(
       slots: IArray[RawSchema[?]],
@@ -784,12 +803,19 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
             case _ =>
               raise(DecodeError.ExpectedRParen(describeCurrent()).atToken(currentSpan()))
         else if allowArrowPairs then
-          checkOrRaise(decodeBase(schema.key, allowTopLevelArrow = false))(_.atPath(s"[$index][0]"))
-          state = addPairKeySlot(read)(state)
-          if currentKind() == TokenKind.Arrow then advance()
-          else raise(expectedArrowError())
-          checkOrRaise(decodeBase(schema.value))(_.atPath(s"[$index][1]"))
-          state = addPairValueSlot(read)(state)
+          if pairSeqKeyIsExpr(schema.key) then
+            decodeExprKeyArrowPair(schema, read, state, index) match
+              case Result.Ok(nextState) => state = nextState
+              case Result.Err(error)    => raise(error)
+          else
+            checkOrRaise(decodeBase(schema.key, allowTopLevelArrow = true))(
+              _.atPath(s"[$index][0]")
+            )
+            state = addPairKeySlot(read)(state)
+            if currentKind() == TokenKind.Arrow then advance()
+            else raise(expectedArrowError())
+            checkOrRaise(decodeBase(schema.value))(_.atPath(s"[$index][1]"))
+            state = addPairValueSlot(read)(state)
         else
           raise(
             DecodeError
@@ -798,6 +824,59 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
           )
       }
       pushRef(read.finish(state))
+
+  private def decodeExprKeyArrowPair[Key, Elem, Repr, A](
+      schema: RawSchema.PairSeq[?, ?, ?],
+      read: Reader.PairSeqBuilder[Key, Elem, Repr, A],
+      state0: Repr,
+      index: Int
+  ): Result[Repr, DecodeError] =
+    Result:
+      checkOrRaise(decodeBase(ExprSchema.ExprRouterSchema, allowTopLevelArrow = false))(
+        _.atPath(s"[$index][0]")
+      )
+      var left = pullAny().asInstanceOf[Expr]
+      if currentKind() != TokenKind.Arrow then raise(expectedArrowError())
+
+      var state = state0
+      var done  = false
+      while !done do
+        advance()
+        checkOrRaise(decodeBase(ExprSchema.ExprRouterSchema, allowTopLevelArrow = false))(
+          _.atPath(s"[$index][1]")
+        )
+        val right = pullAny().asInstanceOf[Expr]
+        if currentKind() == TokenKind.Arrow then left = Expr.TupleExpr(IndexedSeq(left, right))
+        else
+          decodeExprAs(schema.key, left) match
+            case Result.Ok(key) =>
+              pushRef(key)
+              state = addPairKeySlot(read)(state)
+            case Result.Err(error) =>
+              raise(error.atPath(s"[$index][0]"))
+          decodeExprAs(schema.value, right) match
+            case Result.Ok(value) =>
+              pushRef(value)
+              state = addPairValueSlot(read)(state)
+              done = true
+            case Result.Err(error) =>
+              raise(error.atPath(s"[$index][1]"))
+      state
+
+  private def decodeExprAs(schema: RawSchema[?], expr: Expr): Result[Any, DecodeError] =
+    val reader = Reader.fromSchema(schema.asInstanceOf[RawSchema[Any]])
+    ExprDecoder().decodeInto(reader, expr)
+
+  private def pairSeqKeyIsExpr(schema: RawSchema[?]): Boolean =
+    schema match
+      case RawSchema.Ref(_, target) =>
+        pairSeqKeyIsExpr(target())
+      case mapped: RawSchema.Mapped[?, ?] =>
+        pairSeqKeyIsExpr(mapped.base)
+      case router: RawSchema.Router[?] if router eq ExprSchema.ExprRouterSchema =>
+        true
+      case _ =>
+        false
 
   protected final def decodeDict(schema: RawSchema.Dict[?, ?]): Result[Unit, DecodeError] =
     namesPool.withBorrowed { seenNames =>
