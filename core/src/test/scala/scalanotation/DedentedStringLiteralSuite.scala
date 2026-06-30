@@ -255,7 +255,7 @@ class DedentedStringLiteralSuite extends ScalanotationSuite:
         assertEquals(
           error.rootCause,
           DecodeError.Custom(
-            "Unsupported experimental import; only import language.experimental.dedentedStringLiterals is supported"
+            "Unsupported experimental import; only import language.experimental.dedentedStringLiterals and import language.experimental.collectionLiterals are supported"
           )
         )
       case Result.Ok(value) => fail(s"Expected a decode failure, got $value")

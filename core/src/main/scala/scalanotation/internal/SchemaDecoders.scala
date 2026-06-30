@@ -14,16 +14,22 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
   self: TokenStream =>
 
   protected final def decodeBase(schema: RawSchema[?]): Result[Unit, DecodeError] =
+    decodeBase(schema, allowTopLevelArrow = true)
+
+  private def decodeBase(
+      schema: RawSchema[?],
+      allowTopLevelArrow: Boolean
+  ): Result[Unit, DecodeError] =
     schema match
       case mapped: RawSchema.Mapped[?, ?] =>
         Result.task {
-          decodeBase(mapped.base).check
+          decodeBase(mapped.base, allowTopLevelArrow).check
           mapSlot(mapped.mapping).check
         }
       case RawSchema.Ref(_, target) =>
-        decodeBase(target())
+        decodeBase(target(), allowTopLevelArrow)
       case router: RawSchema.Router[?] =>
-        decodeRouter(router)
+        decodeRouter(router, allowTopLevelArrow)
       case sc: RawSchema.NamedTuple[?] =>
         decodeNamedTuple(sc)
       case sc: RawSchema.Tuple[?] =>
@@ -43,7 +49,7 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
       case sc: RawSchema.Dict[?, ?] =>
         decodeDict(sc)
       case sc: RawSchema.Option[?] =>
-        decodeOption(sc)
+        decodeOption(sc, allowTopLevelArrow)
       case RawSchema.String =>
         decodeString()
       case RawSchema.Char =>
@@ -61,12 +67,15 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
       case RawSchema.Null =>
         decodeNull()
 
-  protected final def decodeRouter(schema: RawSchema.Router[?]): Result[Unit, DecodeError] =
+  protected final def decodeRouter(
+      schema: RawSchema.Router[?],
+      allowTopLevelArrow: Boolean
+  ): Result[Unit, DecodeError] =
     Result.task:
       val construct = currentRouterConstruct(schema.numberMode)
       if construct == null then
         raise(DecodeError.ExpectedExpression(describeCurrent()).atToken(currentSpan()))
-      else decodeRouterCase(schema, construct).check
+      else decodeRouterCase(schema, construct, allowTopLevelArrow).check
 
   private def currentRouterConstruct(
       numberMode: RouterSchema.NumberMode
@@ -77,12 +86,14 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
       case TokenKind.LParen =>
         if parenStartsRecord() then RouterConstruct.Record
         else RouterConstruct.Tuple
-      case TokenKind.EmptyTupleId => RouterConstruct.Tuple
-      case TokenKind.TupleId      => RouterConstruct.Tuple
-      case TokenKind.VectorId     => RouterConstruct.Vector
-      case TokenKind.StringLit    => RouterConstruct.String
-      case TokenKind.CharLit      => RouterConstruct.Char
-      case TokenKind.IntLit       =>
+      case TokenKind.EmptyTupleId                          => RouterConstruct.Tuple
+      case TokenKind.TupleId                               => RouterConstruct.Tuple
+      case TokenKind.VectorId                              => RouterConstruct.Vector
+      case TokenKind.LBracket if collectionLiteralsEnabled =>
+        RouterConstruct.Vector
+      case TokenKind.StringLit => RouterConstruct.String
+      case TokenKind.CharLit   => RouterConstruct.Char
+      case TokenKind.IntLit    =>
         numberConstruct(RouterConstruct.Int, numberMode)
       case TokenKind.LongLit =>
         numberConstruct(RouterConstruct.Long, numberMode)
@@ -110,7 +121,8 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
 
   private def decodeRouterCase(
       schema: RawSchema.Router[?],
-      construct: RouterSchema.RouterConstruct
+      construct: RouterSchema.RouterConstruct,
+      allowTopLevelArrow: Boolean
   ): Result[Unit, DecodeError] =
     Result.task:
       val routerCase = RawSchema.routerCase(schema, schema.router.indexFor(construct))
@@ -121,6 +133,86 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
             .atToken(currentSpan())
         )
       decodeBase(routerCase.schema).check
+      if allowTopLevelArrow && collectionLiteralsEnabled && currentKind() == TokenKind.Arrow then
+        val firstValue = pullAny()
+        decodeRouterArrowTupleCase(schema, firstValue).check
+
+  private def decodeRouterArrowTupleCase(
+      schema: RawSchema.Router[?],
+      firstValue: Any
+  ): Result[Unit, DecodeError] =
+    Result.task:
+      var cachedFirstValue = firstValue
+      while currentKind() == TokenKind.Arrow do
+        val arrowOffset = currentOffset()
+        expectArrow().check
+        val tupleCase = RawSchema.routerCase(schema, schema.router.tupleIndex)
+        if tupleCase == null then
+          raise(
+            DecodeError
+              .ExpectedType(schema.describeSelf, "'->'")
+              .atToken(spanAt(arrowOffset))
+          )
+        decodeCachedPairAsTupleCase(tupleCase.schema, cachedFirstValue, arrowOffset).check
+        cachedFirstValue = pullAny()
+
+  private def decodeCachedPairAsTupleCase(
+      schema: RawSchema[?],
+      firstValue: Any,
+      arrowOffset: Int
+  ): Result[Unit, DecodeError] =
+    schema match
+      case mapped: RawSchema.Mapped[?, ?] =>
+        Result.task {
+          decodeCachedPairAsTupleCase(mapped.base, firstValue, arrowOffset).check
+          mapSlot(mapped.mapping).check
+        }
+      case RawSchema.Ref(_, target) =>
+        decodeCachedPairAsTupleCase(target(), firstValue, arrowOffset)
+      case tupleOf: RawSchema.TupleOf[?, ?] =>
+        decodeCachedPairAsTupleOf(tupleOf, firstValue)
+      case tuple: RawSchema.Tuple[?] =>
+        decodeCachedPairAsFixedTuple(tuple, firstValue, arrowOffset)
+      case other =>
+        Result.Err(
+          DecodeError
+            .ExpectedType(RawSchema.describeTupleSlots(2), other.describeSelf)
+            .atToken(spanAt(arrowOffset))
+        )
+
+  private def decodeCachedPairAsTupleOf[Elem, Repr, A](
+      schema: RawSchema.TupleOf[?, ?],
+      firstValue: Any
+  ): Result[Unit, DecodeError] =
+    withRead(schema, _.read) { read =>
+      Result.task:
+        var state = read.init()
+        pushRef(firstValue)
+        state = addSlot(read)(state)
+        checkOrRaise(decodeBase(schema.element, allowTopLevelArrow = false))(_.atPath("[1]"))
+        state = addSlot(read)(state)
+        pushRef(read.finish(state))
+    }
+
+  private def decodeCachedPairAsFixedTuple[Repr, A](
+      schema: RawSchema.Tuple[?],
+      firstValue: Any,
+      arrowOffset: Int
+  ): Result[Unit, DecodeError] =
+    withRead(schema, _.read) { read =>
+      withBorrowSlots(read.slotsFactory) { pooled =>
+        Result.task:
+          val slots = schema.slots
+          if slots.length != 2 then
+            raise(DecodeError.FieldCountMismatch(slots.length, 2).atToken(spanAt(arrowOffset)))
+          var state = read.initPooled(slots.length, pooled)
+          pushRef(firstValue)
+          state = addSlot(read)(state, 0)
+          checkOrRaise(decodeBase(slots(1), allowTopLevelArrow = false))(_.atPath("[1]"))
+          state = addSlot(read)(state, 1)
+          pushRef(read.finish(state))
+      }
+    }
 
   private def numberConstruct(
       bounded: RouterSchema.RouterConstruct,
@@ -624,47 +716,54 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
     Result.task:
       var state = read.init()
       parseVectorStructure(schema) { index =>
-        val tupleOffset = currentOffset()
-        if currentKind() == TokenKind.LParen then advance()
+        if currentKind() == TokenKind.LParen then
+          val tupleOffset = currentOffset()
+          advance()
+
+          if currentKind() == TokenKind.RParen then
+            raise(DecodeError.FieldCountMismatch(2, 0).atToken(currentSpan()))
+
+          checkOrRaise(decodeBase(schema.key))(_.atPath(s"[$index][0]"))
+          state = addPairKeySlot(read)(state)
+
+          currentKind() match
+            case TokenKind.Comma =>
+              advance()
+            case TokenKind.RParen =>
+              raise(DecodeError.FieldCountMismatch(2, 1).atToken(spanAt(tupleOffset)))
+            case _ =>
+              raise(DecodeError.ExpectedRParen(describeCurrent()).atToken(currentSpan()))
+
+          if currentKind() == TokenKind.RParen then
+            raise(DecodeError.FieldCountMismatch(2, 1).atToken(currentSpan()))
+
+          checkOrRaise(decodeBase(schema.value))(_.atPath(s"[$index][1]"))
+          state = addPairValueSlot(read)(state)
+
+          currentKind() match
+            case TokenKind.RParen =>
+              advance()
+            case TokenKind.Comma =>
+              advance()
+              currentKind() match
+                case TokenKind.RParen =>
+                  advance()
+                case _ =>
+                  raise(DecodeError.FieldCountMismatch(2, 3).atToken(currentSpan()))
+            case _ =>
+              raise(DecodeError.ExpectedRParen(describeCurrent()).atToken(currentSpan()))
+        else if collectionLiteralsEnabled then
+          checkOrRaise(decodeBase(schema.key))(_.atPath(s"[$index][0]"))
+          state = addPairKeySlot(read)(state)
+          expectArrow().check
+          checkOrRaise(decodeBase(schema.value))(_.atPath(s"[$index][1]"))
+          state = addPairValueSlot(read)(state)
         else
           raise(
             DecodeError
               .ExpectedType(RawSchema.describeTupleSlots(2), describeCurrent())
               .atToken(currentSpan())
           )
-
-        if currentKind() == TokenKind.RParen then
-          raise(DecodeError.FieldCountMismatch(2, 0).atToken(currentSpan()))
-
-        checkOrRaise(decodeBase(schema.key))(_.atPath(s"[$index][0]"))
-        state = addPairKeySlot(read)(state)
-
-        currentKind() match
-          case TokenKind.Comma =>
-            advance()
-          case TokenKind.RParen =>
-            raise(DecodeError.FieldCountMismatch(2, 1).atToken(spanAt(tupleOffset)))
-          case _ =>
-            raise(DecodeError.ExpectedRParen(describeCurrent()).atToken(currentSpan()))
-
-        if currentKind() == TokenKind.RParen then
-          raise(DecodeError.FieldCountMismatch(2, 1).atToken(currentSpan()))
-
-        checkOrRaise(decodeBase(schema.value))(_.atPath(s"[$index][1]"))
-        state = addPairValueSlot(read)(state)
-
-        currentKind() match
-          case TokenKind.RParen =>
-            advance()
-          case TokenKind.Comma =>
-            advance()
-            currentKind() match
-              case TokenKind.RParen =>
-                advance()
-              case _ =>
-                raise(DecodeError.FieldCountMismatch(2, 3).atToken(currentSpan()))
-          case _ =>
-            raise(DecodeError.ExpectedRParen(describeCurrent()).atToken(currentSpan()))
       }
       pushRef(read.finish(state))
 
@@ -694,13 +793,16 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
       pushRef(read.finish(state))
     }
 
-  protected final def decodeOption(schema: RawSchema.Option[?]): Result[Unit, DecodeError] =
+  protected final def decodeOption(
+      schema: RawSchema.Option[?],
+      allowTopLevelArrow: Boolean
+  ): Result[Unit, DecodeError] =
     Result.task {
       if currentKind() == TokenKind.NullKw then
         advance()
         pushRef(None)
       else
-        decodeBase(schema.inner).check
+        decodeBase(schema.inner, allowTopLevelArrow).check
         pushRef(Some(pullAny()))
     }
 

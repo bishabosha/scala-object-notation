@@ -249,12 +249,12 @@ private final class TokenDecoder private (
         case TokenKind.Keyword if currentName() == "import" =>
           val importOffset = currentOffset()
           advance()
-          acceptDedentedStringLiteralsImport(importOffset).check
+          acceptExperimentalImport(importOffset).check
           acceptStatementSeparator()
         case _ =>
           done = true
 
-  private def acceptDedentedStringLiteralsImport(
+  private def acceptExperimentalImport(
       importOffset: Int
   ): Result[Unit, DecodeError] =
     Result.task:
@@ -265,6 +265,13 @@ private final class TokenDecoder private (
       currentKind() match
         case TokenKind.Identifier if currentName() == "dedentedStringLiterals" =>
           addExperimentalFlags(ExperimentalFlags.AllowSIP72)
+          advance()
+          currentKind() match
+            case TokenKind.Dot | TokenKind.Comma =>
+              raise(unsupportedExperimentalImport(importOffset))
+            case _ => ()
+        case TokenKind.Identifier if currentName() == "collectionLiterals" =>
+          addExperimentalFlags(ExperimentalFlags.AllowCollectionLiterals)
           advance()
           currentKind() match
             case TokenKind.Dot | TokenKind.Comma =>
@@ -296,7 +303,7 @@ private final class TokenDecoder private (
   private def unsupportedExperimentalImport(importOffset: Int): DecodeError =
     DecodeError
       .Custom(
-        "Unsupported experimental import; only import language.experimental.dedentedStringLiterals is supported"
+        "Unsupported experimental import; only import language.experimental.dedentedStringLiterals and import language.experimental.collectionLiterals are supported"
       )
       .atToken(spanAt(importOffset))
 }
