@@ -149,12 +149,7 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
       while currentKind() == TokenKind.Arrow do
         val arrowOffset = currentOffset()
         advance()
-        if tupleCase == null then
-          raise(
-            DecodeError
-              .ExpectedType(schema.describeSelf, "'->'")
-              .atToken(spanAt(arrowOffset))
-          )
+        if tupleCase == null then raise(missingRouterTupleCaseError(schema, arrowOffset))
         finishRouterTupleCase(
           tupleCase.schema,
           cachedFirstValue,
@@ -820,19 +815,16 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
   ): Result[Unit, DecodeError] =
     schema match
       case mapped: RawSchema.Mapped[?, ?] =>
-        Result.task {
-          finishRouterTupleCase(
-            mapped.base,
-            firstValue,
-            secondValue,
-            decodeSecondFromInput,
-            arrowOffset
-          ).check
-          mapSlot(mapped.mapping).check
-        }
-      case RawSchema.Ref(_, target) =>
+        finishMappedRouterTupleCase(
+          mapped,
+          firstValue,
+          secondValue,
+          decodeSecondFromInput,
+          arrowOffset
+        )
+      case ref: RawSchema.Ref[?] =>
         finishRouterTupleCase(
-          target(),
+          ref.target(),
           firstValue,
           secondValue,
           decodeSecondFromInput,
@@ -840,12 +832,7 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
         )
       case router: RawSchema.Router[?] =>
         val tupleCase = RawSchema.routerCase(router, router.router.tupleIndex)
-        if tupleCase == null then
-          Result.Err(
-            DecodeError
-              .ExpectedType(router.describeSelf, "'->'")
-              .atToken(spanAt(arrowOffset))
-          )
+        if tupleCase == null then Result.Err(missingRouterTupleCaseError(router, arrowOffset))
         else
           finishRouterTupleCase(
             tupleCase.schema,
@@ -859,11 +846,41 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
       case tuple: RawSchema.Tuple[?] =>
         finishRouterFixedTuple(tuple, firstValue, secondValue, decodeSecondFromInput, arrowOffset)
       case other =>
-        Result.Err(
-          DecodeError
-            .ExpectedType(RawSchema.describeTupleSlots(2), other.describeSelf)
-            .atToken(spanAt(arrowOffset))
-        )
+        Result.Err(expectedRouterTupleSchemaError(other, arrowOffset))
+
+  private def finishMappedRouterTupleCase(
+      schema: RawSchema.Mapped[?, ?],
+      firstValue: Any,
+      secondValue: Any,
+      decodeSecondFromInput: Boolean,
+      arrowOffset: Int
+  ): Result[Unit, DecodeError] =
+    Result.task {
+      finishRouterTupleCase(
+        schema.base,
+        firstValue,
+        secondValue,
+        decodeSecondFromInput,
+        arrowOffset
+      ).check
+      mapSlot(schema.mapping).check
+    }
+
+  private def missingRouterTupleCaseError(
+      schema: RawSchema[?],
+      arrowOffset: Int
+  ): DecodeError =
+    DecodeError
+      .ExpectedType(schema.describeSelf, "'->'")
+      .atToken(spanAt(arrowOffset))
+
+  private def expectedRouterTupleSchemaError(
+      schema: RawSchema[?],
+      arrowOffset: Int
+  ): DecodeError =
+    DecodeError
+      .ExpectedType(RawSchema.describeTupleSlots(2), schema.describeSelf)
+      .atToken(spanAt(arrowOffset))
 
   private def finishRouterTupleOf[Elem, Repr, A](
       schema: RawSchema.TupleOf[?, ?],
