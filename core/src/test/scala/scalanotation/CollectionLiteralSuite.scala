@@ -228,3 +228,37 @@ class CollectionLiteralSuite extends ScalanotationSuite:
         )
       )
     )
+
+  test("read arrow pair elements with router keys in PairSeq"):
+    val input = s"""$ExperimentalImport
+                   |[1 -> 2, "three" -> 4]
+                   |""".stripMargin
+
+    assertEquals(
+      Readers.experimental.readAs[ListMap[Expr, Int]](input),
+      Result.Ok(
+        ListMap(
+          Expr.IntConstant(1)          -> 2,
+          Expr.StringConstant("three") -> 4
+        )
+      )
+    )
+
+  test("read tuple pair elements with complex router keys in PairSeq"):
+    val input = s"""$ExperimentalImport
+                   |[(1 -> "one", 2)]
+                   |""".stripMargin
+
+    assertEquals(
+      Readers.experimental.readAs[ListMap[Expr, Int]](input),
+      Result.Ok(
+        ListMap(
+          Expr.TupleExpr(
+            IndexedSeq(
+              Expr.IntConstant(1),
+              Expr.StringConstant("one")
+            )
+          ) -> 2
+        )
+      )
+    )

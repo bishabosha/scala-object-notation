@@ -1,8 +1,10 @@
 package scalanotation.internal
 
 import scalanotation.DecodeError
+import scalanotation.Expr
 import scalanotation.Reader
 import scalanotation.RouterSchema
+import scalanotation.schema.ExprSchema
 import scalanotation.schema.RawSchema.Field
 import steps.result.Result
 import steps.result.Result.eval.check
@@ -33,7 +35,7 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
       case sc: RawSchema.NamedTuple[?] =>
         decodeNamedTuple(sc)
       case sc: RawSchema.Tuple[?] =>
-        decodeTuple(sc)
+        decodeTuple(sc, allowTopLevelArrow)
       case RawSchema.PartialNamedTuple(base, alreadySeenField) =>
         decodePartialNamedTuple(base, alreadySeenField)
       case sc: RawSchema.Sum[?] =>
@@ -43,7 +45,7 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
       case sc: RawSchema.Vector[?, ?] =>
         decodeVector(sc)
       case sc: RawSchema.TupleOf[?, ?] =>
-        decodeTupleOf(sc)
+        decodeTupleOf(sc, allowTopLevelArrow)
       case sc: RawSchema.PairSeq[?, ?, ?] =>
         decodePairSeq(sc)
       case sc: RawSchema.Dict[?, ?] =>
@@ -222,29 +224,50 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
       case RouterSchema.NumberMode.Bounded => bounded
       case RouterSchema.NumberMode.Raw     => RouterSchema.RouterConstruct.RawNumber
 
-  protected final def decodeTuple(schema: RawSchema.Tuple[?]): Result[Unit, DecodeError] =
-    withRead(schema, _.read)(read => decodeTupleWithRead(schema, read))
+  protected final def decodeTuple(
+      schema: RawSchema.Tuple[?],
+      allowTopLevelArrow: Boolean
+  ): Result[Unit, DecodeError] =
+    withRead(schema, _.read)(read => decodeTupleWithRead(schema, read, allowTopLevelArrow))
 
   private def decodeTupleWithRead[Repr, A](
       schema: RawSchema.Tuple[?],
-      read: Reader.TupleBuilder[Repr, A]
+      read: Reader.TupleBuilder[Repr, A],
+      allowTopLevelArrow: Boolean
   ): Result[Unit, DecodeError] =
     withBorrowSlots(read.slotsFactory) { pooled =>
       Result.task {
-        val slots         = schema.slots
-        val state0        = read.initPooled(slots.length, pooled)
-        val expectedSlots = slots.length
-        val state1        = parseTupleLike(
-          schema,
-          state0,
-          expectedSlots
-        )(
-          index => decodeTupleSlotValue(slots, index),
-          (state, index) => addSlot(read)(state, index)
-        )
-        pushRef(read.finish(state1))
+        if allowTopLevelArrow && collectionLiteralsEnabled && !currentStartsTupleLike then
+          decodeArrowTupleViaExpr(schema).check
+        else
+          val slots         = schema.slots
+          val state0        = read.initPooled(slots.length, pooled)
+          val expectedSlots = slots.length
+          val state1        = parseTupleLike(
+            schema,
+            state0,
+            expectedSlots
+          )(
+            index => decodeTupleSlotValue(slots, index),
+            (state, index) => addSlot(read)(state, index)
+          )
+          pushRef(read.finish(state1))
       }
     }
+
+  private def currentStartsTupleLike: Boolean =
+    currentKind() match
+      case TokenKind.LParen | TokenKind.EmptyTupleId | TokenKind.TupleId => true
+      case _                                                             => false
+
+  private def decodeArrowTupleViaExpr(schema: RawSchema[?]): Result[Unit, DecodeError] =
+    Result.task:
+      decodeBase(ExprSchema.ExprRouterSchema).check
+      val expr   = pullAny().asInstanceOf[Expr]
+      val reader = Reader.fromSchema(schema.asInstanceOf[RawSchema[Any]])
+      ExprDecoder().decodeInto(reader, expr) match
+        case Result.Ok(value)  => pushRef(value)
+        case Result.Err(error) => raise(error)
 
   protected final def decodeTupleSlotValue(
       slots: IArray[RawSchema[?]],
@@ -687,24 +710,31 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
       pushRef(read.finish(values))
     }
 
-  protected final def decodeTupleOf(schema: RawSchema.TupleOf[?, ?]): Result[Unit, DecodeError] =
-    withRead(schema, _.read)(read => decodeTupleOfWithRead(schema, read))
+  protected final def decodeTupleOf(
+      schema: RawSchema.TupleOf[?, ?],
+      allowTopLevelArrow: Boolean
+  ): Result[Unit, DecodeError] =
+    withRead(schema, _.read)(read => decodeTupleOfWithRead(schema, read, allowTopLevelArrow))
 
   private def decodeTupleOfWithRead[Elem, Repr, A](
       schema: RawSchema.TupleOf[?, ?],
-      read: Reader.VectorBuilder[Elem, Repr, A]
+      read: Reader.VectorBuilder[Elem, Repr, A],
+      allowTopLevelArrow: Boolean
   ): Result[Unit, DecodeError] =
     Result.task:
-      val state0 = read.init()
-      val state1 = parseTupleLike(
-        schema,
-        state0,
-        expectedSlots = VariableTupleSlots
-      )(
-        _ => decodeBase(schema.element),
-        (state, _) => addSlot(read)(state)
-      )
-      pushRef(read.finish(state1))
+      if allowTopLevelArrow && collectionLiteralsEnabled && !currentStartsTupleLike then
+        decodeArrowTupleViaExpr(schema).check
+      else
+        val state0 = read.init()
+        val state1 = parseTupleLike(
+          schema,
+          state0,
+          expectedSlots = VariableTupleSlots
+        )(
+          _ => decodeBase(schema.element),
+          (state, _) => addSlot(read)(state)
+        )
+        pushRef(read.finish(state1))
 
   protected final def decodePairSeq(schema: RawSchema.PairSeq[?, ?, ?]): Result[Unit, DecodeError] =
     withRead(schema, _.read)(read => decodePairSeqWithRead(schema, read))
@@ -754,7 +784,7 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
             case _ =>
               raise(DecodeError.ExpectedRParen(describeCurrent()).atToken(currentSpan()))
         else if allowArrowPairs then
-          checkOrRaise(decodeBase(schema.key))(_.atPath(s"[$index][0]"))
+          checkOrRaise(decodeBase(schema.key, allowTopLevelArrow = false))(_.atPath(s"[$index][0]"))
           state = addPairKeySlot(read)(state)
           if currentKind() == TokenKind.Arrow then advance()
           else raise(expectedArrowError())
