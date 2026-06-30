@@ -134,9 +134,8 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
         )
       decodeBase(routerCase.schema).check
       if allowTopLevelArrow && collectionLiteralsEnabled && currentKind() == TokenKind.Arrow then
-        // TODO: Router cases are intended for dynamic representations that are likely boxed.
-        // Therefore acceptable to `pullAny`.
-        // therefore await direct use-case that would require to implement a pool of "cached typed slots".
+        // Router cases usually materialize reference values already; accept primitive boxing here
+        // rather than carrying a typed slot snapshot for the arrow-tuple fallback.
         val firstValue = pullAny()
         decodeRouterArrowTupleCase(schema, firstValue).check
 
@@ -156,66 +155,14 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
               .ExpectedType(schema.describeSelf, "'->'")
               .atToken(spanAt(arrowOffset))
           )
-        decodeCachedPairAsRouterTupleCase(tupleCase.schema, cachedFirstValue, arrowOffset).check
+        finishRouterTupleCase(
+          tupleCase.schema,
+          cachedFirstValue,
+          null,
+          decodeSecondFromInput = true,
+          arrowOffset = arrowOffset
+        ).check
         cachedFirstValue = pullAny()
-
-  private def decodeCachedPairAsRouterTupleCase(
-      schema: RawSchema[?],
-      firstValue: Any,
-      arrowOffset: Int
-  ): Result[Unit, DecodeError] =
-    schema match
-      case mapped: RawSchema.Mapped[?, ?] =>
-        Result.task {
-          decodeCachedPairAsRouterTupleCase(mapped.base, firstValue, arrowOffset).check
-          mapSlot(mapped.mapping).check
-        }
-      case RawSchema.Ref(_, target) =>
-        decodeCachedPairAsRouterTupleCase(target(), firstValue, arrowOffset)
-      case tupleOf: RawSchema.TupleOf[?, ?] =>
-        decodeCachedPairAsRouterTupleOf(tupleOf, firstValue)
-      case tuple: RawSchema.Tuple[?] =>
-        decodeCachedPairAsRouterFixedTuple(tuple, firstValue, arrowOffset)
-      case other =>
-        Result.Err(
-          DecodeError
-            .ExpectedType(RawSchema.describeTupleSlots(2), other.describeSelf)
-            .atToken(spanAt(arrowOffset))
-        )
-
-  private def decodeCachedPairAsRouterTupleOf[Elem, Repr, A](
-      schema: RawSchema.TupleOf[?, ?],
-      firstValue: Any
-  ): Result[Unit, DecodeError] =
-    withRead(schema, _.read) { read =>
-      Result.task:
-        var state = read.init()
-        pushRef(firstValue)
-        state = addSlot(read)(state)
-        checkOrRaise(decodeBase(schema.element, allowTopLevelArrow = false))(_.atPath("[1]"))
-        state = addSlot(read)(state)
-        pushRef(read.finish(state))
-    }
-
-  private def decodeCachedPairAsRouterFixedTuple[Repr, A](
-      schema: RawSchema.Tuple[?],
-      firstValue: Any,
-      arrowOffset: Int
-  ): Result[Unit, DecodeError] =
-    withRead(schema, _.read) { read =>
-      withBorrowSlots(read.slotsFactory) { pooled =>
-        Result.task:
-          val slots = schema.slots
-          if slots.length != 2 then
-            raise(DecodeError.FieldCountMismatch(slots.length, 2).atToken(spanAt(arrowOffset)))
-          var state = read.initPooled(slots.length, pooled)
-          pushRef(firstValue)
-          state = addSlot(read)(state, 0)
-          checkOrRaise(decodeBase(slots(1), allowTopLevelArrow = false))(_.atPath("[1]"))
-          state = addSlot(read)(state, 1)
-          pushRef(read.finish(state))
-      }
-    }
 
   private def numberConstruct(
       bounded: RouterSchema.RouterConstruct,
@@ -853,7 +800,7 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
         )
         val right = pullAny()
         if currentKind() == TokenKind.Arrow then
-          finishCachedPairAsRouterTupleCase(schema.key, left, right, arrowOffset) match
+          finishRouterTupleCase(schema.key, left, right, false, arrowOffset) match
             case Result.Ok(())     => left = pullAny()
             case Result.Err(error) => raise(error.atPath(s"[$index][0]"))
         else
@@ -864,25 +811,33 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
           done = true
       state
 
-  private def finishCachedPairAsRouterTupleCase(
+  private def finishRouterTupleCase(
       schema: RawSchema[?],
       firstValue: Any,
       secondValue: Any,
+      decodeSecondFromInput: Boolean,
       arrowOffset: Int
   ): Result[Unit, DecodeError] =
     schema match
       case mapped: RawSchema.Mapped[?, ?] =>
         Result.task {
-          finishCachedPairAsRouterTupleCase(
+          finishRouterTupleCase(
             mapped.base,
             firstValue,
             secondValue,
+            decodeSecondFromInput,
             arrowOffset
           ).check
           mapSlot(mapped.mapping).check
         }
       case RawSchema.Ref(_, target) =>
-        finishCachedPairAsRouterTupleCase(target(), firstValue, secondValue, arrowOffset)
+        finishRouterTupleCase(
+          target(),
+          firstValue,
+          secondValue,
+          decodeSecondFromInput,
+          arrowOffset
+        )
       case router: RawSchema.Router[?] =>
         val tupleCase = RawSchema.routerCase(router, router.router.tupleIndex)
         if tupleCase == null then
@@ -892,11 +847,17 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
               .atToken(spanAt(arrowOffset))
           )
         else
-          finishCachedPairAsRouterTupleCase(tupleCase.schema, firstValue, secondValue, arrowOffset)
+          finishRouterTupleCase(
+            tupleCase.schema,
+            firstValue,
+            secondValue,
+            decodeSecondFromInput,
+            arrowOffset
+          )
       case tupleOf: RawSchema.TupleOf[?, ?] =>
-        finishCachedPairAsRouterTupleOf(tupleOf, firstValue, secondValue)
+        finishRouterTupleOf(tupleOf, firstValue, secondValue, decodeSecondFromInput)
       case tuple: RawSchema.Tuple[?] =>
-        finishCachedPairAsRouterFixedTuple(tuple, firstValue, secondValue, arrowOffset)
+        finishRouterFixedTuple(tuple, firstValue, secondValue, decodeSecondFromInput, arrowOffset)
       case other =>
         Result.Err(
           DecodeError
@@ -904,25 +865,29 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
             .atToken(spanAt(arrowOffset))
         )
 
-  private def finishCachedPairAsRouterTupleOf[Elem, Repr, A](
+  private def finishRouterTupleOf[Elem, Repr, A](
       schema: RawSchema.TupleOf[?, ?],
       firstValue: Any,
-      secondValue: Any
+      secondValue: Any,
+      decodeSecondFromInput: Boolean
   ): Result[Unit, DecodeError] =
     withRead(schema, _.read) { read =>
       Result.task:
         var state = read.init()
         pushRef(firstValue)
         state = addSlot(read)(state)
-        pushRef(secondValue)
+        if decodeSecondFromInput then
+          checkOrRaise(decodeBase(schema.element, allowTopLevelArrow = false))(_.atPath("[1]"))
+        else pushRef(secondValue)
         state = addSlot(read)(state)
         pushRef(read.finish(state))
     }
 
-  private def finishCachedPairAsRouterFixedTuple[Repr, A](
+  private def finishRouterFixedTuple[Repr, A](
       schema: RawSchema.Tuple[?],
       firstValue: Any,
       secondValue: Any,
+      decodeSecondFromInput: Boolean,
       arrowOffset: Int
   ): Result[Unit, DecodeError] =
     withRead(schema, _.read) { read =>
@@ -934,7 +899,9 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
           var state = read.initPooled(slots.length, pooled)
           pushRef(firstValue)
           state = addSlot(read)(state, 0)
-          pushRef(secondValue)
+          if decodeSecondFromInput then
+            checkOrRaise(decodeBase(slots(1), allowTopLevelArrow = false))(_.atPath("[1]"))
+          else pushRef(secondValue)
           state = addSlot(read)(state, 1)
           pushRef(read.finish(state))
       }
