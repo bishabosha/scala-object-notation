@@ -46,6 +46,16 @@ class CollectionLiteralSuite extends ScalanotationSuite:
 
     assertEquals(Readers.experimental.readAs[Vector[Int]](input), Result.Ok(Vector(1, 2, 3)))
 
+  test("read bracket sequence with experimental batched reader"):
+    given BatchContext = BatchContext.local()
+
+    val input = s"$ExperimentalImport\n[1, 2, 3]"
+
+    assertEquals(
+      Readers.experimental.batched.readAs[Vector[Int]](input),
+      Result.Ok(Vector(1, 2, 3))
+    )
+
   test("collection literal import is required for bracket sequences"):
     Readers.experimental.readAs[Vector[Int]]("[1]") match
       case Result.Err(error) =>
