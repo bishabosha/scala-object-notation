@@ -1,0 +1,61 @@
+Benchmark                                                                       Mode  Cnt     Score    Error   Units
+PairSeqArrowSyntaxBenchmark.decodeExpr                                          avgt   10     1.910 ±  0.013   us/op
+PairSeqArrowSyntaxBenchmark.decodeExpr:gc.alloc.rate                            avgt   10  1964.773 ± 13.219  MB/sec
+PairSeqArrowSyntaxBenchmark.decodeExpr:gc.alloc.rate.norm                       avgt   10  3936.014 ±  0.001    B/op
+PairSeqArrowSyntaxBenchmark.decodeExpr:gc.count                                 avgt   10    33.000           counts
+PairSeqArrowSyntaxBenchmark.decodeExpr:gc.time                                  avgt   10    18.000               ms
+PairSeqArrowSyntaxBenchmark.decodeExprBatched                                   avgt   10     1.564 ±  0.023   us/op
+PairSeqArrowSyntaxBenchmark.decodeExprBatched:gc.alloc.rate                     avgt   10  2034.432 ± 29.704  MB/sec
+PairSeqArrowSyntaxBenchmark.decodeExprBatched:gc.alloc.rate.norm                avgt   10  3336.011 ±  0.001    B/op
+PairSeqArrowSyntaxBenchmark.decodeExprBatched:gc.count                          avgt   10    34.000           counts
+PairSeqArrowSyntaxBenchmark.decodeExprBatched:gc.time                           avgt   10    17.000               ms
+PairSeqArrowSyntaxBenchmark.decodeExprTupleElements                             avgt   10     2.392 ±  0.012   us/op
+PairSeqArrowSyntaxBenchmark.decodeExprTupleElements:gc.alloc.rate               avgt   10  1578.856 ±  7.923  MB/sec
+PairSeqArrowSyntaxBenchmark.decodeExprTupleElements:gc.alloc.rate.norm          avgt   10  3960.017 ±  0.001    B/op
+PairSeqArrowSyntaxBenchmark.decodeExprTupleElements:gc.count                    avgt   10    26.000           counts
+PairSeqArrowSyntaxBenchmark.decodeExprTupleElements:gc.time                     avgt   10    14.000               ms
+PairSeqArrowSyntaxBenchmark.decodeExprTupleElementsBatched                      avgt   10     2.319 ±  0.030   us/op
+PairSeqArrowSyntaxBenchmark.decodeExprTupleElementsBatched:gc.alloc.rate        avgt   10  1381.541 ± 17.962  MB/sec
+PairSeqArrowSyntaxBenchmark.decodeExprTupleElementsBatched:gc.alloc.rate.norm   avgt   10  3360.016 ±  0.001    B/op
+PairSeqArrowSyntaxBenchmark.decodeExprTupleElementsBatched:gc.count             avgt   10    23.000           counts
+PairSeqArrowSyntaxBenchmark.decodeExprTupleElementsBatched:gc.time              avgt   10    13.000               ms
+PairSeqArrowSyntaxBenchmark.decodeTyped                                         avgt   10     0.914 ±  0.003   us/op
+PairSeqArrowSyntaxBenchmark.decodeTyped:gc.alloc.rate                           avgt   10  1844.378 ±  6.975  MB/sec
+PairSeqArrowSyntaxBenchmark.decodeTyped:gc.alloc.rate.norm                      avgt   10  1768.006 ±  0.001    B/op
+PairSeqArrowSyntaxBenchmark.decodeTyped:gc.count                                avgt   10    31.000           counts
+PairSeqArrowSyntaxBenchmark.decodeTyped:gc.time                                 avgt   10    15.000               ms
+PairSeqArrowSyntaxBenchmark.decodeTypedBatched                                  avgt   10     0.878 ±  0.015   us/op
+PairSeqArrowSyntaxBenchmark.decodeTypedBatched:gc.alloc.rate                    avgt   10  1268.510 ± 21.457  MB/sec
+PairSeqArrowSyntaxBenchmark.decodeTypedBatched:gc.alloc.rate.norm               avgt   10  1168.006 ±  0.001    B/op
+PairSeqArrowSyntaxBenchmark.decodeTypedBatched:gc.count                         avgt   10    21.000           counts
+PairSeqArrowSyntaxBenchmark.decodeTypedBatched:gc.time                          avgt   10    13.000               ms
+PairSeqArrowSyntaxBenchmark.decodeTypedTupleElements                            avgt   10     1.159 ±  0.009   us/op
+PairSeqArrowSyntaxBenchmark.decodeTypedTupleElements:gc.alloc.rate              avgt   10  1592.196 ± 12.877  MB/sec
+PairSeqArrowSyntaxBenchmark.decodeTypedTupleElements:gc.alloc.rate.norm         avgt   10  1936.008 ±  0.001    B/op
+PairSeqArrowSyntaxBenchmark.decodeTypedTupleElements:gc.count                   avgt   10    27.000           counts
+PairSeqArrowSyntaxBenchmark.decodeTypedTupleElements:gc.time                    avgt   10    14.000               ms
+PairSeqArrowSyntaxBenchmark.decodeTypedTupleElementsBatched                     avgt   10     1.084 ±  0.005   us/op
+PairSeqArrowSyntaxBenchmark.decodeTypedTupleElementsBatched:gc.alloc.rate       avgt   10  1175.597 ±  5.109  MB/sec
+PairSeqArrowSyntaxBenchmark.decodeTypedTupleElementsBatched:gc.alloc.rate.norm  avgt   10  1336.007 ±  0.001    B/op
+PairSeqArrowSyntaxBenchmark.decodeTypedTupleElementsBatched:gc.count            avgt   10    20.000           counts
+PairSeqArrowSyntaxBenchmark.decodeTypedTupleElementsBatched:gc.time             avgt   10    13.000               ms
+PairSeqTupleSyntaxBenchmark.decodeExpr                                          avgt   10     2.083 ±  0.008   us/op
+PairSeqTupleSyntaxBenchmark.decodeExpr:gc.alloc.rate                            avgt   10  1812.448 ±  7.302  MB/sec
+PairSeqTupleSyntaxBenchmark.decodeExpr:gc.alloc.rate.norm                       avgt   10  3960.014 ±  0.001    B/op
+PairSeqTupleSyntaxBenchmark.decodeExpr:gc.count                                 avgt   10    31.000           counts
+PairSeqTupleSyntaxBenchmark.decodeExpr:gc.time                                  avgt   10    17.000               ms
+PairSeqTupleSyntaxBenchmark.decodeExprBatched                                   avgt   10     1.993 ±  0.023   us/op
+PairSeqTupleSyntaxBenchmark.decodeExprBatched:gc.alloc.rate                     avgt   10  1607.906 ± 18.917  MB/sec
+PairSeqTupleSyntaxBenchmark.decodeExprBatched:gc.alloc.rate.norm                avgt   10  3360.014 ±  0.001    B/op
+PairSeqTupleSyntaxBenchmark.decodeExprBatched:gc.count                          avgt   10    26.000           counts
+PairSeqTupleSyntaxBenchmark.decodeExprBatched:gc.time                           avgt   10    14.000               ms
+PairSeqTupleSyntaxBenchmark.decodeTyped                                         avgt   10     0.890 ±  0.013   us/op
+PairSeqTupleSyntaxBenchmark.decodeTyped:gc.alloc.rate                           avgt   10  2074.279 ± 31.263  MB/sec
+PairSeqTupleSyntaxBenchmark.decodeTyped:gc.alloc.rate.norm                      avgt   10  1936.006 ±  0.001    B/op
+PairSeqTupleSyntaxBenchmark.decodeTyped:gc.count                                avgt   10    35.000           counts
+PairSeqTupleSyntaxBenchmark.decodeTyped:gc.time                                 avgt   10    17.000               ms
+PairSeqTupleSyntaxBenchmark.decodeTypedBatched                                  avgt   10     0.870 ±  0.006   us/op
+PairSeqTupleSyntaxBenchmark.decodeTypedBatched:gc.alloc.rate                    avgt   10  1464.112 ±  9.564  MB/sec
+PairSeqTupleSyntaxBenchmark.decodeTypedBatched:gc.alloc.rate.norm               avgt   10  1336.006 ±  0.001    B/op
+PairSeqTupleSyntaxBenchmark.decodeTypedBatched:gc.count                         avgt   10    24.000           counts
+PairSeqTupleSyntaxBenchmark.decodeTypedBatched:gc.time                          avgt   10    13.000               ms
