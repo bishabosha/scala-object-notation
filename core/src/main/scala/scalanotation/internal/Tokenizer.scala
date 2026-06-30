@@ -176,6 +176,7 @@ private[scalanotation] final class Tokenizer private[internal] (
       case '\''                           => scanChar()
       case ch if isIdentifierStart(ch)    => scanIdentifier()
       case ch if ch.isDigit               => scanNumber()
+      case '-' if canScanPairArrow        => advance(); advance(); kind = TokenKind.Arrow
       case ch if isOperatorPart(ch)       => scanOperator()
       case ch                             => fail(s"Unexpected character '$ch'")
 
@@ -616,6 +617,12 @@ private[scalanotation] final class Tokenizer private[internal] (
     val nextIndex = index + offset
     nextIndex < input.length && input.charAt(nextIndex).isDigit
 
+  private def canScanPairArrow: Boolean =
+    peekCompare('>') && {
+      val afterArrow = index + 2
+      afterArrow >= input.length || !isOperatorPart(input.charAt(afterArrow))
+    }
+
   private def advance(): Char =
     val ch = input.charAt(index)
     index += 1
@@ -939,6 +946,11 @@ private[scalanotation] abstract class TokenStream private[internal] (
   protected def currentCharValue(): Char     = nums(cur).toChar
   protected def currentFloatValue(): Float   = dbls(cur).toFloat
   protected def currentDoubleValue(): Double = dbls(cur)
+
+  protected def currentNameMatches(expected: String): Boolean =
+    val cached = strs(cur)
+    if cached != null then cached == expected
+    else sliceMatches(cur, expected)
 
   private def nameAt(slot: Int): String =
     val cached = strs(slot)

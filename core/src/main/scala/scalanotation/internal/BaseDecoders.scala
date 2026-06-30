@@ -91,10 +91,6 @@ private[scalanotation] trait BaseDecoders extends SharedHelpers:
     if currentKind() == TokenKind.Equals then advance()
     else raise(DecodeError.ExpectedEquals(describeCurrent()).atToken(currentSpan()))
 
-  protected final def expectArrow(): Result[Unit, DecodeError] = Result.task:
-    if currentKind() == TokenKind.Arrow then advance()
-    else raise(expectedArrowError())
-
   protected final def expectEof(): Result[Unit, DecodeError] = Result.task:
     if currentKind() != TokenKind.Eof then
       raise(DecodeError.ExpectedEof(describeCurrent()).atToken(currentSpan()))
