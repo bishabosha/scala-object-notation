@@ -262,25 +262,52 @@ private final class TokenDecoder private (
       expectImportDot(importOffset).check
       acceptImportIdentifier("experimental", importOffset).check
       expectImportDot(importOffset).check
+      if currentKind() == TokenKind.LBrace then acceptGroupedExperimentalImport(importOffset).check
+      else acceptExperimentalImportSelector(importOffset).check
+      rejectImportSelectorTail(importOffset).check
+
+  private def acceptGroupedExperimentalImport(
+      importOffset: Int
+  ): Result[Unit, DecodeError] =
+    Result.task:
+      advance()
+      var done = false
+      while !done do
+        if currentKind() == TokenKind.RBrace then
+          raise(DecodeError.ExpectedIdentifier(describeCurrent()).atToken(currentSpan()))
+        acceptExperimentalImportSelector(importOffset).check
+        currentKind() match
+          case TokenKind.Comma =>
+            advance()
+            if currentKind() == TokenKind.RBrace then done = true
+          case TokenKind.RBrace =>
+            done = true
+          case _ =>
+            raise(unsupportedExperimentalImport(importOffset))
+      advance()
+
+  private def acceptExperimentalImportSelector(
+      importOffset: Int
+  ): Result[Unit, DecodeError] =
+    Result.task:
       currentKind() match
         case TokenKind.Identifier if currentNameMatches("dedentedStringLiterals") =>
           addExperimentalFlags(ExperimentalFlags.AllowSIP72)
           advance()
-          currentKind() match
-            case TokenKind.Dot | TokenKind.Comma =>
-              raise(unsupportedExperimentalImport(importOffset))
-            case _ => ()
         case TokenKind.Identifier if currentNameMatches("collectionLiterals") =>
           addExperimentalFlags(ExperimentalFlags.AllowCollectionLiterals)
           advance()
-          currentKind() match
-            case TokenKind.Dot | TokenKind.Comma =>
-              raise(unsupportedExperimentalImport(importOffset))
-            case _ => ()
         case TokenKind.Identifier =>
           raise(unsupportedExperimentalImport(importOffset))
         case _ =>
           raise(DecodeError.ExpectedIdentifier(describeCurrent()).atToken(currentSpan()))
+
+  private def rejectImportSelectorTail(importOffset: Int): Result[Unit, DecodeError] =
+    Result.task:
+      currentKind() match
+        case TokenKind.Dot | TokenKind.Comma =>
+          raise(unsupportedExperimentalImport(importOffset))
+        case _ => ()
 
   private def acceptImportIdentifier(
       expected: String,

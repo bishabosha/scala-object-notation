@@ -32,7 +32,9 @@ private[scalanotation] trait TokenKinds:
   inline val LBracket     = 24
   inline val RBracket     = 25
   inline val Arrow        = 26
-  inline val Eof          = 27
+  inline val LBrace       = 27
+  inline val RBrace       = 28
+  inline val Eof          = 29
 
 /** Unboxed token kind constants. The decoder's happy path only ever inspects these (plus the
   * unboxed offset slots in [[TokenStream]]); boxed [[Token]] values and [[DecodeError.Span]]s are
@@ -73,6 +75,8 @@ private[scalanotation] enum Token:
   case LBracket(span: DecodeError.Span)
   case RBracket(span: DecodeError.Span)
   case Arrow(span: DecodeError.Span)
+  case LBrace(span: DecodeError.Span)
+  case RBrace(span: DecodeError.Span)
   case Eof(span: DecodeError.Span)
 
   def span: DecodeError.Span
@@ -170,6 +174,8 @@ private[scalanotation] final class Tokenizer private[internal] (
       case ';'                            => advance(); kind = TokenKind.Semicolon
       case '['                            => advance(); kind = TokenKind.LBracket
       case ']'                            => advance(); kind = TokenKind.RBracket
+      case '{'                            => advance(); kind = TokenKind.LBrace
+      case '}'                            => advance(); kind = TokenKind.RBrace
       case '`'                            => scanQuotedIdentifier()
       case '"'                            => scanString()
       case '\'' if canStartDedentedString => scanDedentedString()
@@ -839,6 +845,8 @@ private[scalanotation] object Tokenizer:
       case TokenKind.LBracket  => Token.LBracket(span)
       case TokenKind.RBracket  => Token.RBracket(span)
       case TokenKind.Arrow     => Token.Arrow(span)
+      case TokenKind.LBrace    => Token.LBrace(span)
+      case TokenKind.RBrace    => Token.RBrace(span)
       case _                   => Token.Eof(span)
 
   /** Tokenize the whole input into boxed [[Token]]s — for tests and debugging only; the decode path
@@ -1030,5 +1038,7 @@ private[scalanotation] abstract class TokenStream private[internal] (
       case TokenKind.LBracket     => "'['"
       case TokenKind.RBracket     => "']'"
       case TokenKind.Arrow        => "'->'"
+      case TokenKind.LBrace       => "'{'"
+      case TokenKind.RBrace       => "'}'"
       case _                      => "end of input"
 }

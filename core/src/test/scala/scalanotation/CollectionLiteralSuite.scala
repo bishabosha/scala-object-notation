@@ -7,6 +7,8 @@ import steps.result.Result
 class CollectionLiteralSuite extends ScalanotationSuite:
   private val ExperimentalImport =
     "import language.experimental.collectionLiterals"
+  private val GroupedExperimentalImport =
+    "import language.experimental.{dedentedStringLiterals, collectionLiterals}"
 
   private final case class StringIntPairs(entries: ListMap[String, Int])
 
@@ -39,10 +41,15 @@ class CollectionLiteralSuite extends ScalanotationSuite:
       )
 
   test("tokenize collection literal punctuation"):
-    assertEquals(tokenLabels("[] ->"), List("[", "]", "->", "eof"))
+    assertEquals(tokenLabels("[] {} ->"), List("[", "]", "{", "}", "->", "eof"))
 
   test("read bracket sequence as Vector"):
     val input = s"$ExperimentalImport\n[1, 2, 3]"
+
+    assertEquals(Readers.experimental.readAs[Vector[Int]](input), Result.Ok(Vector(1, 2, 3)))
+
+  test("read bracket sequence with grouped experimental import"):
+    val input = s"$GroupedExperimentalImport\n[1, 2, 3]"
 
     assertEquals(Readers.experimental.readAs[Vector[Int]](input), Result.Ok(Vector(1, 2, 3)))
 
