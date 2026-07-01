@@ -1,5 +1,7 @@
 package scalanotation
 
+import scalanotation.schema.RawSchema
+
 import scala.collection.immutable.ListMap
 
 import steps.result.Result
@@ -202,6 +204,137 @@ class CollectionLiteralSuite extends ScalanotationSuite:
       Readers.experimental.readAs[StringIntPairs](input),
       Result.Ok(StringIntPairs(ListMap("abc" -> 1, "def" -> 2)))
     )
+
+  test("pairSeqAsMap Reader decodes collection literal arrows into Map"):
+    type Data = ListMap[String, Int]
+
+    given reader: Reader[Data] = Reader.pairSeqAsMap
+
+    reader.schema match
+      case pairSeq: RawSchema.PairSeq[?, ?, ?] =>
+        assert(pairSeq.read != null)
+        assert(pairSeq.write == null)
+        assertEquals(pairSeq.key.asInstanceOf[Any], RawSchema.String)
+        assertEquals(pairSeq.value.asInstanceOf[Any], RawSchema.Int)
+      case other =>
+        fail(s"Expected a pair sequence schema, got ${other.describeSelf}")
+
+    val input = s"""$ExperimentalImport
+                   |["abc" -> 123, "def" -> 456]
+                   |""".stripMargin
+
+    assertEquals(
+      Readers.experimental.readAs[Data](input),
+      Result.Ok(ListMap("abc" -> 123, "def" -> 456))
+    )
+
+  test("pairSeqAsMap Reader decodes collection literal arrows into Map [prio]"):
+    case class Data(entries: ListMap[String, Int]) derives Reader
+    object Data:
+      private given innerReader: Reader[ListMap[String, Int]] = Reader.pairSeqAsMap
+
+    summon[Reader[Data]].schema match
+      case RawSchema.NamedTuple(fields = IArray(field)) =>
+        field.schema match
+          case pairSeq: RawSchema.PairSeq[?, ?, ?] =>
+            assert(pairSeq.read != null)
+            assert(pairSeq.write == null)
+            assertEquals(pairSeq.key.asInstanceOf[Any], RawSchema.String)
+            assertEquals(pairSeq.value.asInstanceOf[Any], RawSchema.Int)
+          case other =>
+            fail(s"Expected a pair sequence schema, got ${other}")
+      case other =>
+        fail(s"Expected a named tuple schema, got ${other.describeSelf}")
+
+    val input = s"""$ExperimentalImport
+                   |(entries = ["abc" -> 123, "def" -> 456])
+                   |""".stripMargin
+
+    assertEquals(
+      Readers.experimental.readAs[Data](input),
+      Result.Ok(Data(ListMap("abc" -> 123, "def" -> 456)))
+    )
+
+  test("pairSeqAsMap Writer renders Map as pair sequence"):
+    type Data = ListMap[String, Int]
+
+    given writer: Writer[Data] = Writer.pairSeqAsMap
+
+    writer.schema match
+      case pairSeq: RawSchema.PairSeq[?, ?, ?] =>
+        assert(pairSeq.read == null)
+        assert(pairSeq.write != null)
+        assertEquals(pairSeq.key.asInstanceOf[Any], RawSchema.String)
+        assertEquals(pairSeq.value.asInstanceOf[Any], RawSchema.Int)
+      case other =>
+        fail(s"Expected a pair sequence schema, got ${other.describeSelf}")
+
+    val value = ListMap("abc" -> 123, "def" -> 456)
+
+    assertEquals(
+      Writers.write[Data](value),
+      """Vector(("abc", 123), ("def", 456))"""
+    )
+
+  test("pairSeqAsMap ReadWriter decodes collection literals and writes pair sequences"):
+    type Data = ListMap[Int, Boolean]
+
+    val readWriter: ReadWriter[Data] = ReadWriter.pairSeqAsMap
+
+    readWriter.schema match
+      case pairSeq: RawSchema.PairSeq[?, ?, ?] =>
+        assert(pairSeq.read != null)
+        assert(pairSeq.write != null)
+        assertEquals(pairSeq.key.asInstanceOf[Any], RawSchema.Int)
+        assertEquals(pairSeq.value.asInstanceOf[Any], RawSchema.Boolean)
+      case other =>
+        fail(s"Expected a pair sequence schema, got ${other.describeSelf}")
+
+    val input = s"""$ExperimentalImport
+                   |[123 -> true, 456 -> false]
+                   |""".stripMargin
+    val value = ListMap(123 -> true, 456 -> false)
+
+    assertEquals(
+      Readers.experimental.readAs[Data](input),
+      Result.Ok(value)
+    )
+
+    val rendered = Writers.write[Data](value)
+
+    assertEquals(rendered, """Vector((123, true), (456, false))""")
+    assertEquals(Readers.readAs[Data](rendered), Result.Ok(value))
+
+  test("dictAsPairSeq ReadWriter decodes collection literals and writes pair sequences"):
+    type Data = ListMap[String, Int]
+
+    val rw             = ReadWriter.dictAsPairSeq[Data]()
+    given Reader[Data] = rw.reader
+    given Writer[Data] = rw.writer
+
+    rw.reader.schema match
+      case pairSeq: RawSchema.PairSeq[?, ?, ?] =>
+        assert(pairSeq.read != null)
+        assert(pairSeq.write != null)
+        assertEquals(pairSeq.key.asInstanceOf[Any], RawSchema.String)
+        assertEquals(pairSeq.value.asInstanceOf[Any], RawSchema.Int)
+      case other =>
+        fail(s"Expected a pair sequence schema, got ${other.describeSelf}")
+
+    val input = s"""$ExperimentalImport
+                   |["abc" -> 123, "def" -> 456]
+                   |""".stripMargin
+    val value = ListMap("abc" -> 123, "def" -> 456)
+
+    assertEquals(
+      Readers.experimental.readAs[Data](input),
+      Result.Ok(value)
+    )
+
+    val rendered = Writers.write[Data](value)
+
+    assertEquals(rendered, """Vector(("abc", 123), ("def", 456))""")
+    assertEquals(Readers.readAs[Data](rendered), Result.Ok(value))
 
   test("read complex arrow values in PairSeq"):
     val input = s"""$ExperimentalImport

@@ -231,6 +231,20 @@ object Reader extends ReaderLowPriority, CommonTypeClassCompanion[Reader]:
       )
     )
 
+  def pairSeqAsMap[
+      K: Reader as key,
+      V: Reader as element,
+      Col[X, Y] <: scala.collection.Map[X, Y]
+  ](using factory: scala.collection.Factory[(K, V), Col[K, V]]): Reader[Col[K, V]] =
+    fromSchema[Col[K, V]](
+      RawSchema.PairSeq(
+        key.schema,
+        element.schema,
+        PublicInternal.MapFactoryPairSeq[K, V, Col],
+        null
+      )
+    )
+
   def router[A](
       name: String,
       selfKind: String,
