@@ -54,7 +54,7 @@ class SourceFileSuite extends ScalanotationSuite:
     assertEquals(
       Readers.readAs[Expr]("package foo.bar\n(x = 1)").map(_ => ()),
       Result.Err(
-        DecodeError.ExpectedType("any expression", "'package'").atToken(DecodeError.Span(0, 1, 1))
+        DecodeError.ExpectedExpression("'package'").atToken(DecodeError.Span(0, 1, 1))
       )
     )
 

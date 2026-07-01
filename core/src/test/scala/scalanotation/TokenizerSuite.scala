@@ -218,7 +218,7 @@ class TokenizerSuite extends ScalanotationSuite:
 
     obtained match
       case Result.Err(error) =>
-        assertEquals(error.rootCause, DecodeError.ExpectedType("any expression", "'class'"))
+        assertEquals(error.rootCause, DecodeError.ExpectedExpression("'class'"))
         assertEquals(error.span.map(span => (span.line, span.column)), Some((1, 13)))
       case Result.Ok(value) => fail(s"Expected a parse failure, got $value")
 

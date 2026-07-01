@@ -23,13 +23,10 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
       allowTopLevelArrow: Boolean
   ): Result[Unit, DecodeError] =
     schema match
-      case mapped: RawSchema.Mapped[?, ?] =>
-        decodeMappedBase(mapped, allowTopLevelArrow)
-      case ref: RawSchema.Ref[?] =>
-        decodeBase(ref.target(), allowTopLevelArrow)
-      case RawSchema.String | RawSchema.Char | RawSchema.Int | RawSchema.Long | RawSchema.Float |
-          RawSchema.Double | RawSchema.Boolean | RawSchema.Null =>
-        decodePrimitiveBase(schema)
+      case schema: RawSchema.Atomic =>
+        decodePrimitiveBase(schema, allowTopLevelArrow)
+      case schema: RawSchema.Collection =>
+        decodeCollectionBase(schema, allowTopLevelArrow)
       case _ =>
         decodeCompositeBase(schema, allowTopLevelArrow)
 
@@ -47,8 +44,6 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
       allowTopLevelArrow: Boolean
   ): Result[Unit, DecodeError] =
     schema match
-      case router: RawSchema.Router[?] =>
-        decodeRouter(router, allowTopLevelArrow)
       case sc: RawSchema.NamedTuple[?] =>
         decodeNamedTuple(sc)
       case sc: RawSchema.Tuple[?] =>
@@ -59,47 +54,52 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
         decodeSum(sc)
       case sc: RawSchema.DiscriminatorSum[?] =>
         decodeDiscriminatorSum(sc)
-      case _ =>
-        decodeCollectionBase(schema, allowTopLevelArrow)
+      case router: RawSchema.Router[?] =>
+        decodeRouter(router, allowTopLevelArrow)
+      case other =>
+        Result.Err(DecodeError.ExpectedType(other.describeSelf, describeCurrent()))
 
   private def decodeCollectionBase(
-      schema: RawSchema[?],
+      schema: RawSchema[?] & RawSchema.Collection,
       allowTopLevelArrow: Boolean
   ): Result[Unit, DecodeError] =
     schema match
       case sc: RawSchema.Vector[?, ?] =>
         decodeVector(sc)
-      case sc: RawSchema.TupleOf[?, ?] =>
-        decodeTupleOf(sc, allowTopLevelArrow)
       case sc: RawSchema.PairSeq[?, ?, ?] =>
         decodePairSeq(sc)
       case sc: RawSchema.Dict[?, ?] =>
         decodeDict(sc)
       case sc: RawSchema.Option[?] =>
         decodeOption(sc, allowTopLevelArrow)
-      case _ =>
-        decodePrimitiveBase(schema)
+      case sc: RawSchema.TupleOf[?, ?] =>
+        decodeTupleOf(sc, allowTopLevelArrow)
 
-  private def decodePrimitiveBase(schema: RawSchema[?]): Result[Unit, DecodeError] =
+  private def decodePrimitiveBase(
+      schema: RawSchema[?] & RawSchema.Atomic,
+      allowTopLevelArrow: Boolean
+  ): Result[Unit, DecodeError] =
     schema match
       case RawSchema.String =>
         decodeString()
-      case RawSchema.Char =>
-        decodeChar()
       case RawSchema.Int =>
         decodeInt()
-      case RawSchema.Long =>
-        decodeLong()
-      case RawSchema.Float =>
-        decodeFloat()
       case RawSchema.Double =>
         decodeDouble()
+      case RawSchema.Long =>
+        decodeLong()
       case RawSchema.Boolean =>
         decodeBoolean()
+      case mapped: RawSchema.Mapped[?, ?] =>
+        decodeMappedBase(mapped, allowTopLevelArrow)
       case RawSchema.Null =>
         decodeNull()
-      case other =>
-        Result.Err(DecodeError.ExpectedType(other.describeSelf, describeCurrent()))
+      case RawSchema.Char =>
+        decodeChar()
+      case RawSchema.Float =>
+        decodeFloat()
+      case ref: RawSchema.Ref[?] =>
+        decodeBase(ref.target(), allowTopLevelArrow)
 
   protected final def decodeRouter(
       schema: RawSchema.Router[?],
