@@ -3,6 +3,7 @@ package scalanotation
 import scalanotation.schema.RawSchema
 
 import scala.collection.immutable.ListMap
+import scala.collection.immutable.SeqMap
 
 import steps.result.Result
 
@@ -254,6 +255,222 @@ class CollectionLiteralSuite extends ScalanotationSuite:
       Readers.experimental.readAs[Data](input),
       Result.Ok(Data(ListMap("abc" -> 123, "def" -> 456)))
     )
+
+  test("pairSeqAsDict Reader is preferred in nested named tuple fields"):
+    type Data = (sections: Vector[(items: SeqMap[String, String])])
+
+    given [V: Reader] => Reader[SeqMap[String, V]] = Reader.pairSeqAsDict
+
+    val input = s"""$ExperimentalImport
+                   |(sections = [(items = ["setup" -> "included"])])
+                   |""".stripMargin
+
+    assertEquals(
+      Readers.experimental.readAs[Data](input),
+      Result.Ok((sections = Vector((items = SeqMap("setup" -> "included")))))
+    )
+
+  test("pairSeqAsDict Reader is preferred in nested vector named tuple fields"):
+    type Data = (
+        appendices: Vector[
+          (
+              title: String,
+              description: String,
+              sections: Vector[
+                (
+                    title: String,
+                    desc: String,
+                    itemsTitle: String,
+                    items: SeqMap[String, String]
+                )
+              ]
+          )
+        ]
+    )
+
+    given [V: Reader] => Reader[SeqMap[String, V]] = Reader.pairSeqAsDict
+
+    val input = s"""$ExperimentalImport
+                   |(
+                   |  appendices = [
+                   |    (
+                   |      title = "Appendix",
+                   |      description = "Details",
+                   |      sections = [
+                   |        (
+                   |          title = "Scope",
+                   |          desc = "Included work",
+                   |          itemsTitle = "Items",
+                   |          items = ["setup" -> "included"]
+                   |        )
+                   |      ]
+                   |    )
+                   |  ]
+                   |)
+                   |""".stripMargin
+
+    assertEquals(
+      Readers.experimental.readAs[Data](input),
+      Result.Ok(
+        (
+          appendices = Vector(
+            (
+              title = "Appendix",
+              description = "Details",
+              sections = Vector(
+                (
+                  title = "Scope",
+                  desc = "Included work",
+                  itemsTitle = "Items",
+                  items = SeqMap("setup" -> "included")
+                )
+              )
+            )
+          )
+        )
+      )
+    )
+
+  test("pairSeqAsDict Reader is preferred in nested named tuple schemas"):
+    type InvoiceSchema = (
+        invoice: (
+            id: Int,
+            period: (start: String, days: Int)
+        ),
+        client: (
+            id: Int,
+            name: String,
+            address: String,
+            contactPerson: Option[String]
+        ),
+        listings: (
+            items: Vector[(desc: String, qty: Double, price: Int)],
+            taxRate: Int,
+            useHours: Boolean
+        ),
+        business: (
+            name: String,
+            address: String,
+            contact: String
+        ),
+        currency: (code: String, symbol: String, left: Boolean),
+        bank: (
+            holder: String,
+            name: String,
+            address: String,
+            userAddress: Option[String],
+            account: String,
+            swift: String,
+            intermediary: Option[String],
+            routing: Option[String]
+        ),
+        twint: Option[String],
+        appendices: Vector[
+          (
+              title: String,
+              description: String,
+              sections: Vector[
+                (
+                    title: String,
+                    desc: String,
+                    itemsTitle: String,
+                    items: SeqMap[String, String]
+                )
+              ]
+          )
+        ]
+    )
+
+    given [V: Reader] => Reader[SeqMap[String, V]] = Reader.pairSeqAsDict
+
+    val input = s"""$ExperimentalImport
+                   |(
+                   |  invoice = (id = 7, period = (start = "2026-01-01", days = 30)),
+                   |  client = (
+                   |    id = 12,
+                   |    name = "Acme",
+                   |    address = "Client Street",
+                   |    contactPerson = null
+                   |  ),
+                   |  listings = (
+                   |    items = [(desc = "Consulting", qty = 2.5, price = 120)],
+                   |    taxRate = 8,
+                   |    useHours = true
+                   |  ),
+                   |  business = (name = "Studio", address = "Main Street", contact = "ops@example.com"),
+                   |  currency = (code = "CHF", symbol = "CHF", left = true),
+                   |  bank = (
+                   |    holder = "Studio",
+                   |    name = "Bank",
+                   |    address = "Bank Street",
+                   |    userAddress = null,
+                   |    account = "CH00",
+                   |    swift = "BANKCHZZ",
+                   |    intermediary = null,
+                   |    routing = null
+                   |  ),
+                   |  twint = null,
+                   |  appendices = [
+                   |    (
+                   |      title = "Appendix",
+                   |      description = "Details",
+                   |      sections = [
+                   |        (
+                   |          title = "Scope",
+                   |          desc = "Included work",
+                   |          itemsTitle = "Items",
+                   |          items = ["setup" -> "included", "support" -> "email"]
+                   |        )
+                   |      ]
+                   |    )
+                   |  ]
+                   |)
+                   |""".stripMargin
+
+    val expected: InvoiceSchema =
+      (
+        invoice = (id = 7, period = (start = "2026-01-01", days = 30)),
+        client = (
+          id = 12,
+          name = "Acme",
+          address = "Client Street",
+          contactPerson = None
+        ),
+        listings = (
+          items = Vector((desc = "Consulting", qty = 2.5, price = 120)),
+          taxRate = 8,
+          useHours = true
+        ),
+        business = (name = "Studio", address = "Main Street", contact = "ops@example.com"),
+        currency = (code = "CHF", symbol = "CHF", left = true),
+        bank = (
+          holder = "Studio",
+          name = "Bank",
+          address = "Bank Street",
+          userAddress = None,
+          account = "CH00",
+          swift = "BANKCHZZ",
+          intermediary = None,
+          routing = None
+        ),
+        twint = None,
+        appendices = Vector(
+          (
+            title = "Appendix",
+            description = "Details",
+            sections = Vector(
+              (
+                title = "Scope",
+                desc = "Included work",
+                itemsTitle = "Items",
+                items = SeqMap("setup" -> "included", "support" -> "email")
+              )
+            )
+          )
+        )
+      )
+
+    assertEquals(Readers.experimental.readAs[InvoiceSchema](input), Result.Ok(expected))
 
   test("pairSeqAsMap Writer renders Map as pair sequence"):
     type Data = ListMap[String, Int]
