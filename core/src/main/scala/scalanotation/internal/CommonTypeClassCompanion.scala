@@ -146,42 +146,28 @@ private[scalanotation] trait CommonTypeClassCompanion[TC[_]]:
           atPath: ProductFieldsAtPath[Path, Labels, Values]
       ) def fields: List[FieldRepr] = atPath
 
-      private inline def preferredAtPath[Path <: String, T]: AtPath[Path, T] =
-        compiletime.summonFrom {
-          case typeclass: TC[T]        => liftAtPath[Path, T](typeclass)
-          case atPath: AtPath[Path, T] => atPath
-          case _                       =>
-            compiletime.error(
-              "at path " + formatPath[Path] + ": Could not find " +
-                compiletime.constValue[TypeClassName] + "[" + showType[T] + "]."
-            )
-        }
-
       given Empty: [Path <: String] => ProductFieldsAtPath[Path, EmptyTuple, EmptyTuple] = Nil
 
-      @deprecated(
-        "Use the PreferredCons summon instead, which prefers an explicit AtPath instance if available."
-      )
-      def Cons[Path <: String, Label <: String, Value, Labels <: Tuple, Values <: Tuple](
-          using valueOf: ValueOf[Label]
-      )(
-          using atPath: AtPath[Path + "." + Label, Value]
-      )(
-          using rest: ProductFieldsAtPath[Path, Labels, Values]
-      ): ProductFieldsAtPath[Path, Label *: Labels, Value *: Values] =
+      given Cons: [Path <: String, Label <: String, Value, Labels <: Tuple, Values <: Tuple]
+        => (valueOf: ValueOf[Label])
+        => (atPath: AtPath[Path + "." + Label, Value])
+        => (rest: ProductFieldsAtPath[Path, Labels, Values])
+        => ProductFieldsAtPath[Path, Label *: Labels, Value *: Values] =
         makeField(valueOf.value, atPath.typeclass) :: rest.fields
 
-      inline given PreferredCons: [
+      inline given PreferredMapCons: [
           Path <: String,
           Label <: String,
-          Value,
+          K,
+          V,
+          Col[X, Y] <: scala.collection.Map[X, Y],
           Labels <: Tuple,
           Values <: Tuple
       ] => (valueOf: ValueOf[Label])
+        => (typeclass: TC[Col[K, V]])
         => (rest: ProductFieldsAtPath[Path, Labels, Values])
-        => ProductFieldsAtPath[Path, Label *: Labels, Value *: Values] =
-        makeField(valueOf.value, preferredAtPath[Path + "." + Label, Value].typeclass) ::
-          rest.fields
+        => ProductFieldsAtPath[Path, Label *: Labels, Col[K, V] *: Values] =
+        makeField(valueOf.value, typeclass) :: rest.fields
 
     object HasNonOptionalField:
       inline def validate[Path <: String, Values <: Tuple]: Unit =
@@ -304,6 +290,26 @@ private[scalanotation] trait CommonTypeClassCompanion[TC[_]]:
               "Expected the rest of the named tuple to be a NamedTuple schema"
             )
 
+      inline given PreferredMapNamedTupleCons: [
+          Path <: String,
+          N <: String,
+          K,
+          V,
+          Col[X, Y] <: scala.collection.Map[X, Y],
+          Ns <: Tuple,
+          Vs <: Tuple
+      ] => (vn: ValueOf[N])
+        => (typeclass: TC[Col[K, V]])
+        => (rest: AtPath[Path, NamedTuple[Ns, Vs]])
+        => AtPath[Path, NamedTuple[N *: Ns, Col[K, V] *: Vs]] =
+        rest match
+          case fs: List[?] =>
+            makeField(vn.value, typeclass) :: fs.asInstanceOf[List[FieldRepr]]
+          case _ =>
+            throw IllegalArgumentException(
+              "Expected the rest of the named tuple to be a NamedTuple schema"
+            )
+
       given NamedTupleEmpty: [Path <: String] => AtPath[Path, NamedTuple.Empty] =
         Nil
 
@@ -334,6 +340,18 @@ private[scalanotation] trait CommonTypeClassCompanion[TC[_]]:
           => (tail: Indexed[Path, compiletime.ops.int.+[Index, 1], Tail])
           => Indexed[Path, Index, Head *: Tail] =
           schemaOf(head.typeclass) :: tail.schemas
+
+        inline given PreferredMapCons: [
+            Path <: String,
+            Index <: Int,
+            K,
+            V,
+            Col[X, Y] <: scala.collection.Map[X, Y],
+            Tail <: Tuple
+        ] => (typeclass: TC[Col[K, V]])
+          => (tail: Indexed[Path, compiletime.ops.int.+[Index, 1], Tail])
+          => Indexed[Path, Index, Col[K, V] *: Tail] =
+          schemaOf(typeclass) :: tail.schemas
 
       given FromIndexed: [Path <: String, Values <: Tuple]
         => (indexed: Indexed[Path, 0, Values])
