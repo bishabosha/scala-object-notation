@@ -5,6 +5,10 @@ import steps.result.Result
 class DedentedStringLiteralSuite extends ScalanotationSuite:
   private val ExperimentalImport =
     "import language.experimental.dedentedStringLiterals"
+  private val CollectionLiteralImport =
+    "import language.experimental.collectionLiterals"
+  private val GroupedExperimentalImport =
+    "import language.experimental.{dedentedStringLiterals, collectionLiterals}"
 
   private def readExperimentalString(input: String): Result[String, DecodeError] =
     Readers.experimental.readAs[String](s"$ExperimentalImport\n$input")
@@ -167,15 +171,79 @@ class DedentedStringLiteralSuite extends ScalanotationSuite:
       Result.Ok((text = "hello\nworld", count = 2))
     )
 
-  test("accept a sequence of experimental imports before expression"):
-    val input =
-      s"""$ExperimentalImport; $ExperimentalImport
-         |'''
-         |  line
+  test("accept multiple experimental import statements before expression"):
+    val cases = List(
+      s"""$ExperimentalImport
+         |$CollectionLiteralImport
+         |[
          |  '''
+         |    line
+         |    ''',
+         |  "tail"
+         |]
+         |""".stripMargin,
+      s"""$CollectionLiteralImport; $ExperimentalImport
+         |[
+         |  '''
+         |    line
+         |    ''',
+         |  "tail"
+         |]
          |""".stripMargin
+    )
 
-    assertEquals(Readers.experimental.readAs[String](input), Result.Ok("line"))
+    cases.foreach { input =>
+      assertEquals(
+        Readers.experimental.readAs[Vector[String]](input),
+        Result.Ok(Vector("line", "tail"))
+      )
+    }
+
+  test("accept grouped experimental imports before expression"):
+    val cases = List(
+      s"""$GroupedExperimentalImport
+         |[
+         |  '''
+         |    line
+         |    ''',
+         |  "tail"
+         |]
+         |""".stripMargin,
+      """import language.experimental.{collectionLiterals, dedentedStringLiterals}
+         |[
+         |  '''
+         |    line
+         |    ''',
+         |  "tail"
+         |]
+         |""".stripMargin
+    )
+
+    cases.foreach { input =>
+      assertEquals(
+        Readers.experimental.readAs[Vector[String]](input),
+        Result.Ok(Vector("line", "tail"))
+      )
+    }
+
+  test("accept grouped experimental imports spread over lines"):
+    val input =
+      """import language.experimental.{
+        |  dedentedStringLiterals,
+        |  collectionLiterals
+        |}
+        |[
+        |  '''
+        |    line
+        |    ''',
+        |  "tail"
+        |]
+        |""".stripMargin
+
+    assertEquals(
+      Readers.experimental.readAs[Vector[String]](input),
+      Result.Ok(Vector("line", "tail"))
+    )
 
   test("support extended single quote delimiters"):
     val input =
@@ -245,20 +313,26 @@ class DedentedStringLiteralSuite extends ScalanotationSuite:
     assertEquals(Readers.experimental.readAs[String](input), Result.Ok("alpha\nbeta"))
 
   test("reject unsupported experimental imports"):
-    val input =
+    val cases = List(
       """import language.experimental.other
         |"ok"
+        |""".stripMargin,
+      """import language.experimental.{dedentedStringLiterals, other}
+        |"ok"
         |""".stripMargin
+    )
 
-    Readers.experimental.readAs[String](input) match
-      case Result.Err(error) =>
-        assertEquals(
-          error.rootCause,
-          DecodeError.Custom(
-            "Unsupported experimental import; only import language.experimental.dedentedStringLiterals and import language.experimental.collectionLiterals are supported"
+    cases.foreach { input =>
+      Readers.experimental.readAs[String](input) match
+        case Result.Err(error) =>
+          assertEquals(
+            error.rootCause,
+            DecodeError.Custom(
+              "Unsupported experimental import; only import language.experimental.dedentedStringLiterals and import language.experimental.collectionLiterals are supported"
+            )
           )
-        )
-      case Result.Ok(value) => fail(s"Expected a decode failure, got $value")
+        case Result.Ok(value) => fail(s"Expected a decode failure, got $value")
+    }
 
   test("reject dedented string without newline after opening delimiter"):
     val input =

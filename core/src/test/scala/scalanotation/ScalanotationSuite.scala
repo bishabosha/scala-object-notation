@@ -31,6 +31,8 @@ abstract class ScalanotationSuite extends FunSuite:
       case Token.LBracket(_)         => "["
       case Token.RBracket(_)         => "]"
       case Token.Arrow(_)            => "->"
+      case Token.LBrace(_)           => "{"
+      case Token.RBrace(_)           => "}"
       case Token.Eof(_)              => "eof"
       case token                     =>
         fail(
