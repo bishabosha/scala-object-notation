@@ -472,6 +472,82 @@ class CollectionLiteralSuite extends ScalanotationSuite:
 
     assertEquals(Readers.experimental.readAs[InvoiceSchema](input), Result.Ok(expected))
 
+  test("explicit Reader overrides win for top-level expressions"):
+    given Reader[Int] =
+      Reader.int(_ + 100)
+
+    given Reader[Option[String]] =
+      summon[Reader[String]].map(value => Some(s"custom:$value"))
+
+    assertEquals(Readers.readAs[Int]("1"), Result.Ok(101))
+    assertEquals(Readers.readAs[Option[String]]("\"top\""), Result.Ok(Some("custom:top")))
+
+  test("explicit Reader overrides win for top-level collection elements"):
+    given Reader[Int] =
+      Reader.int(_ + 100)
+
+    val input = s"""$ExperimentalImport
+                   |[1, 2, 3]
+                   |""".stripMargin
+
+    assertEquals(
+      Readers.experimental.readAs[Vector[Int]](input),
+      Result.Ok(Vector(101, 102, 103))
+    )
+
+  test("explicit Reader overrides win for top-level pair sequence keys and values"):
+    type Data = ListMap[Int, Option[String]]
+
+    given Reader[Int] =
+      Reader.int(_ + 100)
+
+    given Reader[Option[String]] =
+      summon[Reader[String]].map(value => Some(s"custom:$value"))
+
+    val input = s"""$ExperimentalImport
+                   |[1 -> "one", 2 -> "two"]
+                   |""".stripMargin
+
+    assertEquals(
+      Readers.experimental.readAs[Data](input),
+      Result.Ok(ListMap(101 -> Some("custom:one"), 102 -> Some("custom:two")))
+    )
+
+  test("explicit Reader overrides win at product, named tuple, and tuple-slot levels"):
+    final case class Data(
+        id: Int,
+        note: Option[String],
+        nested: (id: Int, note: Option[String]),
+        entries: Vector[(Int, Option[String])]
+    ) derives Reader
+
+    given Reader[Int] =
+      Reader.int(_ + 100)
+
+    given Reader[Option[String]] =
+      summon[Reader[String]].map(value => Some(s"custom:$value"))
+
+    val input = s"""$ExperimentalImport
+                   |(
+                   |  id = 1,
+                   |  note = "top",
+                   |  nested = (id = 2, note = "nested"),
+                   |  entries = [(3, "tuple")]
+                   |)
+                   |""".stripMargin
+
+    assertEquals(
+      Readers.experimental.readAs[Data](input),
+      Result.Ok(
+        Data(
+          id = 101,
+          note = Some("custom:top"),
+          nested = (id = 102, note = Some("custom:nested")),
+          entries = Vector((103, Some("custom:tuple")))
+        )
+      )
+    )
+
   test("pairSeqAsMap Writer renders Map as pair sequence"):
     type Data = ListMap[String, Int]
 

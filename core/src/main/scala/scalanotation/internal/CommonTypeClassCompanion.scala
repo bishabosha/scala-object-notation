@@ -138,22 +138,28 @@ private[scalanotation] trait CommonTypeClassCompanion[TC[_]]:
     opaque type ProductFieldsAtPath[Path <: String, Labels <: Tuple, Values <: Tuple] =
       List[FieldRepr]
 
-    object ProductFieldsAtPath:
+    private def productFields[Path <: String, Labels <: Tuple, Values <: Tuple](
+        atPath: ProductFieldsAtPath[Path, Labels, Values]
+    ): List[FieldRepr] =
+      atPath
+
+    trait ProductFieldsAtPathLowPriority:
       import compiletime.ops.string.+
       import AtPath.typeclass
-
-      extension [Path <: String, Labels <: Tuple, Values <: Tuple](
-          atPath: ProductFieldsAtPath[Path, Labels, Values]
-      ) def fields: List[FieldRepr] = atPath
-
-      given Empty: [Path <: String] => ProductFieldsAtPath[Path, EmptyTuple, EmptyTuple] = Nil
 
       given Cons: [Path <: String, Label <: String, Value, Labels <: Tuple, Values <: Tuple]
         => (valueOf: ValueOf[Label])
         => (atPath: AtPath[Path + "." + Label, Value])
         => (rest: ProductFieldsAtPath[Path, Labels, Values])
         => ProductFieldsAtPath[Path, Label *: Labels, Value *: Values] =
-        makeField(valueOf.value, atPath.typeclass) :: rest.fields
+        makeField(valueOf.value, atPath.typeclass) :: productFields(rest)
+
+    object ProductFieldsAtPath extends ProductFieldsAtPathLowPriority:
+      extension [Path <: String, Labels <: Tuple, Values <: Tuple](
+          atPath: ProductFieldsAtPath[Path, Labels, Values]
+      ) def fields: List[FieldRepr] = productFields(atPath)
+
+      given Empty: [Path <: String] => ProductFieldsAtPath[Path, EmptyTuple, EmptyTuple] = Nil
 
       inline given PreferredMapCons: [
           Path <: String,
@@ -167,7 +173,20 @@ private[scalanotation] trait CommonTypeClassCompanion[TC[_]]:
         => (typeclass: TC[Col[K, V]])
         => (rest: ProductFieldsAtPath[Path, Labels, Values])
         => ProductFieldsAtPath[Path, Label *: Labels, Col[K, V] *: Values] =
-        makeField(valueOf.value, typeclass) :: rest.fields
+        makeField(valueOf.value, typeclass) :: productFields(rest)
+
+      inline given PreferredOptionCons: [
+          Path <: String,
+          Label <: String,
+          T,
+          Labels <: Tuple,
+          Values <: Tuple
+      ] => NotGiven[T <:< Option[?]]
+        => (valueOf: ValueOf[Label])
+        => (typeclass: TC[Option[T]])
+        => (rest: ProductFieldsAtPath[Path, Labels, Values])
+        => ProductFieldsAtPath[Path, Label *: Labels, Option[T] *: Values] =
+        makeField(valueOf.value, typeclass) :: productFields(rest)
 
     object HasNonOptionalField:
       inline def validate[Path <: String, Values <: Tuple]: Unit =
@@ -254,15 +273,15 @@ private[scalanotation] trait CommonTypeClassCompanion[TC[_]]:
     ): AtPath[Path, T] =
       typeclass
 
-    object AtPath:
-      import compiletime.ops.string.+
+    private def atPathTypeclass[Path <: String, T](value: AtPath[Path, T]): TC[T] =
+      value match
+        case fields: List[?] =>
+          namedTupleTypeClass(fields.asInstanceOf[List[FieldRepr]])
+        case _ =>
+          value.asInstanceOf[TC[T]]
 
-      extension [Path <: String, T](value: AtPath[Path, T])
-        def typeclass: TC[T] = value match
-          case fields: List[?] =>
-            namedTupleTypeClass(fields.asInstanceOf[List[FieldRepr]])
-          case _ =>
-            value.asInstanceOf[TC[T]]
+    trait AtPathDefaultLowPriority:
+      import compiletime.ops.string.+
 
       inline given DefaultAtPath: [Path <: String, T] => AtPath[Path, T] =
         compiletime.summonFrom {
@@ -274,6 +293,9 @@ private[scalanotation] trait CommonTypeClassCompanion[TC[_]]:
             )
         }
 
+    trait AtPathStructuralPriority extends AtPathDefaultLowPriority:
+      import compiletime.ops.string.+
+
       given TupleAtPath: [Path <: String, T <: Tuple]
         => (slots: TupleSlotsAtPath[Path, T])
         => AtPath[Path, T] =
@@ -284,11 +306,15 @@ private[scalanotation] trait CommonTypeClassCompanion[TC[_]]:
         => AtPath[Path, NamedTuple[N *: Ns, V *: Vs]] =
         rest match
           case fs: List[?] =>
-            makeField(vn.value, ap.typeclass) :: fs.asInstanceOf[List[FieldRepr]]
+            makeField(vn.value, atPathTypeclass(ap)) :: fs.asInstanceOf[List[FieldRepr]]
           case _ =>
             throw IllegalArgumentException(
               "Expected the rest of the named tuple to be a NamedTuple schema"
             )
+
+    object AtPath extends AtPathStructuralPriority:
+      extension [Path <: String, T](value: AtPath[Path, T])
+        def typeclass: TC[T] = atPathTypeclass(value)
 
       inline given PreferredMapNamedTupleCons: [
           Path <: String,
@@ -310,6 +336,21 @@ private[scalanotation] trait CommonTypeClassCompanion[TC[_]]:
               "Expected the rest of the named tuple to be a NamedTuple schema"
             )
 
+      inline given PreferredOptionNamedTupleCons
+          : [Path <: String, N <: String, T, Ns <: Tuple, Vs <: Tuple]
+            => NotGiven[T <:< Option[?]]
+            => (vn: ValueOf[N])
+            => (typeclass: TC[Option[T]])
+            => (rest: AtPath[Path, NamedTuple[Ns, Vs]])
+            => AtPath[Path, NamedTuple[N *: Ns, Option[T] *: Vs]] =
+        rest match
+          case fs: List[?] =>
+            makeField(vn.value, typeclass) :: fs.asInstanceOf[List[FieldRepr]]
+          case _ =>
+            throw IllegalArgumentException(
+              "Expected the rest of the named tuple to be a NamedTuple schema"
+            )
+
       given NamedTupleEmpty: [Path <: String] => AtPath[Path, NamedTuple.Empty] =
         Nil
 
@@ -322,14 +363,7 @@ private[scalanotation] trait CommonTypeClassCompanion[TC[_]]:
 
       opaque type Indexed[Path <: String, Index <: Int, Values <: Tuple] = List[RawSchema[?]]
 
-      object Indexed:
-        extension [Path <: String, Index <: Int, Values <: Tuple](
-            slots: Indexed[Path, Index, Values]
-        ) def schemas: List[RawSchema[?]] = slots
-
-        given Empty: [Path <: String, Index <: Int] => Indexed[Path, Index, EmptyTuple] =
-          Nil
-
+      trait IndexedLowPriority:
         given Cons: [Path <: String, Index <: Int, Head, Tail <: Tuple]
           => (
               head: AtPath[
@@ -339,7 +373,15 @@ private[scalanotation] trait CommonTypeClassCompanion[TC[_]]:
         )
           => (tail: Indexed[Path, compiletime.ops.int.+[Index, 1], Tail])
           => Indexed[Path, Index, Head *: Tail] =
-          schemaOf(head.typeclass) :: tail.schemas
+          schemaOf(head.typeclass) :: tail
+
+      object Indexed extends IndexedLowPriority:
+        extension [Path <: String, Index <: Int, Values <: Tuple](
+            slots: Indexed[Path, Index, Values]
+        ) def schemas: List[RawSchema[?]] = slots
+
+        given Empty: [Path <: String, Index <: Int] => Indexed[Path, Index, EmptyTuple] =
+          Nil
 
         inline given PreferredMapCons: [
             Path <: String,
@@ -351,7 +393,14 @@ private[scalanotation] trait CommonTypeClassCompanion[TC[_]]:
         ] => (typeclass: TC[Col[K, V]])
           => (tail: Indexed[Path, compiletime.ops.int.+[Index, 1], Tail])
           => Indexed[Path, Index, Col[K, V] *: Tail] =
-          schemaOf(typeclass) :: tail.schemas
+          schemaOf(typeclass) :: tail
+
+        inline given PreferredOptionCons: [Path <: String, Index <: Int, T, Tail <: Tuple]
+          => NotGiven[T <:< Option[?]]
+          => (typeclass: TC[Option[T]])
+          => (tail: Indexed[Path, compiletime.ops.int.+[Index, 1], Tail])
+          => Indexed[Path, Index, Option[T] *: Tail] =
+          schemaOf(typeclass) :: tail
 
       given FromIndexed: [Path <: String, Values <: Tuple]
         => (indexed: Indexed[Path, 0, Values])

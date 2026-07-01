@@ -129,3 +129,35 @@ class DerivationFailureSuite extends ScalanotationSuite:
       clue(errors.head.message)
         .contains("Box[scala.Int]")
     )
+
+  test("compile-time derivation error keeps nested path with overridden readers"):
+    class Box[T]
+    val errors = typeCheckErrors(
+      "type Data = (outer: (count: Int, note: Option[String], bad: Box[Int]))\n" +
+        "given scalanotation.Reader[Int] = scalanotation.Reader.int(_ + 100)\n" +
+        "given scalanotation.Reader[Option[String]] = summon[scalanotation.Reader[String]].map(value => Some(value))\n" +
+        "summon[scalanotation.Reader[Data]]"
+    )
+
+    assert(errors.nonEmpty)
+    assert(clue(errors.head.message).contains("'.outer.bad'"))
+    assert(
+      clue(errors.head.message)
+        .contains("Box[scala.Int]")
+    )
+
+  test("compile-time derivation error keeps vector path with overridden readers"):
+    class Box[T]
+    val errors = typeCheckErrors(
+      "type Data = (items: Vector[(count: Int, note: Option[String], bad: Box[Int])])\n" +
+        "given scalanotation.Reader[Int] = scalanotation.Reader.int(_ + 100)\n" +
+        "given scalanotation.Reader[Option[String]] = summon[scalanotation.Reader[String]].map(value => Some(value))\n" +
+        "summon[scalanotation.Reader[Data]]"
+    )
+
+    assert(errors.nonEmpty)
+    assert(clue(errors.head.message).contains("'.items[].bad'"))
+    assert(
+      clue(errors.head.message)
+        .contains("Box[scala.Int]")
+    )
