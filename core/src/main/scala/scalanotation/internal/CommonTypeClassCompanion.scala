@@ -146,14 +146,42 @@ private[scalanotation] trait CommonTypeClassCompanion[TC[_]]:
           atPath: ProductFieldsAtPath[Path, Labels, Values]
       ) def fields: List[FieldRepr] = atPath
 
+      private inline def preferredAtPath[Path <: String, T]: AtPath[Path, T] =
+        compiletime.summonFrom {
+          case typeclass: TC[T]        => liftAtPath[Path, T](typeclass)
+          case atPath: AtPath[Path, T] => atPath
+          case _                       =>
+            compiletime.error(
+              "at path " + formatPath[Path] + ": Could not find " +
+                compiletime.constValue[TypeClassName] + "[" + showType[T] + "]."
+            )
+        }
+
       given Empty: [Path <: String] => ProductFieldsAtPath[Path, EmptyTuple, EmptyTuple] = Nil
 
-      given Cons: [Path <: String, Label <: String, Value, Labels <: Tuple, Values <: Tuple]
-        => (valueOf: ValueOf[Label])
-        => (atPath: AtPath[Path + "." + Label, Value])
+      @deprecated(
+        "Use the PreferredCons summon instead, which prefers an explicit AtPath instance if available."
+      )
+      def Cons[Path <: String, Label <: String, Value, Labels <: Tuple, Values <: Tuple](
+          using valueOf: ValueOf[Label]
+      )(
+          using atPath: AtPath[Path + "." + Label, Value]
+      )(
+          using rest: ProductFieldsAtPath[Path, Labels, Values]
+      ): ProductFieldsAtPath[Path, Label *: Labels, Value *: Values] =
+        makeField(valueOf.value, atPath.typeclass) :: rest.fields
+
+      inline given PreferredCons: [
+          Path <: String,
+          Label <: String,
+          Value,
+          Labels <: Tuple,
+          Values <: Tuple
+      ] => (valueOf: ValueOf[Label])
         => (rest: ProductFieldsAtPath[Path, Labels, Values])
         => ProductFieldsAtPath[Path, Label *: Labels, Value *: Values] =
-        makeField(valueOf.value, atPath.typeclass) :: rest.fields
+        makeField(valueOf.value, preferredAtPath[Path + "." + Label, Value].typeclass) ::
+          rest.fields
 
     object HasNonOptionalField:
       inline def validate[Path <: String, Values <: Tuple]: Unit =

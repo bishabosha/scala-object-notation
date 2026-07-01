@@ -147,6 +147,30 @@ object ReadWriter extends CommonTypeClassCompanion[ReadWriter]:
       )
     )
 
+  /** Recommended if you want to derive both a Reader and a Writer for a `Map[String, V]` type and
+    * use pair sequence syntax. This is because the default `given ReadWriter[Map[String, V]]` (of
+    * `RawSchema.Dict` shape) will always be prioritized.
+    *
+    * Using the result of this method, declare `given Reader[Map[String, V]] = rw.reader` and
+    * `given Writer[Map[String, V]] = rw.writer`.
+    */
+  def dictAsPairSeq[Final <: scala.collection.Map[String, ?]]()[V: ReadWriter as element, Col[
+      X,
+      Y
+  ] <: scala.collection.Map[X, Y]](using Col[String, V] <:< Final)(
+      using factory: scala.collection.Factory[(String, V), Col[String, V]]
+  ): (reader: Reader[Col[String, V]], writer: Writer[Col[String, V]]) =
+    // TODO: if we can make ReadWriter extend Reader and Writer,
+    // then the implicit priority problem goes away, and we can just return a ReadWriter here.
+    // We could then eliminate this and recommend `pairSeqAsMap` as a migration.
+    val schema: RawSchema[Col[String, V]] = RawSchema.PairSeq(
+      RawSchema.String,
+      element.schema,
+      PublicInternal.MapFactoryPairSeq[String, V, Col],
+      RawSchema.PairSeqWrite.from[Col[String, V], String, V](_.size, _.iterator)
+    )
+    (Reader.fromSchema(schema), Writer.fromSchema(schema))
+
   def pairSeq[A, Key, Elem, Repr](
       key: ReadWriter[Key],
       element: ReadWriter[Elem],
@@ -160,6 +184,23 @@ object ReadWriter extends CommonTypeClassCompanion[ReadWriter]:
         element.schema,
         builder,
         RawSchema.PairSeqWrite.from(size, iterator)
+      )
+    )
+
+  def pairSeqAsMap[K: ReadWriter as key, V: ReadWriter as element, Col[
+      X,
+      Y
+  ] <: scala.collection.Map[X, Y]](
+      using NotGiven[K <:< String]
+  )(
+      using factory: scala.collection.Factory[(K, V), Col[K, V]]
+  ): ReadWriter[Col[K, V]] =
+    fromSchema(
+      RawSchema.PairSeq(
+        key.schema,
+        element.schema,
+        PublicInternal.MapFactoryPairSeq[K, V, Col],
+        RawSchema.PairSeqWrite.from[Col[K, V], K, V](_.size, _.iterator)
       )
     )
 

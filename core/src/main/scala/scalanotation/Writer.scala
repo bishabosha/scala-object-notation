@@ -144,6 +144,17 @@ object Writer extends WriterLowPriority, CommonTypeClassCompanion[Writer]:
       )
     )
 
+  def pairSeqAsMap[K: Writer as key, V: Writer as element, Col[X, Y] <: scala.collection.Map[X, Y]]
+      : Writer[Col[K, V]] =
+    fromSchema[Col[K, V]](
+      RawSchema.PairSeq(
+        key.schema,
+        element.schema,
+        null,
+        RawSchema.PairSeqWrite.from[Col[K, V], K, V](_.size, _.iterator)
+      )
+    )
+
   def router[A](
       name: String,
       selfKind: String
