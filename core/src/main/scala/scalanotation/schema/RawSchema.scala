@@ -43,23 +43,23 @@ enum RawSchema[A]:
       element: RawSchema[Elem],
       read: RawSchema.VectorRead | Null = null,
       write: RawSchema.VectorWrite | Null = null
-  ) extends RawSchema[A]
+  ) extends RawSchema[A] with RawSchema.Collection
   case TupleOf[A, Elem](
       element: RawSchema[Elem],
       read: RawSchema.VectorRead | Null = null,
       write: RawSchema.VectorWrite | Null = null
-  ) extends RawSchema[A]
+  ) extends RawSchema[A] with RawSchema.Collection
   case PairSeq[A, K, V](
       key: RawSchema[K],
       value: RawSchema[V],
       read: RawSchema.PairSeqRead | Null = null,
       write: RawSchema.PairSeqWrite | Null = null
-  ) extends RawSchema[A]
+  ) extends RawSchema[A] with RawSchema.Collection
   case Dict[A, Elem](
       element: RawSchema[Elem],
       read: RawSchema.DictRead | Null = null,
       write: RawSchema.DictWrite | Null = null
-  ) extends RawSchema[A]
+  ) extends RawSchema[A] with RawSchema.Collection
   case Router[A](
       name: String,
       selfKind: String,
@@ -68,20 +68,20 @@ enum RawSchema[A]:
       write: RouterSchema.Write[A] | Null,
       numberMode: RouterSchema.NumberMode
   )                                                     extends RawSchema[A]
-  case Ref[A](name: String, target: () => RawSchema[A]) extends RawSchema[A]
-  case Option[A](inner: RawSchema[A])                   extends RawSchema[scala.Option[A]]
+  case Ref[A](name: String, target: () => RawSchema[A]) extends RawSchema[A] with RawSchema.Atomic
+  case Option[A](inner: RawSchema[A]) extends RawSchema[scala.Option[A]] with RawSchema.Collection
   case Mapped[Base, A](
       base: RawSchema[Base],
       mapping: SchemaMapping[Base, A]
-  )            extends RawSchema[A]
-  case String  extends RawSchema[scala.Predef.String]
-  case Char    extends RawSchema[scala.Char]
-  case Int     extends RawSchema[scala.Int]
-  case Long    extends RawSchema[scala.Long]
-  case Float   extends RawSchema[scala.Float]
-  case Double  extends RawSchema[scala.Double]
-  case Boolean extends RawSchema[scala.Boolean]
-  case Null    extends RawSchema[scala.Null]
+  )            extends RawSchema[A] with RawSchema.Atomic
+  case String  extends RawSchema[scala.Predef.String] with RawSchema.Atomic
+  case Char    extends RawSchema[scala.Char] with RawSchema.Atomic
+  case Int     extends RawSchema[scala.Int] with RawSchema.Atomic
+  case Long    extends RawSchema[scala.Long] with RawSchema.Atomic
+  case Float   extends RawSchema[scala.Float] with RawSchema.Atomic
+  case Double  extends RawSchema[scala.Double] with RawSchema.Atomic
+  case Boolean extends RawSchema[scala.Boolean] with RawSchema.Atomic
+  case Null    extends RawSchema[scala.Null] with RawSchema.Atomic
 
   private[scalanotation] final def withMapping(
       f: [Base] => SchemaMapping[Base, A] => SchemaMapping[Base, A]
@@ -170,6 +170,9 @@ enum RawSchema[A]:
         base.describeSelf
 
 object RawSchema:
+  sealed trait Atomic     { self: RawSchema[?] => }
+  sealed trait Collection { self: RawSchema[?] => }
+
   type ResultMap[-In, +Out]               = In => Result[Out, DecodeError]
   type InputMap[-In, +Out]                = In => Out
   private[scalanotation] type TupleRead   = Reader.TupleBuilder[?, ?]
