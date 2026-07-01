@@ -208,7 +208,7 @@ class CollectionLiteralSuite extends ScalanotationSuite:
   test("pairSeqAsMap Reader decodes collection literal arrows into Map"):
     type Data = ListMap[String, Int]
 
-    given reader: Reader[Data] = Reader.pairSeqAsMap
+    given reader: Reader[Data] = Reader.pairSeqAsDict
 
     reader.schema match
       case pairSeq: RawSchema.PairSeq[?, ?, ?] =>
@@ -231,7 +231,7 @@ class CollectionLiteralSuite extends ScalanotationSuite:
   test("pairSeqAsMap Reader decodes collection literal arrows into Map [prio]"):
     case class Data(entries: ListMap[String, Int]) derives Reader
     object Data:
-      private given innerReader: Reader[ListMap[String, Int]] = Reader.pairSeqAsMap
+      private given innerReader: Reader[ListMap[String, Int]] = Reader.pairSeqAsDict
 
     summon[Reader[Data]].schema match
       case RawSchema.NamedTuple(fields = IArray(field)) =>
@@ -258,7 +258,7 @@ class CollectionLiteralSuite extends ScalanotationSuite:
   test("pairSeqAsMap Writer renders Map as pair sequence"):
     type Data = ListMap[String, Int]
 
-    given writer: Writer[Data] = Writer.pairSeqAsMap
+    given writer: Writer[Data] = Writer.pairSeqAsDict
 
     writer.schema match
       case pairSeq: RawSchema.PairSeq[?, ?, ?] =>
@@ -276,10 +276,12 @@ class CollectionLiteralSuite extends ScalanotationSuite:
       """Vector(("abc", 123), ("def", 456))"""
     )
 
-  test("pairSeqAsMap ReadWriter decodes collection literals and writes pair sequences"):
+  test(
+    "default ReadWriter for non-string key map decodes collection literals and writes pair sequences"
+  ):
     type Data = ListMap[Int, Boolean]
 
-    val readWriter: ReadWriter[Data] = ReadWriter.pairSeqAsMap
+    val readWriter: ReadWriter[Data] = summon[ReadWriter[Data]]
 
     readWriter.schema match
       case pairSeq: RawSchema.PairSeq[?, ?, ?] =>
@@ -305,10 +307,10 @@ class CollectionLiteralSuite extends ScalanotationSuite:
     assertEquals(rendered, """Vector((123, true), (456, false))""")
     assertEquals(Readers.readAs[Data](rendered), Result.Ok(value))
 
-  test("dictAsPairSeq ReadWriter decodes collection literals and writes pair sequences"):
+  test("pairSeqAsDict ReadWriter decodes collection literals and writes pair sequences"):
     type Data = ListMap[String, Int]
 
-    val rw             = ReadWriter.dictAsPairSeq[Data]()
+    val rw             = ReadWriter.pairSeqAsDict[Data]()
     given Reader[Data] = rw.reader
     given Writer[Data] = rw.writer
 

@@ -231,16 +231,15 @@ object Reader extends ReaderLowPriority, CommonTypeClassCompanion[Reader]:
       )
     )
 
-  def pairSeqAsMap[
-      K: Reader as key,
+  def pairSeqAsDict[
       V: Reader as element,
       Col[X, Y] <: scala.collection.Map[X, Y]
-  ](using factory: scala.collection.Factory[(K, V), Col[K, V]]): Reader[Col[K, V]] =
-    fromSchema[Col[K, V]](
+  ](using factory: scala.collection.Factory[(String, V), Col[String, V]]): Reader[Col[String, V]] =
+    fromSchema[Col[String, V]](
       RawSchema.PairSeq(
-        key.schema,
+        RawSchema.String,
         element.schema,
-        PublicInternal.MapFactoryPairSeq[K, V, Col],
+        PublicInternal.MapFactoryPairSeq[String, V, Col],
         null
       )
     )

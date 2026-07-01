@@ -144,14 +144,14 @@ object Writer extends WriterLowPriority, CommonTypeClassCompanion[Writer]:
       )
     )
 
-  def pairSeqAsMap[K: Writer as key, V: Writer as element, Col[X, Y] <: scala.collection.Map[X, Y]]
-      : Writer[Col[K, V]] =
-    fromSchema[Col[K, V]](
+  def pairSeqAsDict[V: Writer as element, Col[X, Y] <: scala.collection.Map[X, Y]]
+      : Writer[Col[String, V]] =
+    fromSchema[Col[String, V]](
       RawSchema.PairSeq(
-        key.schema,
+        RawSchema.String,
         element.schema,
         null,
-        RawSchema.PairSeqWrite.from[Col[K, V], K, V](_.size, _.iterator)
+        RawSchema.PairSeqWrite.from[Col[String, V], String, V](_.size, _.iterator)
       )
     )
 
