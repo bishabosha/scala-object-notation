@@ -29,12 +29,12 @@ private[scalanotation] trait TokenKinds:
   inline val Semicolon    = 21
   inline val LParen       = 22
   inline val RParen       = 23
-  inline val LBracket     = 24
-  inline val RBracket     = 25
-  inline val Arrow        = 26
-  inline val LBrace       = 27
-  inline val RBrace       = 28
-  inline val Eof          = 29
+  inline val Eof          = 24
+  inline val LBracket     = 25
+  inline val RBracket     = 26
+  inline val Arrow        = 27
+  inline val LBrace       = 28
+  inline val RBrace       = 29
 
 /** Unboxed token kind constants. The decoder's happy path only ever inspects these (plus the
   * unboxed offset slots in [[TokenStream]]); boxed [[Token]] values and [[DecodeError.Span]]s are

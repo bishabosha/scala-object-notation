@@ -102,6 +102,11 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
         decodeBase(ref.target(), allowTopLevelArrow)
 
   protected final def decodeRouter(
+      schema: RawSchema.Router[?]
+  ): Result[Unit, DecodeError] =
+    decodeRouter(schema, allowTopLevelArrow = true)
+
+  protected final def decodeRouter(
       schema: RawSchema.Router[?],
       allowTopLevelArrow: Boolean
   ): Result[Unit, DecodeError] =
@@ -200,6 +205,11 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
     numberMode match
       case RouterSchema.NumberMode.Bounded => bounded
       case RouterSchema.NumberMode.Raw     => RouterSchema.RouterConstruct.RawNumber
+
+  protected final def decodeTuple(
+      schema: RawSchema.Tuple[?]
+  ): Result[Unit, DecodeError] =
+    decodeTuple(schema, allowTopLevelArrow = true)
 
   protected final def decodeTuple(
       schema: RawSchema.Tuple[?],
@@ -957,6 +967,11 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
     else DecodeError.Custom(s"Expected ']' but found ${describeCurrent()}").atToken(currentSpan())
 
   protected final def decodeTupleOf(
+      schema: RawSchema.TupleOf[?, ?]
+  ): Result[Unit, DecodeError] =
+    decodeTupleOf(schema, allowTopLevelArrow = true)
+
+  protected final def decodeTupleOf(
       schema: RawSchema.TupleOf[?, ?],
       allowTopLevelArrow: Boolean
   ): Result[Unit, DecodeError] =
@@ -1488,6 +1503,11 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
       decodeBase(schema.element) match
         case Result.Err(error) => error.atPath(s".${name}")
         case _                 => null
+
+  protected final def decodeOption(
+      schema: RawSchema.Option[?]
+  ): Result[Unit, DecodeError] =
+    decodeOption(schema, allowTopLevelArrow = true)
 
   protected final def decodeOption(
       schema: RawSchema.Option[?],
