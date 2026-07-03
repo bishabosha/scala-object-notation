@@ -24,11 +24,21 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
   ): Result[Unit, DecodeError] =
     schema match
       case schema: RawSchema.Atomic =>
+        // primitive decodes never recurse into the input (Mapped/Ref chains are schema-bounded),
+        // so they skip the nesting guard entirely
         decodePrimitiveBase(schema, allowTopLevelArrow)
       case schema: RawSchema.Collection =>
-        decodeCollectionBase(schema, allowTopLevelArrow)
+        if !enterNesting() then Result.Err(nestingLimitError().atToken(currentSpan()))
+        else
+          val result = decodeCollectionBase(schema, allowTopLevelArrow)
+          exitNesting()
+          result
       case _ =>
-        decodeCompositeBase(schema, allowTopLevelArrow)
+        if !enterNesting() then Result.Err(nestingLimitError().atToken(currentSpan()))
+        else
+          val result = decodeCompositeBase(schema, allowTopLevelArrow)
+          exitNesting()
+          result
 
   private def decodeMappedBase(
       schema: RawSchema.Mapped[?, ?],

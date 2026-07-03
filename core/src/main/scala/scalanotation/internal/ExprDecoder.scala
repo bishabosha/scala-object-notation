@@ -46,6 +46,22 @@ private[scalanotation] class ExprDecoder() extends PushSlots with SharedHelpers:
       expr: Expr
   ): Result[Unit, DecodeError] =
     schema match
+      case schema: RawSchema.Atomic =>
+        // primitives and schema-bounded wrappers (Mapped/Ref) never recurse into the Expr tree
+        decodeSchema(schema, expr)
+      case _ =>
+        // an Expr tree built from untrusted input can nest arbitrarily deep: bound the recursion
+        if !enterNesting() then Result.Err(nestingLimitError())
+        else
+          val result = decodeSchema(schema, expr)
+          exitNesting()
+          result
+
+  private def decodeSchema(
+      schema: RawSchema[?],
+      expr: Expr
+  ): Result[Unit, DecodeError] =
+    schema match
       case mapped: RawSchema.Mapped[?, ?] =>
         Result.task {
           decodeBase(mapped.base, expr).check
