@@ -194,17 +194,73 @@ private[scalanotation] final class Tokenizer private[internal] (
     while !isAtEnd && isIdentifierPart(currentChar()) do advance()
     if index > start && input.charAt(index - 1) == '_' then
       while !isAtEnd && isOperatorPart(currentChar()) do advance()
-    kind =
-      if sliceEquals(start, index, KW_package) then TokenKind.PackageKw
-      else if sliceEquals(start, index, KW_val) then TokenKind.ValKw
-      else if sliceEquals(start, index, KW_true) then TokenKind.TrueKw
-      else if sliceEquals(start, index, KW_false) then TokenKind.FalseKw
-      else if sliceEquals(start, index, KW_null) then TokenKind.NullKw
-      else if sliceEquals(start, index, KW_Vector) then TokenKind.VectorId
-      else if sliceEquals(start, index, KW_EmptyTuple) then TokenKind.EmptyTupleId
-      else if sliceEquals(start, index, KW_Tuple) then TokenKind.TupleId
-      else if reservedIdentifierKeywordSlice(start, index) then TokenKind.Keyword
-      else TokenKind.Identifier
+    kind = classifyIdentifier()
+
+  /** Classifies the identifier slice against the special and reserved keywords, dispatching on the
+    * first character: every identifier — one per field name — is compared against at most six
+    * length-gated candidates instead of scanning the whole keyword table.
+    */
+  private def classifyIdentifier(): Int =
+    inline def kw(inline expected: String): Boolean = sliceEquals(start, index, expected)
+    input.charAt(start) match
+      case 'a' =>
+        if kw("abstract") then TokenKind.Keyword else TokenKind.Identifier
+      case 'c' =>
+        if kw("case") || kw("catch") || kw("class") then TokenKind.Keyword
+        else TokenKind.Identifier
+      case 'd' =>
+        if kw("def") || kw("do") then TokenKind.Keyword else TokenKind.Identifier
+      case 'e' =>
+        if kw("else") || kw("enum") || kw("export") || kw("extends") then TokenKind.Keyword
+        else TokenKind.Identifier
+      case 'f' =>
+        if kw(KW_false) then TokenKind.FalseKw
+        else if kw("final") || kw("finally") || kw("for") then TokenKind.Keyword
+        else TokenKind.Identifier
+      case 'g' =>
+        if kw("given") then TokenKind.Keyword else TokenKind.Identifier
+      case 'i' =>
+        if kw("if") || kw("implicit") || kw("import") then TokenKind.Keyword
+        else TokenKind.Identifier
+      case 'l' =>
+        if kw("lazy") then TokenKind.Keyword else TokenKind.Identifier
+      case 'm' =>
+        if kw("match") then TokenKind.Keyword else TokenKind.Identifier
+      case 'n' =>
+        if kw(KW_null) then TokenKind.NullKw
+        else if kw("new") then TokenKind.Keyword
+        else TokenKind.Identifier
+      case 'o' =>
+        if kw("object") || kw("override") then TokenKind.Keyword else TokenKind.Identifier
+      case 'p' =>
+        if kw(KW_package) then TokenKind.PackageKw
+        else if kw("private") || kw("protected") then TokenKind.Keyword
+        else TokenKind.Identifier
+      case 'r' =>
+        if kw("return") then TokenKind.Keyword else TokenKind.Identifier
+      case 's' =>
+        if kw("sealed") || kw("super") then TokenKind.Keyword else TokenKind.Identifier
+      case 't' =>
+        if kw(KW_true) then TokenKind.TrueKw
+        else if kw("then") || kw("throw") || kw("trait") || kw("try") || kw("type") then
+          TokenKind.Keyword
+        else TokenKind.Identifier
+      case 'v' =>
+        if kw(KW_val) then TokenKind.ValKw
+        else if kw("var") then TokenKind.Keyword
+        else TokenKind.Identifier
+      case 'w' =>
+        if kw("while") || kw("with") then TokenKind.Keyword else TokenKind.Identifier
+      case 'y' =>
+        if kw("yield") then TokenKind.Keyword else TokenKind.Identifier
+      case 'V' =>
+        if kw(KW_Vector) then TokenKind.VectorId else TokenKind.Identifier
+      case 'E' =>
+        if kw(KW_EmptyTuple) then TokenKind.EmptyTupleId else TokenKind.Identifier
+      case 'T' =>
+        if kw(KW_Tuple) then TokenKind.TupleId else TokenKind.Identifier
+      case _ =>
+        TokenKind.Identifier
 
   private def scanQuotedIdentifier(): Unit =
     advance()
@@ -673,13 +729,6 @@ private[scalanotation] final class Tokenizer private[internal] (
   private def failAt(message: String, offset: Int): Nothing =
     throw TokenizeException(message, offset)
 
-  private def reservedIdentifierKeywordSlice(from: Int, until: Int): Boolean =
-    var index = 0
-    while index < Tokenizer.reservedIdentifierKeywords.length do
-      if sliceEquals(from, until, Tokenizer.reservedIdentifierKeywords(index)) then return true
-      index += 1
-    false
-
 private[scalanotation] object Tokenizer:
   private val KW_val        = "val"
   private val KW_package    = "package"
@@ -699,47 +748,6 @@ private[scalanotation] object Tokenizer:
   private val KW_at         = "@"
   private val KW_tlArrow    = "=>>"
   private val KW_ctxArrow   = "?=>"
-
-  private val reservedIdentifierKeywords: Array[String] =
-    Array(
-      "abstract",
-      "case",
-      "catch",
-      "class",
-      "def",
-      "do",
-      "else",
-      "enum",
-      "export",
-      "extends",
-      "final",
-      "finally",
-      "for",
-      "given",
-      "if",
-      "implicit",
-      "import",
-      "lazy",
-      "match",
-      "new",
-      "object",
-      "override",
-      "package",
-      "private",
-      "protected",
-      "return",
-      "sealed",
-      "super",
-      "then",
-      "throw",
-      "trait",
-      "try",
-      "type",
-      "var",
-      "while",
-      "with",
-      "yield"
-    )
 
   /** Interprets an `IntLit` token's value in place from its input slice. The scanner validates only
     * the shape: the sign lives in a separate token, so the range check has to happen here, at
