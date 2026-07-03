@@ -327,7 +327,10 @@ object ReadWriter extends CommonTypeClassCompanion[ReadWriter]:
           RawSchema.Vector(
             wrapped.typeclass.schema,
             PublicInternal.iarrayVectorRead[T],
-            RawSchema.VectorWrite.from[IArray[T], T](_.length, _.iterator)
+            PublicInternal.arrayVectorWrite(
+              wrapped.typeclass.schema,
+              RawSchema.VectorWrite.from[IArray[T], T](_.length, _.iterator)
+            )
           )
         )
       )
@@ -340,7 +343,10 @@ object ReadWriter extends CommonTypeClassCompanion[ReadWriter]:
           RawSchema.Vector(
             wrapped.typeclass.schema,
             PublicInternal.arrayVectorRead[T],
-            RawSchema.VectorWrite.from[Array[T], T](_.length, _.iterator)
+            PublicInternal.arrayVectorWrite(
+              wrapped.typeclass.schema,
+              RawSchema.VectorWrite.from[Array[T], T](_.length, _.iterator)
+            )
           )
         )
       )
