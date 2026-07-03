@@ -3,6 +3,7 @@ package scalanotation
 import scalanotation.internal.CommonTypeClassCompanion
 import scalanotation.internal.Encode
 import scalanotation.internal.ExprRenderer
+import scalanotation.internal.PublicInternal
 import scalanotation.internal.IdentifierSyntax
 
 import scalanotation.schema.RawSchema
@@ -278,7 +279,10 @@ object Writer extends WriterLowPriority, CommonTypeClassCompanion[Writer]:
           RawSchema.Vector(
             wrapped.typeclass.schema,
             read = null,
-            RawSchema.VectorWrite.from[IArray[T], T](_.length, _.iterator)
+            PublicInternal.arrayVectorWrite(
+              wrapped.typeclass.schema,
+              RawSchema.VectorWrite.from[IArray[T], T](_.length, _.iterator)
+            )
           )
         )
       )
@@ -291,7 +295,10 @@ object Writer extends WriterLowPriority, CommonTypeClassCompanion[Writer]:
           RawSchema.Vector(
             wrapped.typeclass.schema,
             read = null,
-            RawSchema.VectorWrite.from[Array[T], T](_.length, _.iterator)
+            PublicInternal.arrayVectorWrite(
+              wrapped.typeclass.schema,
+              RawSchema.VectorWrite.from[Array[T], T](_.length, _.iterator)
+            )
           )
         )
       )

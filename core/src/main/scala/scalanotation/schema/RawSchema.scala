@@ -490,6 +490,26 @@ object RawSchema:
   trait NamedTupleWrite:
     def fieldValue(value: Any, index: Int): Any
 
+    // Typed field accessors — the write-side dual of the decoder's typed slots: precise
+    // signatures that let the renderer pull a primitive field without boxing. The defaults
+    // delegate to fieldValue (matching previous behaviour); overrides — e.g. the evidence
+    // derived by `TypedFactories.derived` in the macros module and attached via
+    // `Configured.typed` — read the field straight off the product.
+    def stringFieldValue(value: Any, index: Int): String =
+      fieldValue(value, index).asInstanceOf[String]
+    def charFieldValue(value: Any, index: Int): Char =
+      fieldValue(value, index).asInstanceOf[Char]
+    def intFieldValue(value: Any, index: Int): Int =
+      fieldValue(value, index).asInstanceOf[Int]
+    def longFieldValue(value: Any, index: Int): Long =
+      fieldValue(value, index).asInstanceOf[Long]
+    def floatFieldValue(value: Any, index: Int): Float =
+      fieldValue(value, index).asInstanceOf[Float]
+    def doubleFieldValue(value: Any, index: Int): Double =
+      fieldValue(value, index).asInstanceOf[Double]
+    def booleanFieldValue(value: Any, index: Int): Boolean =
+      fieldValue(value, index).asInstanceOf[Boolean]
+
   object NamedTupleWrite:
     val productLike: NamedTupleWrite = new:
       def fieldValue(value: Any, index: Int): Any =
@@ -498,9 +518,48 @@ object RawSchema:
     val singleton: NamedTupleWrite = new:
       def fieldValue(value: Any, index: Int): Any = ()
 
+    /** overlays the typed field accessors of `factory` onto an existing write */
+    private[scalanotation] def withTypedFieldValues(
+        write: NamedTupleWrite,
+        factory: TypedFactory.OfProduct[?]
+    ): NamedTupleWrite = new:
+      def fieldValue(value: Any, index: Int): Any                   = write.fieldValue(value, index)
+      override def stringFieldValue(value: Any, index: Int): String =
+        factory.stringFieldValue(value, index)
+      override def charFieldValue(value: Any, index: Int): Char =
+        factory.charFieldValue(value, index)
+      override def intFieldValue(value: Any, index: Int): Int =
+        factory.intFieldValue(value, index)
+      override def longFieldValue(value: Any, index: Int): Long =
+        factory.longFieldValue(value, index)
+      override def floatFieldValue(value: Any, index: Int): Float =
+        factory.floatFieldValue(value, index)
+      override def doubleFieldValue(value: Any, index: Int): Double =
+        factory.doubleFieldValue(value, index)
+      override def booleanFieldValue(value: Any, index: Int): Boolean =
+        factory.booleanFieldValue(value, index)
+
   trait TupleWrite:
     def size(value: Any): Int
     def elementValue(value: Any, index: Int): Any
+
+    // typed element accessors — see [[NamedTupleWrite]]; the defaults delegate to elementValue.
+    // Runtime tuples store their elements boxed, so these only pay off for custom tuple-like
+    // writes over unboxed storage.
+    def stringElementValue(value: Any, index: Int): String =
+      elementValue(value, index).asInstanceOf[String]
+    def charElementValue(value: Any, index: Int): Char =
+      elementValue(value, index).asInstanceOf[Char]
+    def intElementValue(value: Any, index: Int): Int =
+      elementValue(value, index).asInstanceOf[Int]
+    def longElementValue(value: Any, index: Int): Long =
+      elementValue(value, index).asInstanceOf[Long]
+    def floatElementValue(value: Any, index: Int): Float =
+      elementValue(value, index).asInstanceOf[Float]
+    def doubleElementValue(value: Any, index: Int): Double =
+      elementValue(value, index).asInstanceOf[Double]
+    def booleanElementValue(value: Any, index: Int): Boolean =
+      elementValue(value, index).asInstanceOf[Boolean]
 
   object TupleWrite:
     val productLike: TupleWrite = new:
@@ -527,6 +586,28 @@ object RawSchema:
   trait VectorWrite:
     def size(value: Any): Int
     def iterator(value: Any): Iterator[Any]
+
+  /** A [[VectorWrite]] with random access. The renderer prefers the indexed accessors over
+    * [[VectorWrite.iterator]], pulling primitive elements — e.g. from an `Array[Int]` — without
+    * boxing. The typed accessor defaults delegate to [[elementValue]].
+    */
+  trait IndexedVectorWrite extends VectorWrite:
+    def elementValue(value: Any, index: Int): Any
+
+    def stringElementValue(value: Any, index: Int): String =
+      elementValue(value, index).asInstanceOf[String]
+    def charElementValue(value: Any, index: Int): Char =
+      elementValue(value, index).asInstanceOf[Char]
+    def intElementValue(value: Any, index: Int): Int =
+      elementValue(value, index).asInstanceOf[Int]
+    def longElementValue(value: Any, index: Int): Long =
+      elementValue(value, index).asInstanceOf[Long]
+    def floatElementValue(value: Any, index: Int): Float =
+      elementValue(value, index).asInstanceOf[Float]
+    def doubleElementValue(value: Any, index: Int): Double =
+      elementValue(value, index).asInstanceOf[Double]
+    def booleanElementValue(value: Any, index: Int): Boolean =
+      elementValue(value, index).asInstanceOf[Boolean]
 
   object VectorWrite:
     def from[A, Elem](size0: A => Int, iterator0: A => Iterator[Elem]): VectorWrite = new:

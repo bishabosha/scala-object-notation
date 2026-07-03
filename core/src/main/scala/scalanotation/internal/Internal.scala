@@ -487,6 +487,74 @@ private[scalanotation] object PublicInternal {
       repr
     def finish(repr: mutable.ArrayBuilder.ofChar): Array[Char] = repr.result()
 
+  // specialized array writes — the write-side mirror of the specialized array builders: the typed
+  // `xElementValue` override reads the unboxed primitive straight from the array, so an element is
+  // never boxed on the way to the renderer
+  object IntArrayWrite extends RawSchema.IndexedVectorWrite:
+    def size(value: Any): Int                     = value.asInstanceOf[Array[Int]].length
+    def elementValue(value: Any, index: Int): Any = value.asInstanceOf[Array[Int]](index)
+    def iterator(value: Any): Iterator[Any]       =
+      value.asInstanceOf[Array[Int]].iterator.asInstanceOf[Iterator[Any]]
+    override def intElementValue(value: Any, index: Int): Int =
+      value.asInstanceOf[Array[Int]](index)
+
+  object LongArrayWrite extends RawSchema.IndexedVectorWrite:
+    def size(value: Any): Int                     = value.asInstanceOf[Array[Long]].length
+    def elementValue(value: Any, index: Int): Any = value.asInstanceOf[Array[Long]](index)
+    def iterator(value: Any): Iterator[Any]       =
+      value.asInstanceOf[Array[Long]].iterator.asInstanceOf[Iterator[Any]]
+    override def longElementValue(value: Any, index: Int): Long =
+      value.asInstanceOf[Array[Long]](index)
+
+  object FloatArrayWrite extends RawSchema.IndexedVectorWrite:
+    def size(value: Any): Int                     = value.asInstanceOf[Array[Float]].length
+    def elementValue(value: Any, index: Int): Any = value.asInstanceOf[Array[Float]](index)
+    def iterator(value: Any): Iterator[Any]       =
+      value.asInstanceOf[Array[Float]].iterator.asInstanceOf[Iterator[Any]]
+    override def floatElementValue(value: Any, index: Int): Float =
+      value.asInstanceOf[Array[Float]](index)
+
+  object DoubleArrayWrite extends RawSchema.IndexedVectorWrite:
+    def size(value: Any): Int                     = value.asInstanceOf[Array[Double]].length
+    def elementValue(value: Any, index: Int): Any = value.asInstanceOf[Array[Double]](index)
+    def iterator(value: Any): Iterator[Any]       =
+      value.asInstanceOf[Array[Double]].iterator.asInstanceOf[Iterator[Any]]
+    override def doubleElementValue(value: Any, index: Int): Double =
+      value.asInstanceOf[Array[Double]](index)
+
+  object BooleanArrayWrite extends RawSchema.IndexedVectorWrite:
+    def size(value: Any): Int                     = value.asInstanceOf[Array[Boolean]].length
+    def elementValue(value: Any, index: Int): Any = value.asInstanceOf[Array[Boolean]](index)
+    def iterator(value: Any): Iterator[Any]       =
+      value.asInstanceOf[Array[Boolean]].iterator.asInstanceOf[Iterator[Any]]
+    override def booleanElementValue(value: Any, index: Int): Boolean =
+      value.asInstanceOf[Array[Boolean]](index)
+
+  object CharArrayWrite extends RawSchema.IndexedVectorWrite:
+    def size(value: Any): Int                     = value.asInstanceOf[Array[Char]].length
+    def elementValue(value: Any, index: Int): Any = value.asInstanceOf[Array[Char]](index)
+    def iterator(value: Any): Iterator[Any]       =
+      value.asInstanceOf[Array[Char]].iterator.asInstanceOf[Iterator[Any]]
+    override def charElementValue(value: Any, index: Int): Char =
+      value.asInstanceOf[Array[Char]](index)
+
+  /** Vector write for `Array[T]`/`IArray[T]`, specialized to read elements without boxing when the
+    * element schema pins `T` to a primitive. A non-atomic element schema (e.g. mapped or derived)
+    * falls back to the caller's generic iterator-based write, which is erased-safe for any array.
+    */
+  def arrayVectorWrite(
+      elementSchema: RawSchema[?],
+      fallback: RawSchema.VectorWrite
+  ): RawSchema.VectorWrite =
+    elementSchema match
+      case RawSchema.Int     => IntArrayWrite
+      case RawSchema.Long    => LongArrayWrite
+      case RawSchema.Float   => FloatArrayWrite
+      case RawSchema.Double  => DoubleArrayWrite
+      case RawSchema.Boolean => BooleanArrayWrite
+      case RawSchema.Char    => CharArrayWrite
+      case _                 => fallback
+
   /** vector read for `Array[T]`, specialized to append without boxing when `T` is primitive */
   def arrayVectorRead[T](using tag: ClassTag[T]): RawSchema.VectorRead =
     tag.runtimeClass match

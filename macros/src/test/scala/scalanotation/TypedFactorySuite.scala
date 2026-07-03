@@ -160,3 +160,52 @@ class TypedFactorySuite extends munit.FunSuite:
     check(Readers.readAs[Point]("""(x = 1, y = "two")"""))
     given BatchContext = BatchContext.local()
     check(Readers.batched.readAs[Point]("""(x = 1, y = "two")"""))
+
+  test("typed factories provide unboxed field access for derived writers"):
+    final case class AllKinds(
+        s: String,
+        c: Char,
+        i: Int,
+        l: Long,
+        f: Float,
+        d: Double,
+        b: Boolean,
+        o: Option[Int]
+    )
+
+    given TypedFactory[AllKinds] = TypedFactories.derived
+    given Configured[AllKinds]   = Configured.typed
+    given ReadWriter[AllKinds]   = ReadWriter.configured.derived
+
+    val value = AllKinds("str", 'c', -1, 2147483648L, 1.5f, 2.25, true, Some(7))
+
+    summon[ReadWriter[AllKinds]].writer.schema match
+      case nt: RawSchema.NamedTuple[?] =>
+        val write = nt.write.nn
+        // the typed accessors must be routed to the derived factory's direct field selections
+        assertEquals(write.stringFieldValue(value, 0), "str")
+        assertEquals(write.charFieldValue(value, 1), 'c')
+        assertEquals(write.intFieldValue(value, 2), -1)
+        assertEquals(write.longFieldValue(value, 3), 2147483648L)
+        assertEquals(write.floatFieldValue(value, 4), 1.5f)
+        assertEquals(write.doubleFieldValue(value, 5), 2.25)
+        assertEquals(write.booleanFieldValue(value, 6), true)
+      case other => fail(s"Expected a named tuple schema, got ${other.describeSelf}")
+
+    val rendered = Writers.write(value)
+    assertEquals(
+      rendered,
+      """(s = "str", c = 'c', i = -1, l = 2147483648L, f = 1.5f, d = 2.25, b = true, o = 7)"""
+    )
+    assertReads[AllKinds](rendered)(Result.Ok(value))
+
+  test("typed factory field access matches the boxed Product path"):
+    final case class Point(x: Int, y: Int, label: String)
+
+    given TypedFactory[Point] = TypedFactories.derived
+
+    val factory = Configured.typed[Point].typedFactories.nn.selfFactory.nn
+    val value   = Point(3, -4, "p")
+    assertEquals(factory.intFieldValue(value, 0), 3)
+    assertEquals(factory.intFieldValue(value, 1), -4)
+    assertEquals(factory.stringFieldValue(value, 2), "p")
