@@ -98,12 +98,20 @@ enum RawSchema[A]:
   ): T =
     properties.computeIfAbsent(key, _ => compute).asInstanceOf[T]
 
+  // Cached named-tuple validation: checked once per decoded record, so it must be a plain volatile
+  // read rather than a properties-map lookup. Validation is idempotent — a racing recompute stores
+  // the same value.
+  @volatile private var isValidNamedTupleCache: Result[Unit, DecodeError] | Null = null
+
   private[scalanotation] def isValidNamedTuple[T: PublicInternal.NameSet](
       pool: PublicInternal.Pool[T]
   ): Result[Unit, DecodeError] =
-    getOrComputeProperty(RawSchema.IsValidNamedTupleSchema) {
-      validateNamedTuple(pool)
-    }
+    val cached = isValidNamedTupleCache
+    if cached != null then cached
+    else
+      val computed = validateNamedTuple(pool)
+      isValidNamedTupleCache = computed
+      computed
 
   private def validateNamedTuple[T: PublicInternal.NameSet](
       pool: PublicInternal.Pool[T]
@@ -189,8 +197,7 @@ object RawSchema:
       case _ => Iterator.fill(size)("...").mkString("(", ", ", ")")
 
   final class Key[T]()
-  private val IsValidNamedTupleSchema: Key[Result[Unit, DecodeError]] = Key()
-  private val SumCaseLookup: Key[Map[String, SumCase]]                = Key()
+  private val SumCaseLookup: Key[Map[String, SumCase]] = Key()
 
   final case class Field(name: String, schema: RawSchema[?])
   final case class SumCase(name: String, schema: RawSchema[?])
