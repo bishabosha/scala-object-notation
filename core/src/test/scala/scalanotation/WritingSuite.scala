@@ -228,3 +228,60 @@ class WritingSuite extends ScalanotationSuite:
     interceptMessage[IllegalArgumentException]("requirement failed: spacing must be >= 0, got -1") {
       TextFormat.compact(-1)
     }
+
+  test("primitive arrays render through the unboxed indexed write and round-trip"):
+    type Data =
+      (
+          ints: Array[Int],
+          longs: Array[Long],
+          floats: Array[Float],
+          doubles: Array[Double],
+          flags: Array[Boolean],
+          chars: Array[Char],
+          words: Array[String]
+      )
+
+    val value: Data =
+      (
+        ints = Array(1, -2, 3),
+        longs = Array(4L, 2147483648L),
+        floats = Array(1.5f, -0.25f),
+        doubles = Array(2.25, -3.5),
+        flags = Array(true, false),
+        chars = Array('a', '\n'),
+        words = Array("x", "y\"z")
+      )
+
+    val rendered = Writers.write(value)
+    assertEquals(
+      rendered,
+      """(ints = Vector(1, -2, 3), longs = Vector(4L, 2147483648L), floats = Vector(1.5f, -0.25f),""" +
+        """ doubles = Vector(2.25, -3.5), flags = Vector(true, false), chars = Vector('a', '\n'),""" +
+        """ words = Vector("x", "y\"z"))"""
+    )
+
+    val reparsed = Readers.readAs[Data](rendered).getOrElse(fail("Expected successful reparse"))
+    assertEquals(reparsed.ints.toList, value.ints.toList)
+    assertEquals(reparsed.longs.toList, value.longs.toList)
+    assertEquals(reparsed.floats.toList, value.floats.toList)
+    assertEquals(reparsed.doubles.toList, value.doubles.toList)
+    assertEquals(reparsed.flags.toList, value.flags.toList)
+    assertEquals(reparsed.chars.toList, value.chars.toList)
+    assertEquals(reparsed.words.toList, value.words.toList)
+
+  test("immutable primitive arrays render through the unboxed indexed write"):
+    type Data = (ints: IArray[Int], doubles: IArray[Double])
+    val value: Data = (ints = IArray(7, 8), doubles = IArray(0.5))
+
+    val rendered = Writers.write(value)
+    assertEquals(rendered, "(ints = Vector(7, 8), doubles = Vector(0.5))")
+    val reparsed = Readers.readAs[Data](rendered).getOrElse(fail("Expected successful reparse"))
+    assertEquals(reparsed.ints.toList, value.ints.toList)
+    assertEquals(reparsed.doubles.toList, value.doubles.toList)
+
+  test("arrays with a mapped element schema fall back to the generic iterator write"):
+    given Writer[Int] = summon[Writer[String]].contramap[Int](_.toString)
+
+    type Data = (xs: Array[Int])
+    val rendered = Writers.write[Data]((xs = Array(1, 2)))
+    assertEquals(rendered, """(xs = Vector("1", "2"))""")

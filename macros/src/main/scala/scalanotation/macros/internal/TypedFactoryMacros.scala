@@ -123,7 +123,36 @@ private[scalanotation] object TypedFactoryMacros:
           case _                     => Apply(select, args)
         applied.asExprOf[P]
 
+      // The write-side dual of `construct`: selects the field at `index` directly off the product
+      // with a precise signature, so a primitive field is never boxed on its way to the renderer.
+      // Only fields whose type matches `F` exactly are dispatched; anything else falls back to the
+      // boxing Product path (the renderer never asks for a mismatched kind, this is a safety net).
+      def typedField[F: Type](value: Expr[Any], index: Expr[Int]): Expr[F] =
+        val target            = TypeRepr.of[F]
+        val fallback: Expr[F] =
+          '{ $value.asInstanceOf[Product].productElement($index).asInstanceOf[F] }
+        fields.zipWithIndex
+          .filter((field, _) => tpe.memberType(field).widen.dealias =:= target)
+          .foldRight(fallback) { case ((field, fieldIndex), rest) =>
+            val selected = Select('{ $value.asInstanceOf[P] }.asTerm, field).asExprOf[F]
+            '{ if $index == ${ Expr(fieldIndex) } then $selected else $rest }
+          }
+
       '{
         new TypedFactory.OfProduct[P]:
-          def fromSlots(slots: BuilderSlots): P = ${ construct('slots) }
+          def fromSlots(slots: BuilderSlots): P                         = ${ construct('slots) }
+          override def stringFieldValue(value: Any, index: Int): String =
+            ${ typedField[String]('value, 'index) }
+          override def charFieldValue(value: Any, index: Int): Char =
+            ${ typedField[Char]('value, 'index) }
+          override def intFieldValue(value: Any, index: Int): Int =
+            ${ typedField[Int]('value, 'index) }
+          override def longFieldValue(value: Any, index: Int): Long =
+            ${ typedField[Long]('value, 'index) }
+          override def floatFieldValue(value: Any, index: Int): Float =
+            ${ typedField[Float]('value, 'index) }
+          override def doubleFieldValue(value: Any, index: Int): Double =
+            ${ typedField[Double]('value, 'index) }
+          override def booleanFieldValue(value: Any, index: Int): Boolean =
+            ${ typedField[Boolean]('value, 'index) }
       }
