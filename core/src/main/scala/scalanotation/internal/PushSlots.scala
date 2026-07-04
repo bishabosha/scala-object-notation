@@ -134,6 +134,33 @@ private[scalanotation] abstract class PushSlots extends Internal.PoolHolder:
     booleanSlot = value
     lastSlotKind = SlotKind.Boolean
 
+  // Strict typed pulls: read the slot a caller knows is live from its decode plan, skipping the
+  // kind dispatch of [[pullAny]]/[[addSlot]]. Assertions document the contract without cost in
+  // production (elided like the one in [[pullStringStrict]]).
+  protected final def pullIntValue(): Int =
+    assert(lastSlotKind == SlotKind.Int, "pullIntValue called when lastSlotKind != Int")
+    intSlot
+
+  protected final def pullLongValue(): Long =
+    assert(lastSlotKind == SlotKind.Long, "pullLongValue called when lastSlotKind != Long")
+    longSlot
+
+  protected final def pullFloatValue(): Float =
+    assert(lastSlotKind == SlotKind.Float, "pullFloatValue called when lastSlotKind != Float")
+    floatSlot
+
+  protected final def pullDoubleValue(): Double =
+    assert(lastSlotKind == SlotKind.Double, "pullDoubleValue called when lastSlotKind != Double")
+    doubleSlot
+
+  protected final def pullBooleanValue(): Boolean =
+    assert(lastSlotKind == SlotKind.Boolean, "pullBooleanValue called when lastSlotKind != Boolean")
+    booleanSlot
+
+  protected final def pullCharValue(): Char =
+    assert(lastSlotKind == SlotKind.Char, "pullCharValue called when lastSlotKind != Char")
+    charSlot
+
   /** pulls the most recent push as a single value, boxing the live typed slot if necessary */
   protected final def pullAny(): Any =
     (lastSlotKind: @switch) match
