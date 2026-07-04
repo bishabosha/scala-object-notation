@@ -463,48 +463,6 @@ private[scalanotation] final class Tokenizer private[internal] (
     index = afterClose
     true
 
-  /** One-pass match of a precompiled header pattern (e.g. " sku = ") directly against the input:
-    * true with the pattern consumed, false with nothing consumed. The pattern's terminal '=' (and
-    * surrounding literal spaces) act as the identifier boundary, so a successful match consumes
-    * exactly what the flexible fused header scan would.
-    */
-  private[internal] def tryScanHeaderPattern(pattern: String): Boolean =
-    val text       = input
-    val patternLen = pattern.length
-    var i          = index
-    if i + patternLen > text.length then return false
-    fieldHeaderStart = i
-    var j = 0
-    while j < patternLen do
-      if text.charAt(i) != pattern.charAt(j) then return false
-      i += 1
-      j += 1
-    index = i
-    true
-
-  /** [[tryScanHeaderPattern]] preceded by a literal ',' — the whole `, name = ` run in one pass */
-  private[internal] def tryScanCommaHeaderPattern(pattern: String): Boolean =
-    val text = input
-    var i    = index
-    if i >= text.length || text.charAt(i) != ',' then return false
-    val saved = index
-    index = i + 1
-    if tryScanHeaderPattern(pattern) then true
-    else
-      index = saved
-      false
-
-  /** Fused scan of a record-opening `(`: true with it consumed, false with nothing consumed. */
-  private[internal] def tryScanFusedLParen(): Boolean =
-    val saved = index
-    skipTrivia()
-    if !isAtEnd && currentChar() == '(' then
-      index += 1
-      true
-    else
-      index = saved
-      false
-
   /** offset of the separator consumed by the last successful [[tryScanFusedSeparator]] */
   private[internal] var fusedSeparatorStart: Int = 0
 
@@ -1412,22 +1370,6 @@ private[scalanotation] abstract class TokenStream private[internal] (
 
   /** offset of the separator consumed by the last fused [[tryFusedSeparator]] */
   protected final def lastFusedSeparatorOffset(): Int = scanner.fusedSeparatorStart
-
-  /** Fused scan of a record-opening `(` while the stream is between tokens: true with it consumed
-    * (the stream stays between tokens), false with nothing consumed.
-    */
-  protected final def tryFusedLParen(): Boolean =
-    lookaheadCount == 0 && scanner.tryScanFusedLParen()
-
-  /** one-pass match of a precompiled `name = ` header pattern — see the flexible
-    * [[tryFuseFieldHeader]] for the contract; valid from the same states
-    */
-  protected final def tryFusedHeaderPattern(pattern: String): Boolean =
-    lookaheadCount == 0 && cur.kind != TokenKind.Eof && scanner.tryScanHeaderPattern(pattern)
-
-  /** one-pass match of `,` plus a header pattern, valid only between tokens after a fused value */
-  protected final def tryFusedCommaHeaderPattern(pattern: String): Boolean =
-    scanner.tryScanCommaHeaderPattern(pattern)
 
   // Fused primitive value scans, valid only between tokens (after a fused header): each parses
   // the literal straight off the input into the matching typed slot — no token is materialized.

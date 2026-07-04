@@ -158,7 +158,6 @@ private final class TokenDecoder private (
   def reset(input: String, debug: Boolean): this.type =
     resetStream(input, debug)
     resetSlots()
-    resetFusedState()
     namedTupleParseResult.fieldName = null
     this
 
