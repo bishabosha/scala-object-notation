@@ -477,18 +477,21 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
           var nameOffset   = 0
           if tryReadNameSlice() then
             nameOffset = sliceNameOffset()
-            var index = fieldIndex
-            while index < fields.length && plainNames(index)
-              && !sliceNameMatches(fields(index).name)
-              && allowSkip && TokenDecoder.isNullable(fields(index).schema)
-            do index += 1
-            if index < fields.length && plainNames(index) && sliceNameMatches(fields(index).name)
-            then
+            var index   = fieldIndex
+            var walking = true
+            while walking do
+              if index < fields.length && plainNames(index) then
+                if sliceNameMatches(fields(index).name) then
+                  decodedIndex = index
+                  walking = false
+                else if allowSkip && TokenDecoder.isNullable(fields(index).schema) then index += 1
+                else walking = false
+              else walking = false
+            if decodedIndex >= 0 then
               // None-fill the skipped range — every schema in it is nullable (checked in the walk)
-              while fieldIndex < index do
+              while fieldIndex < decodedIndex do
                 state = read.add(state, fieldIndex, None)
                 fieldIndex += 1
-              decodedIndex = index
               if seenFields.contains(decodedIndex) then
                 raise(makeDuplicateKnownFieldError(fields(decodedIndex).name, nameOffset))
             else
@@ -557,7 +560,7 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
               lastFieldName = expectedField.name
 
           // --- separator ---
-          tryReadSeparatorChar() match
+          tryReadSeparatorChar(')') match
             case 1 =>
               if tryConsumeRParen() then
                 closingOffset = consumedRParenOffset
@@ -1003,8 +1006,9 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
 
       advanceVectorStart(closingKind)
 
-      var values = read.init()
-      if currentKind() == closingKind then advance()
+      var values      = read.init()
+      val closingChar = if closingKind == TokenKind.RParen then ')' else ']'
+      if tryConsumeClosing(closingKind, closingChar) then ()
       else
         var indexInVector = 0
         var done          = false
@@ -1013,14 +1017,33 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
           values = addSlot(read)(values)
           indexInVector += 1
 
-          vectorElementSeparator(closingKind) match
-            case 0 => ()
-            case 1 => done = true
-            case _ => raise(expectedVectorClosingError(closingKind))
-
-        if currentKind() == closingKind then advance()
+          tryReadSeparatorChar(closingChar) match
+            case 2 => done = true // closing consumed
+            case 1 =>             // comma consumed; a trailing comma may still close the vector
+              if tryConsumeClosing(closingKind, closingChar) then done = true
+            case _ =>
+              // token fallback: a pending token (e.g. after a string value) or another shape
+              currentKind() match
+                case TokenKind.Comma =>
+                  advance()
+                  if tryConsumeClosing(closingKind, closingChar) then done = true
+                case kind if kind == closingKind =>
+                  advance()
+                  done = true
+                case _ =>
+                  raise(expectedVectorClosingError(closingKind))
 
       pushRef(read.finish(values))
+
+  /** Consumes the collection-closing token from either stream state — char-level between tokens, or
+    * the pending current token. False consumes nothing.
+    */
+  private def tryConsumeClosing(closingKind: Int, closingChar: Char): Boolean =
+    if betweenTokens then tryReadPunctChar(closingChar)
+    else if currentKind() == closingKind then
+      advance()
+      true
+    else false
 
   private def currentVectorClosingKind(): Int =
     if currentKind() == TokenKind.VectorId && peekKind() == TokenKind.LParen then TokenKind.RParen
@@ -1611,7 +1634,9 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
   protected final def decodeString(): Result[Unit, DecodeError] =
     Result.task {
       decodeStringAtom().check
-      if currentKind() == TokenKind.Plus then
+      // '+' concatenation is probed at the char level so the common single-literal case leaves the
+      // stream between tokens instead of scanning whatever follows the string
+      if (if betweenTokens then probePlusChar() else currentKind() == TokenKind.Plus) then
         val builder = StringBuilder() ++= pullStringStrict()
         while currentKind() == TokenKind.Plus do
           advance()
