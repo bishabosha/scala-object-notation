@@ -103,6 +103,28 @@ enum RawSchema[A]:
   // the same value.
   @volatile private var isValidNamedTupleCache: Result[Unit, DecodeError] | Null = null
 
+  // Which named-tuple field names the decoder may match by char-level slice comparison — decided
+  // once per schema by running the real scanner over each name (parity by construction), so it must
+  // be a plain volatile read. Idempotent under races.
+  @volatile private var plainFieldNamesCache: Array[scala.Boolean] | Null = null
+
+  private[scalanotation] def plainFieldNames: Array[scala.Boolean] =
+    val cached = plainFieldNamesCache
+    if cached != null then cached
+    else
+      val computed = this match
+        case namedTuple: RawSchema.NamedTuple[?] =>
+          val fields = namedTuple.fields
+          val plain  = new Array[scala.Boolean](fields.length)
+          var index  = 0
+          while index < fields.length do
+            plain(index) = scalanotation.internal.Tokenizer.isPlainFieldName(fields(index).name)
+            index += 1
+          plain
+        case _ => RawSchema.NoPlainFieldNames
+      plainFieldNamesCache = computed
+      computed
+
   private[scalanotation] def isValidNamedTuple[T: PublicInternal.NameSet](
       pool: PublicInternal.Pool[T]
   ): Result[Unit, DecodeError] =
@@ -189,6 +211,8 @@ object RawSchema:
   private[scalanotation] type PairSeqRead = Reader.PairSeqBuilder[?, ?, ?, ?]
 
   private[scalanotation] inline val UnsupportedRouterCase = -1
+
+  private[scalanotation] val NoPlainFieldNames: Array[scala.Boolean] = new Array[scala.Boolean](0)
 
   def describeTupleSlots(size: Int): String =
     size match
