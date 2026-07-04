@@ -491,12 +491,24 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
           else
             if headerProbe == 0 then
               nameOffset = sliceNameOffset()
-              decodedIndex =
-                resolveRecordFieldSlow(fields, plans, seenFields, allowSkip, fieldIndex, true).ok
+              decodedIndex = resolveRecordFieldSlow(
+                fields,
+                fieldPlans,
+                seenFields,
+                allowSkip,
+                fieldIndex,
+                true
+              ).ok
             else
               nameOffset = currentOffset()
-              decodedIndex =
-                resolveRecordFieldSlow(fields, plans, seenFields, allowSkip, fieldIndex, false).ok
+              decodedIndex = resolveRecordFieldSlow(
+                fields,
+                fieldPlans,
+                seenFields,
+                allowSkip,
+                fieldIndex,
+                false
+              ).ok
 
             if decodedIndex > fieldIndex then
               // None-fill the skipped range — the resolver validated that every schema in it is a
@@ -527,7 +539,7 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
 
           // --- separator ---
           tryReadSeparatorChar(')') match
-            case 1 => () // comma consumed; the next field follows
+            case 1     => () // comma consumed; the next field follows
             case 2 | 3 =>
               closingOffset = charScanOffset()
               done = true
@@ -561,12 +573,14 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
     */
   private def resolveRecordFieldSlow(
       fields: IArray[Field],
-      plans: Array[scala.Byte],
+      fieldPlans: RawSchema.FieldPlans,
       seenFields: Internal.FieldIndexSet | Null,
       allowSkip: Boolean,
       fieldIndexStart: Int,
       sliceRead: Boolean
   ): Result[Int, DecodeError] = Result.eval {
+    val plans    = fieldPlans.kinds
+    val nullable = fieldPlans.nullable
     var resolved = -1
     if sliceRead then
       val nameOffset = sliceNameOffset()
@@ -577,7 +591,7 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
           if sliceNameMatches(fields(index).name) then
             resolved = index
             walking = false
-          else if allowSkip && TokenDecoder.isNullable(fields(index).schema) then index += 1
+          else if allowSkip && nullable(index) then index += 1
           else walking = false
         else walking = false
       if resolved >= 0 then
@@ -598,7 +612,7 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
         val expectedBeforeSkip = if index < fields.length then fields(index) else null
         while index < fields.length
           && !currentFieldNameMatches(fields(index).name)
-          && TokenDecoder.isNullable(fields(index).schema)
+          && nullable(index)
         do index += 1
 
         if index >= fields.length then
@@ -713,8 +727,37 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
         added(decodeString())(read.addString(state, index, pullStringStrict()))
       case RawSchema.FieldPlan.CharV =>
         added(decodeChar())(read.addChar(state, index, pullCharValue()))
+      case RawSchema.FieldPlan.RecordV =>
+        added(decodeNestedRecord(schema))(addSlot(read)(state, index))
+      case RawSchema.FieldPlan.VectorV =>
+        added(decodeNestedVector(schema))(addSlot(read)(state, index))
+      case RawSchema.FieldPlan.OptionV =>
+        added(decodeNestedOption(schema))(addSlot(read)(state, index))
       case _ =>
         added(decodeBase(schema))(addSlot(read)(state, index))
+
+  // Straight dispatches for planned composite values — the same nesting guard and decoders
+  // decodeBase reaches, minus its two schema matches per value.
+  private def decodeNestedRecord(schema: RawSchema[?]): Result[Unit, DecodeError] =
+    if !enterNesting() then Result.Err(nestingLimitError().atToken(currentSpan()))
+    else
+      val result = decodeNamedTuple(schema.asInstanceOf[RawSchema.NamedTuple[?]])
+      exitNesting()
+      result
+
+  private def decodeNestedVector(schema: RawSchema[?]): Result[Unit, DecodeError] =
+    if !enterNesting() then Result.Err(nestingLimitError().atToken(currentSpan()))
+    else
+      val result = decodeVector(schema.asInstanceOf[RawSchema.Vector[?, ?]])
+      exitNesting()
+      result
+
+  private def decodeNestedOption(schema: RawSchema[?]): Result[Unit, DecodeError] =
+    if !enterNesting() then Result.Err(nestingLimitError().atToken(currentSpan()))
+    else
+      val result = decodeOption(schema.asInstanceOf[RawSchema.Option[?]], allowTopLevelArrow = true)
+      exitNesting()
+      result
 
   /** [[decodeValueInto]] for vector elements — same single dispatch onto the vector builder */
   private def decodeElementInto[Elem, Repr, A](
@@ -743,6 +786,12 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
         added(decodeString())(read.addString(values, pullStringStrict()))
       case RawSchema.FieldPlan.CharV =>
         added(decodeChar())(read.addChar(values, pullCharValue()))
+      case RawSchema.FieldPlan.RecordV =>
+        added(decodeNestedRecord(schema))(addSlot(read)(values))
+      case RawSchema.FieldPlan.VectorV =>
+        added(decodeNestedVector(schema))(addSlot(read)(values))
+      case RawSchema.FieldPlan.OptionV =>
+        added(decodeNestedOption(schema))(addSlot(read)(values))
       case _ =>
         added(decodeBase(schema))(addSlot(read)(values))
 
@@ -1190,7 +1239,7 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
           indexInVector += 1
 
           tryReadSeparatorChar(closingChar) match
-            case 1     => () // comma consumed; the next element follows
+            case 1     => ()          // comma consumed; the next element follows
             case 2 | 3 => done = true // closing consumed (possibly via a trailing comma)
             case _     =>
               // token fallback: a pending token (e.g. after a string value) or another shape
