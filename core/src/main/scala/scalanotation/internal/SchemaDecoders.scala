@@ -456,32 +456,49 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
           DecodeError.ExpectedType(schema.describeSelf, describeCurrent()).atToken(currentSpan())
         )
 
-      val fusable                      = schema.headerFusableFields
+      val plan                         = schema.fusedFieldPlan
       var index                        = 0
       var lastFieldName: String | Null = null
       var closingOffset                = 0
       var done                         = false
       while !done do
-        val expectedName: String | Null =
-          if index < fields.length && fusable(index) then fields(index).name else null
+        val planKind: Int =
+          if index < fields.length then plan(index) else RawSchema.FusePlan.None
         var decodedField = false
-        if advanceExpectingFieldHeader(expectedName) then
-          // header fused: the field name matched fields(index) and '=' was consumed
+        if planKind != RawSchema.FusePlan.None && tryFuseFieldHeader(fields(index).name) then
+          // header fused: the field name matched fields(index) and '=' was consumed; a primitive
+          // field value is parsed straight off the input into its typed slot — no token at all
           val field = fields(index)
-          decodeBase(field.schema) match
-            case Result.Err(error) =>
-              raise(
-                error
-                  .atPath(s".${field.name}")
-                  .atToken(spanAt(lastFieldHeaderOffset()))
-              )
-            case _ =>
-              state = addSlot(read)(state, index)
-              lastFieldName = field.name
-              index += 1
-              decodedField = true
+          val valueFused = (planKind: @scala.annotation.switch) match
+            case RawSchema.FusePlan.IntValue     => tryFusedIntValue()
+            case RawSchema.FusePlan.LongValue    => tryFusedLongValue()
+            case RawSchema.FusePlan.DoubleValue  => tryFusedDoubleValue()
+            case RawSchema.FusePlan.BooleanValue => tryFusedBooleanValue()
+            case RawSchema.FusePlan.StringValue  => tryFusedStringValue()
+            case _                               => false
+          if valueFused then
+            scanPendingToken() // the separator becomes the current token
+            state = addSlot(read)(state, index)
+            lastFieldName = field.name
+            index += 1
+            decodedField = true
+          else
+            scanPendingToken() // unusual literal: rescan the value generically
+            decodeBase(field.schema) match
+              case Result.Err(error) =>
+                raise(
+                  error
+                    .atPath(s".${field.name}")
+                    .atToken(spanAt(lastFieldHeaderOffset()))
+                )
+              case _ =>
+                state = addSlot(read)(state, index)
+                lastFieldName = field.name
+                index += 1
+                decodedField = true
         else
-          // generic fallback: current is the next token, scanned normally
+          // generic fallback: scan and inspect the next token normally
+          advance()
           currentKind() match
             case TokenKind.RParen =>
               // `()` or a trailing comma before the closing paren
