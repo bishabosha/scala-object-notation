@@ -245,7 +245,7 @@ private[scalanotation] final class Tokenizer private[internal] (
     * plan-eligible ([[Tokenizer.isPlainFieldName]]), which also rules out '_'-ending names, so the
     * boundary check below is exactly the identifier end the generic scanner would find.
     */
-  private[internal] def scanFieldHeader(expected: String): Int =
+  private[internal] def scanFieldHeader(expected: Array[Char]): Int =
     // Fully locals-based: trivia, the name match, trivia and '=' run over register-resident
     // text/index with a single write-back, since this is the hottest scan in record decoding.
     // Unusual whitespace (comments, unicode spaces) diverts to the general reader path.
@@ -257,7 +257,7 @@ private[scalanotation] final class Tokenizer private[internal] (
     val from = i
     val len  = expected.length
     var j    = 0
-    while j < len && i < length && text.charAt(i) == expected.charAt(j) do
+    while j < len && i < length && text.charAt(i) == expected(j) do
       i += 1
       j += 1
     if j == len && (i >= length || !isIdentifierPart(text.charAt(i))) then
@@ -1462,7 +1462,7 @@ private[scalanotation] abstract class TokenStream private[internal] (
     * name consumed as a slice (readable via [[sliceNameMatches]]/[[sliceNameOffset]]), -1 with
     * nothing consumed (a pending token or no plain identifier next).
     */
-  protected final def expectFieldHeader(expected: String): Int =
+  protected final def expectFieldHeader(expected: Array[Char]): Int =
     if hasToken then -1 else scanner.scanFieldHeader(expected)
 
   /** Scans a plain-identifier field name as an offset slice — no token, no classification. On

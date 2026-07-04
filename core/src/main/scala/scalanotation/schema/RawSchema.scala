@@ -107,26 +107,28 @@ enum RawSchema[A]:
   // (decided once per schema by running the real scanner over each name — parity by construction)
   // and which primitive decoder the field value dispatches to directly. Plain volatile read;
   // idempotent under races.
-  @volatile private var fieldPlansCache: Array[scala.Byte] | Null = null
+  @volatile private var fieldPlansCache: RawSchema.FieldPlans | Null = null
 
-  private[scalanotation] def fieldPlans: Array[scala.Byte] =
+  private[scalanotation] def fieldPlans: RawSchema.FieldPlans =
     val cached = fieldPlansCache
     if cached != null then cached
     else
       val computed = this match
         case namedTuple: RawSchema.NamedTuple[?] =>
-          val fields = namedTuple.fields
-          val plans  = new Array[scala.Byte](fields.length)
-          var index  = 0
+          val fields    = namedTuple.fields
+          val kinds     = new Array[scala.Byte](fields.length)
+          val nameChars = new Array[Array[scala.Char]](fields.length)
+          var index     = 0
           while index < fields.length do
             val field = fields(index)
-            plans(index) =
+            kinds(index) =
               if scalanotation.internal.Tokenizer.isPlainFieldName(field.name) then
                 RawSchema.valuePlanOf(field.schema)
               else RawSchema.FieldPlan.TokenName
+            nameChars(index) = field.name.toCharArray
             index += 1
-          plans
-        case _ => RawSchema.NoFieldPlans
+          RawSchema.FieldPlans(kinds, nameChars)
+        case _ => RawSchema.FieldPlans.Empty
       fieldPlansCache = computed
       computed
 
@@ -217,7 +219,16 @@ object RawSchema:
 
   private[scalanotation] inline val UnsupportedRouterCase = -1
 
-  private[scalanotation] val NoFieldPlans: Array[scala.Byte] = new Array[scala.Byte](0)
+  /** flat per-field decode plan: [[FieldPlan]] codes and the field names as char arrays (plain
+    * array loads in the header compare, no per-char String machinery)
+    */
+  private[scalanotation] final class FieldPlans(
+      val kinds: Array[scala.Byte],
+      val nameChars: Array[Array[scala.Char]]
+  )
+
+  private[scalanotation] object FieldPlans:
+    val Empty: FieldPlans = FieldPlans(Array.emptyByteArray, Array.empty)
 
   /** entry values of [[fieldPlans]]: how a field's name is matched and its value dispatched */
   private[scalanotation] object FieldPlan:
