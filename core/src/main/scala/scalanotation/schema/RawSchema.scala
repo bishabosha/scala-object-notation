@@ -103,6 +103,28 @@ enum RawSchema[A]:
   // the same value.
   @volatile private var isValidNamedTupleCache: Result[Unit, DecodeError] | Null = null
 
+  // Which named-tuple fields are eligible for the fused header scan (plain, non-keyword,
+  // unquoted identifiers) — computed once per schema by running the real scanner over each name.
+  @volatile private var headerFusableCache: Array[scala.Boolean] | Null = null
+
+  /** per-field eligibility for the decoder's fused `name =` header scan; cached per schema */
+  private[scalanotation] def headerFusableFields: Array[scala.Boolean] =
+    val cached = headerFusableCache
+    if cached != null then cached
+    else
+      val computed = this match
+        case namedTuple: RawSchema.NamedTuple[?] =>
+          val fields = namedTuple.fields
+          val flags  = new Array[scala.Boolean](fields.length)
+          var index  = 0
+          while index < fields.length do
+            flags(index) = scalanotation.internal.Tokenizer.scansAsPlainFieldName(fields(index).name)
+            index += 1
+          flags
+        case _ => Array.emptyBooleanArray
+      headerFusableCache = computed
+      computed
+
   private[scalanotation] def isValidNamedTuple[T: PublicInternal.NameSet](
       pool: PublicInternal.Pool[T]
   ): Result[Unit, DecodeError] =
