@@ -238,6 +238,230 @@ private[scalanotation] final class Tokenizer private[internal] (
     index += 1
     true
 
+  // results of the fused value scanners below — read immediately by the caller
+  private[internal] var fusedNum: Long          = 0L
+  private[internal] var fusedDbl: Double        = 0.0
+  private[internal] var fusedStr: String | Null = null
+
+  /** Fused scan of a plain signed decimal integer literal into [[fusedNum]], range-checked for
+    * Int or Long. Anything unusual — separators, prefixes, suffixes (except `l`/`L` when
+    * `acceptLongSuffix`), non-decimal shapes, out-of-range magnitudes — restores the position and
+    * returns false so the generic token path takes over with identical semantics.
+    */
+  private[internal] def tryScanFusedInteger(acceptLongSuffix: Boolean, isLong: Boolean): Boolean =
+    val saved = index
+    skipTrivia()
+    val length = input.length
+    var i      = index
+    if i >= length then
+      index = saved
+      return false
+    var negative = false
+    if input.charAt(i) == '-' then
+      negative = true
+      i += 1
+    if i >= length then
+      index = saved
+      return false
+    var ch = input.charAt(i)
+    if ch < '0' || ch > '9' then
+      index = saved
+      return false
+    // '0x' / '0b' prefixed literals take the generic path
+    if ch == '0' && i + 1 < length then
+      val marker = input.charAt(i + 1)
+      if marker == 'x' || marker == 'X' || marker == 'b' || marker == 'B' then
+        index = saved
+        return false
+    // accumulate negatively so MinValue's magnitude stays representable — see negatedValueAt
+    val limit =
+      if negative then (if isLong then Long.MinValue else scala.Int.MinValue.toLong)
+      else (if isLong then -Long.MaxValue else -scala.Int.MaxValue.toLong)
+    val multmin = limit / 10
+    var result  = 0L
+    while i < length && { ch = input.charAt(i); ch >= '0' && ch <= '9' } do
+      val digit = ch - '0'
+      if result < multmin then
+        index = saved
+        return false
+      result = result * 10
+      if result < limit + digit then
+        index = saved
+        return false
+      result -= digit
+      i += 1
+    if i < length then
+      val next = input.charAt(i)
+      if next == 'l' || next == 'L' then
+        if !acceptLongSuffix then
+          index = saved
+          return false
+        i += 1
+        if i < length && (isIdentifierPart(input.charAt(i)) || input.charAt(i) == '.') then
+          index = saved
+          return false
+      else if next == '.' || isIdentifierPart(next) then
+        // a float shape, separator, exponent, suffix, or junk — let the generic scanner decide
+        index = saved
+        return false
+    fusedNum = if negative then result else -result
+    index = i
+    true
+
+  /** Fused scan of a plain decimal floating literal (optional fraction and exponent, no
+    * separators, no suffix) into [[fusedDbl]]. Restores the position and returns false on any
+    * other shape. Non-finite results fail exactly like the generic scanner.
+    *
+    * When the mantissa fits 2^53 and the decimal exponent stays within ±22 the value is computed
+    * with one exact multiply or divide by a power of ten — both operands are exactly
+    * representable, so the single rounding is IEEE-correct and Double.parseDouble (which trims,
+    * substrings, and reparses) is skipped. Everything else falls back to parseDouble.
+    */
+  private[internal] def tryScanFusedDouble(): Boolean =
+    val saved = index
+    skipTrivia()
+    val length = input.length
+    var i      = index
+    if i >= length then
+      index = saved
+      return false
+    var negative = false
+    if input.charAt(i) == '-' then
+      negative = true
+      i += 1
+    val magnitudeStart = i
+    var ch             = if i < length then input.charAt(i) else ' '
+    if ch < '0' || ch > '9' then
+      index = saved
+      return false
+    if ch == '0' && i + 1 < length then
+      val marker = input.charAt(i + 1)
+      if marker == 'x' || marker == 'X' || marker == 'b' || marker == 'B' then
+        index = saved
+        return false
+    var sawDotOrExponent = false
+    // mantissa digits accumulate into a long; more than 18 significant digits falls back
+    var mantissa       = 0L
+    var mantissaDigits = 0
+    var exp10          = 0
+    while i < length && { ch = input.charAt(i); ch >= '0' && ch <= '9' } do
+      if mantissaDigits < 18 then
+        mantissa = mantissa * 10 + (ch - '0')
+        if mantissa != 0 then mantissaDigits += 1
+      else exp10 += 1 // integer digits beyond the mantissa shift the exponent up
+      i += 1
+    if i < length && input.charAt(i) == '.' then
+      // a fraction requires at least one digit after the dot; otherwise generic handles it
+      if i + 1 >= length || { val d = input.charAt(i + 1); d < '0' || d > '9' } then
+        index = saved
+        return false
+      sawDotOrExponent = true
+      i += 1
+      while i < length && { ch = input.charAt(i); ch >= '0' && ch <= '9' } do
+        if mantissaDigits < 18 then
+          mantissa = mantissa * 10 + (ch - '0')
+          if mantissa != 0 then mantissaDigits += 1
+          exp10 -= 1
+        else
+          // fraction digits beyond the mantissa can affect rounding: force the fallback
+          mantissaDigits = 19
+        i += 1
+    if i < length && { ch = input.charAt(i); ch == 'e' || ch == 'E' } then
+      var j           = i + 1
+      var expNegative = false
+      if j < length && { val s = input.charAt(j); s == '+' || s == '-' } then
+        expNegative = input.charAt(j) == '-'
+        j += 1
+      if j >= length || { val d = input.charAt(j); d < '0' || d > '9' } then
+        index = saved
+        return false
+      sawDotOrExponent = true
+      var explicitExp = 0
+      i = j
+      while i < length && { ch = input.charAt(i); ch >= '0' && ch <= '9' } do
+        if explicitExp < 10000 then explicitExp = explicitExp * 10 + (ch - '0')
+        i += 1
+      exp10 += (if expNegative then -explicitExp else explicitExp)
+    // a pure integer shape decodes through the Int-literal promotion (with its range check) on
+    // the generic path — accepting it here would diverge for out-of-Int-range digits
+    if !sawDotOrExponent then
+      index = saved
+      return false
+    if i < length then
+      val next = input.charAt(i)
+      if next == '.' || isIdentifierPart(next) then
+        index = saved
+        return false
+    val magnitude =
+      if mantissaDigits <= 18 && mantissa <= (1L << 53) && exp10 >= -22 && exp10 <= 22 then
+        if exp10 >= 0 then mantissa.toDouble * Tokenizer.exactPow10(exp10)
+        else mantissa.toDouble / Tokenizer.exactPow10(-exp10)
+      else java.lang.Double.parseDouble(input.substring(magnitudeStart, i))
+    if !java.lang.Double.isFinite(magnitude) then
+      // identical failure to parseDoubleLiteral on the generic path
+      index = saved
+      throw TokenizeException(
+        s"Invalid Double literal '${input.substring(magnitudeStart, i)}'",
+        magnitudeStart
+      )
+    fusedDbl = if negative then -magnitude else magnitude
+    index = i
+    true
+
+  /** Fused scan of `true`/`false`: 1, 0, or -1 (no match, position restored). */
+  private[internal] def tryScanFusedBoolean(): Int =
+    val saved = index
+    skipTrivia()
+    val length = input.length
+    val i      = index
+    if i + 4 <= length
+      && input.charAt(i) == 't' && input.charAt(i + 1) == 'r'
+      && input.charAt(i + 2) == 'u' && input.charAt(i + 3) == 'e'
+      && (i + 4 == length || !isIdentifierPart(input.charAt(i + 4)))
+    then
+      index = i + 4
+      1
+    else if i + 5 <= length
+      && input.charAt(i) == 'f' && input.charAt(i + 1) == 'a'
+      && input.charAt(i + 2) == 'l' && input.charAt(i + 3) == 's'
+      && input.charAt(i + 4) == 'e'
+      && (i + 5 == length || !isIdentifierPart(input.charAt(i + 5)))
+    then
+      index = i + 5
+      0
+    else
+      index = saved
+      -1
+
+  /** Fused scan of an escape-free string literal into [[fusedStr]]. Escapes, dedented strings,
+    * and a following `+` (concatenation) restore the position and return false.
+    */
+  private[internal] def tryScanFusedString(): Boolean =
+    val saved = index
+    skipTrivia()
+    val length = input.length
+    var i      = index
+    if i >= length || input.charAt(i) != '"' then
+      index = saved
+      return false
+    i += 1
+    val contentStart = i
+    var ch           = '\u0020'
+    while i < length && { ch = input.charAt(i); ch != '"' && ch != '\\' } do i += 1
+    if i >= length || ch == '\\' then
+      index = saved
+      return false
+    val afterClose = i + 1
+    // a following '+' means concatenation — only decodeString's generic path handles that
+    index = afterClose
+    skipTrivia()
+    if !isAtEnd && currentChar() == '+' then
+      index = saved
+      return false
+    fusedStr = input.substring(contentStart, i)
+    index = afterClose
+    true
+
   /** Scan the next token into the slot fields. Throws [[TokenizeException]] on malformed input. */
   def scanNext(): Unit =
     skipTrivia()
@@ -716,6 +940,25 @@ private[scalanotation] final class Tokenizer private[internal] (
       case other => fail(s"Unsupported escape sequence \\$other")
 
   private def skipTrivia(): Unit =
+    // Locals-based hot loop: gaps between tokens are almost always zero or one ' ', so the common
+    // exit is reached with one or two char loads and a single stored index. Comments and unusual
+    // whitespace (unicode spaces, file separators) divert to the slow helper.
+    val text   = input
+    val length = text.length
+    var i      = index
+    while i < length do
+      val ch = text.charAt(i)
+      if ch == ' ' || (ch >= '\t' && ch <= '\r') then i += 1
+      else if ch == '/' || ch > 127 || (ch >= 28 && ch <= 31) then
+        index = i
+        skipTriviaSlow()
+        return
+      else
+        index = i
+        return
+    index = i
+
+  private def skipTriviaSlow(): Unit =
     var keepGoing = true
     while keepGoing && !isAtEnd do
       skipWhitespace()
@@ -820,6 +1063,17 @@ private[scalanotation] final class Tokenizer private[internal] (
     throw TokenizeException(message, offset)
 
 private[scalanotation] object Tokenizer:
+  /** 10^0 .. 10^22 — every entry is exactly representable as a Double */
+  private[internal] val exactPow10: Array[Double] =
+    val table = new Array[Double](23)
+    var i     = 0
+    var value = 1.0
+    while i < table.length do
+      table(i) = value
+      value *= 10.0
+      i += 1
+    table
+
   private val KW_val        = "val"
   private val KW_package    = "package"
   private val KW_true       = "true"
@@ -1063,25 +1317,58 @@ private[scalanotation] abstract class TokenStream private[internal] (
       cur = otherBuffer
       lookaheadCount = 1
 
-  /** Fused advance over a `<expected> =` field header: when the upcoming input matches, both
-    * header tokens are consumed in one scanner pass and the value token becomes current — true is
-    * returned. Otherwise (or when `expected` is null or lookahead is buffered) this is a plain
-    * [[advance]] and false is returned; the caller proceeds generically from the next token.
+  /** Fused consumption of a `<expected> =` field header in one scanner pass, skipping token
+    * classification and materialization for both tokens. On success the stream is *between*
+    * tokens: the caller must follow up with a fused value scan or [[scanPendingToken]]. On
+    * failure nothing is consumed and false is returned — the caller advances generically.
     * `expected` must satisfy [[Tokenizer.scansAsPlainFieldName]].
     */
-  protected final def advanceExpectingFieldHeader(expected: String | Null): Boolean =
-    if expected != null && lookaheadCount == 0 && cur.kind != TokenKind.Eof
-      && scanner.tryScanFieldHeader(expected)
-    then
-      scanNextToken()
-      cur = scanner.out
-      true
-    else
-      advance()
-      false
+  protected final def tryFuseFieldHeader(expected: String): Boolean =
+    lookaheadCount == 0 && cur.kind != TokenKind.Eof && scanner.tryScanFieldHeader(expected)
 
-  /** offset of the identifier consumed by the last fused [[advanceExpectingFieldHeader]] */
+  /** scans the pending token generically after a fused header or value — restores the stream's
+    * current-token invariant
+    */
+  protected final def scanPendingToken(): Unit =
+    scanNextToken()
+    cur = scanner.out
+
+  /** offset of the identifier consumed by the last fused [[tryFuseFieldHeader]] */
   protected final def lastFieldHeaderOffset(): Int = scanner.fieldHeaderStart
+
+  // Fused primitive value scans, valid only between tokens (after a fused header): each parses
+  // the literal straight off the input into the matching typed slot — no token is materialized.
+  // On failure nothing is consumed; the caller rescans generically via scanPendingToken.
+  protected final def tryFusedIntValue(): Boolean =
+    if scanner.tryScanFusedInteger(acceptLongSuffix = false, isLong = false) then
+      pushInt(scanner.fusedNum.toInt)
+      true
+    else false
+
+  protected final def tryFusedLongValue(): Boolean =
+    if scanner.tryScanFusedInteger(acceptLongSuffix = true, isLong = true) then
+      pushLong(scanner.fusedNum)
+      true
+    else false
+
+  protected final def tryFusedDoubleValue(): Boolean =
+    if scanner.tryScanFusedDouble() then
+      pushDouble(scanner.fusedDbl)
+      true
+    else false
+
+  protected final def tryFusedBooleanValue(): Boolean =
+    scanner.tryScanFusedBoolean() match
+      case -1 => false
+      case v  =>
+        pushBoolean(v == 1)
+        true
+
+  protected final def tryFusedStringValue(): Boolean =
+    if scanner.tryScanFusedString() then
+      pushString(scanner.fusedStr.nn)
+      true
+    else false
 
   // payload accessors — happy path, unboxed where primitive. Int and Long take the sign decoded
   // from the preceding token: the value is interpreted here, in place from the input slice, so
