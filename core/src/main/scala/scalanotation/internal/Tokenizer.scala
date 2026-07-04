@@ -958,7 +958,12 @@ private[scalanotation] abstract class TokenStream private[internal] (
   /** number of tokens scanned beyond the current one (0, 1, or 2) */
   private var lookaheadCount = 0
 
-  if scanOnInit then scanNextToken() // initialize the current token
+  /** Whether `cur` holds a scanned, un-consumed token. Scanning is lazy: [[advance]] only marks the
+    * current token consumed, and the next [[currentKind]] (or any other token accessor) scans on
+    * demand. Between tokens (`hasToken == false`) the char-level readers below can consume
+    * structure directly off the input without materializing tokens at all.
+    */
+  private var hasToken = false
 
   /** Re-aims this stream at the start of a new input, for reuse from a pool. */
   protected def resetStream(newInput: String, newDebug: Boolean): Unit =
@@ -970,7 +975,7 @@ private[scalanotation] abstract class TokenStream private[internal] (
     bufB.str = null
     cur = scanner.out
     lookaheadCount = 0
-    scanNextToken()
+    hasToken = false
 
   private def scanNextToken(): Unit =
     scanner.scanNext()
@@ -979,6 +984,12 @@ private[scalanotation] abstract class TokenStream private[internal] (
         Tokenizer.materialize(input, scanner)
       ) // TODO: should allow logger customization in the future
 
+  private def ensureToken(): Unit =
+    if !hasToken then
+      scanNextToken()
+      cur = scanner.out
+      hasToken = true
+
   protected final def addExperimentalFlags(flags: Int): Unit =
     experimentalFlags |= flags
     scanner.setExperimentalFlags(experimentalFlags)
@@ -986,13 +997,19 @@ private[scalanotation] abstract class TokenStream private[internal] (
   protected final def experimentalFlagEnabled(flag: Int): Boolean =
     ExperimentalFlags.enabled(experimentalFlags, flag)
 
-  protected def currentKind(): Int   = cur.kind
-  protected def currentOffset(): Int = cur.start
+  protected def currentKind(): Int =
+    ensureToken()
+    cur.kind
+
+  protected def currentOffset(): Int =
+    ensureToken()
+    cur.start
 
   private def otherBuffer: TokenSlots =
     if cur eq bufA then bufB else bufA
 
   private def ensureLookahead(count: Int): Unit =
+    ensureToken()
     while lookaheadCount < count do
       // preserve the newest un-consumed token before the scanner overwrites its slots; the first
       // peek moves the current token itself into a buffer
@@ -1011,8 +1028,8 @@ private[scalanotation] abstract class TokenStream private[internal] (
     scanner.out.kind
 
   protected def advance(): Unit =
-    if lookaheadCount == 0 then
-      if scanner.out.kind != TokenKind.Eof then scanNextToken()
+    ensureToken()
+    if lookaheadCount == 0 then hasToken = false
     else if lookaheadCount == 1 then
       cur = scanner.out
       lookaheadCount = 0
@@ -1023,6 +1040,7 @@ private[scalanotation] abstract class TokenStream private[internal] (
   // payload accessors — happy path, unboxed where primitive. Int and Long take the sign decoded
   // from the preceding token: the value is interpreted here, in place from the input slice, so
   // MinValue (whose magnitude overflows the positive range) parses once the sign is known.
+  // Callers reach these after inspecting currentKind(), so the token is already scanned.
   protected def currentName(): String        = nameAt(cur)
   protected def currentStringValue(): String = cur.str.nn
   protected def currentCharValue(): Char     = cur.num.toChar
@@ -1085,9 +1103,14 @@ private[scalanotation] abstract class TokenStream private[internal] (
 
   // error-path materialization
   protected def spanAt(offset: Int): DecodeError.Span = Tokenizer.spanAt(input, offset)
-  protected def currentSpan(): DecodeError.Span       = spanAt(cur.start)
 
-  protected def describeCurrent(): String = describeSlot(cur)
+  protected def currentSpan(): DecodeError.Span =
+    ensureToken()
+    spanAt(cur.start)
+
+  protected def describeCurrent(): String =
+    ensureToken()
+    describeSlot(cur)
 
   private def describeSlot(slots: TokenSlots): String =
     def raw = input.substring(slots.start, slots.end)
