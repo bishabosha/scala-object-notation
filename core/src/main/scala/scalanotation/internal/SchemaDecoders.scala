@@ -426,11 +426,134 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
   ): Result[Unit, DecodeError] =
     withRead(schema, _.read) { read =>
       withBorrowSlots(read.slotsFactory) { slots =>
-        fieldIndexSetPool.withBorrowed { seenFields =>
-          decodeNamedTupleWithResources(schema, read, slots, seenFields)
-        }
+        if schema.allowSkippedNullableFields then
+          fieldIndexSetPool.withBorrowed { seenFields =>
+            decodeNamedTupleWithResources(schema, read, slots, seenFields)
+          }
+        else decodeNamedTupleOrderedFused(schema, read, slots)
       }
     }
+
+  /** Fast path for schemas without skipped fields: fields must arrive exactly in schema order, so
+    * each `name =` header is consumed by the scanner's fused match against the expected name
+    * ([[advanceExpectingFieldHeader]]) — no token classification, no name materialization, and no
+    * seen-field bookkeeping on the happy path. Any deviation (mismatched, quoted, or keyword-like
+    * names, buffered lookahead, closing parens) falls back to the generic per-token logic with the
+    * same errors as [[decodeNamedTupleWithResources]].
+    */
+  private def decodeNamedTupleOrderedFused(
+      schema: RawSchema.NamedTuple[?],
+      read: RawSchema.NamedTupleRead,
+      slots: scalanotation.BuilderSlots | Null
+  ): Result[Unit, DecodeError] =
+    Result.task {
+      val fields = schema.fields
+      schema.isValidNamedTuple(namesPool).check
+      var state: read.State = read.init(fields.length, slots)
+
+      if currentKind() != TokenKind.LParen then
+        raise(
+          DecodeError.ExpectedType(schema.describeSelf, describeCurrent()).atToken(currentSpan())
+        )
+
+      val fusable                      = schema.headerFusableFields
+      var index                        = 0
+      var lastFieldName: String | Null = null
+      var closingOffset                = 0
+      var done                         = false
+      while !done do
+        val expectedName: String | Null =
+          if index < fields.length && fusable(index) then fields(index).name else null
+        var decodedField = false
+        if advanceExpectingFieldHeader(expectedName) then
+          // header fused: the field name matched fields(index) and '=' was consumed
+          val field = fields(index)
+          decodeBase(field.schema) match
+            case Result.Err(error) =>
+              raise(
+                error
+                  .atPath(s".${field.name}")
+                  .atToken(spanAt(lastFieldHeaderOffset()))
+              )
+            case _ =>
+              state = addSlot(read)(state, index)
+              lastFieldName = field.name
+              index += 1
+              decodedField = true
+        else
+          // generic fallback: current is the next token, scanned normally
+          currentKind() match
+            case TokenKind.RParen =>
+              // `()` or a trailing comma before the closing paren
+              closingOffset = currentOffset()
+              if index == 0 && fields.nonEmpty then
+                raise(DecodeError.UnitValueNotAllowed().atToken(currentSpan()))
+              advance()
+              done = true
+            case kind if isFieldNameStart(kind) =>
+              val nameOffset = currentOffset()
+              if index >= fields.length then
+                raise(orderedFieldError(fields, index, nameOffset, null))
+              val expectedField = fields(index)
+              if !currentFieldNameMatches(expectedField.name) then
+                raise(orderedFieldError(fields, index, nameOffset, expectedField.name))
+              parseNamedFieldStartNoPush().check
+              decodeBase(expectedField.schema) match
+                case Result.Err(error) =>
+                  raise(
+                    error
+                      .atPath(s".${expectedField.name}")
+                      .atToken(spanAt(nameOffset))
+                  )
+                case _ =>
+                  state = addSlot(read)(state, index)
+                  lastFieldName = expectedField.name
+                  index += 1
+                  decodedField = true
+            case _ =>
+              raise(DecodeError.ExpectedFieldName(describeCurrent()).atToken(currentSpan()))
+
+        if decodedField then
+          currentKind() match
+            case TokenKind.Comma =>
+              () // the next loop iteration consumes the following header or the closing paren
+            case TokenKind.RParen =>
+              closingOffset = currentOffset()
+              advance()
+              done = true
+            case _ =>
+              raise(DecodeError.ExpectedRParen(describeCurrent()).atToken(currentSpan()))
+
+      if index != fields.length then
+        raise(
+          fieldCountMismatchAtClosing(
+            fields,
+            namedTupleParseResult.push(index, lastFieldName, closingOffset),
+            lastFieldName
+          )
+        )
+      else pushRef(read.finish(state))
+    }
+
+  /** Cold path: classifies an out-of-order field in an ordered decode. The fields decoded so far
+    * are exactly `fields(0 until seenCount)`, so a repeated name is reported as a duplicate;
+    * anything else is a count or order mismatch.
+    */
+  private def orderedFieldError(
+      fields: IArray[Field],
+      seenCount: Int,
+      nameOffset: Int,
+      expectedName: String | Null
+  ): DecodeError =
+    var index = 0
+    val limit = math.min(seenCount, fields.length)
+    while index < limit do
+      val name = fields(index).name
+      if currentFieldNameMatches(name) then return makeDuplicateKnownFieldError(name, nameOffset)
+      index += 1
+    if expectedName == null then
+      currentFieldCountMismatchError(nameOffset, fields.length, seenCount + 1)
+    else currentFieldOrderMismatchError(nameOffset, expectedName)
 
   private def decodeNamedTupleWithResources(
       schema: RawSchema.NamedTuple[?],
