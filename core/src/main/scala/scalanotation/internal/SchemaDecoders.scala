@@ -457,7 +457,9 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
       val allowSkip = schema.allowSkippedNullableFields
       if seenFields != null then seenFields.reset(fields.length)
       schema.isValidNamedTuple(namesPool).check
-      val plans             = schema.fieldPlans
+      val fieldPlans        = schema.fieldPlans
+      val plans             = fieldPlans.kinds
+      val nameChars         = fieldPlans.nameChars
       var state: read.State = read.init(fields.length, slots)
 
       if !tryReadPunctChar('(') then consumeRecordLParenToken(schema).check
@@ -480,7 +482,7 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
           var nameOffset   = 0
           val headerProbe  =
             if fieldIndex < fields.length && plans(fieldIndex) != RawSchema.FieldPlan.TokenName
-            then expectFieldHeader(fields(fieldIndex).name)
+            then expectFieldHeader(nameChars(fieldIndex))
             else if tryReadNameSlice() then 0
             else -1
           if headerProbe == 1 then
