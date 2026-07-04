@@ -431,30 +431,65 @@ private[scalanotation] final class Tokenizer private[internal] (
     * consumed. `expected == null` skips the header match and scans a slice directly.
     */
   private[internal] def scanSeparatorHeader(closing: Char, expected: Array[Char] | Null): Int =
-    skipTrivia()
-    if isAtEnd then 0
+    // One fully locals-based pass over `, name =` (or the closing): trivia, separator, trivia,
+    // name match and '=' with no sub-scan calls on the happy path. Comments and unusual
+    // whitespace stop the plain-space loops and divert to the general routines (identical
+    // outcomes, just slower); the codes match the doc above.
+    val text   = chars
+    val length = text.length
+    var i      = index
+    while i < length && { val ch = text(i); ch == ' ' || (ch >= '\t' && ch <= '\r') } do i += 1
+    if i >= length then
+      index = i
+      0
     else
-      val ch = currentChar()
-      if ch == closing then
-        charScanStart = index
-        index += 1
+      val ch0 = text(i)
+      if ch0 == closing then
+        charScanStart = i
+        index = i + 1
         2
-      else if ch != ',' then 0
+      else if ch0 != ',' then
+        index = i
+        0
       else
-        charScanStart = index
-        index += 1
-        skipTrivia()
-        if !isAtEnd && currentChar() == closing then
-          charScanStart = index
-          index += 1
+        charScanStart = i
+        i += 1
+        while i < length && { val ch = text(i); ch == ' ' || (ch >= '\t' && ch <= '\r') } do
+          i += 1
+        if i >= length then
+          index = i
+          1
+        else if text(i) == closing then
+          charScanStart = i
+          index = i + 1
           3
         else if expected != null then
-          scanFieldHeader(expected) match
-            case 1 => 4
-            case 0 => 5
-            case _ => 1
-        else if scanIdentSlice() then 5
-        else 1
+          // inline header match — the body of scanFieldHeader over the already-skipped position
+          val from = i
+          val len  = expected.length
+          var j    = 0
+          while j < len && i < length && text(i) == expected(j) do
+            i += 1
+            j += 1
+          if j == len && (i >= length || !isIdentifierPart(text(i))) then
+            out.start = from
+            out.end = i
+            while i < length && { val ch = text(i); ch == ' ' || (ch >= '\t' && ch <= '\r') } do
+              i += 1
+            if i < length && text(i) == '=' && (i + 1 >= length || !isOperatorPart(text(i + 1)))
+            then
+              charScanStart = i
+              index = i + 1
+              4
+            else
+              index = i
+              if scanEqualsChar() then 4 else 5
+          else
+            index = from
+            if scanIdentSlice() then 5 else 1
+        else
+          index = i
+          if scanIdentSlice() then 5 else 1
 
   /** Consumes a single expected punctuation char: false consumes nothing. */
   private[internal] def scanPunctChar(expected: Char): Boolean =
