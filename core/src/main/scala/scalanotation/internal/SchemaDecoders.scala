@@ -478,7 +478,7 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
           // cold resolver over the same characters ---
           var decodedIndex = -1
           var nameOffset   = 0
-          val headerProbe =
+          val headerProbe  =
             if fieldIndex < fields.length && plans(fieldIndex) != RawSchema.FieldPlan.TokenName
             then tryReadFieldHeader(fields(fieldIndex).name)
             else if tryReadNameSlice() then 0
@@ -548,12 +548,12 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
       else pushRef(read.finish(state))
     }
 
-  /** Cold path of the record loop's name step. Resolves the arriving field name to its schema
-    * index — walking skippable nullable fields, classifying duplicates, order and count
-    * mismatches — with the token path's exact decisions. On success the name is consumed and the
-    * caller None-fills up to the returned index (the walk here only passes skippable nullables).
-    * `sliceRead` says a plain name slice was already consumed at the char level; any deviation
-    * rewinds it and rescans generically.
+  /** Cold path of the record loop's name step. Resolves the arriving field name to its schema index
+    * — walking skippable nullable fields, classifying duplicates, order and count mismatches — with
+    * the token path's exact decisions. On success the name is consumed and the caller None-fills up
+    * to the returned index (the walk here only passes skippable nullables). `sliceRead` says a
+    * plain name slice was already consumed at the char level; any deviation rewinds it and rescans
+    * generically.
     */
   private def resolveRecordFieldSlow(
       fields: IArray[Field],
@@ -1735,9 +1735,11 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
     /** decodes a string (with `+` concatenation), pushing the value into [[stringSlot]] */
   protected final def decodeString(): Result[Unit, DecodeError] =
     Result.task {
-      if currentKind() != TokenKind.StringLit then raise(expectedTypeAtCurrent(RawSchema.String))
-      pushString(currentStringValue())
-      advance()
+      if tryScanStringDirect() then pushString(scannedStringValue())
+      else if currentKind() == TokenKind.StringLit then
+        pushString(currentStringValue())
+        advance()
+      else raise(expectedTypeAtCurrent(RawSchema.String))
       // '+' concatenation is probed at the char level so the common single-literal case leaves the
       // stream between tokens instead of scanning whatever follows the string
       if (if betweenTokens then probePlusChar() else currentKind() == TokenKind.Plus) then
@@ -1762,50 +1764,99 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
     else raise(expectedTypeAtCurrent(RawSchema.Char))
 
   protected final def decodeInt(): Result[Unit, DecodeError] = Result.task:
-    decodeSigned[Int](
-      literal = negative =>
-        currentKind() match
-          case TokenKind.IntLit => currentIntValue(negative)
-          case _                => raise(expectedTypeAtCurrent(RawSchema.Int)),
-      store = v => pushInt(v)
-    )
+    val negative = tryReadSignChar()
+    if tryScanNumberDirect() then
+      if scannedKind() == TokenKind.IntLit then pushInt(currentIntValue(negative))
+      else
+        adoptScannedToken()
+        raise(expectedTypeAtCurrent(RawSchema.Int))
+    else if negative then
+      // the sign probe saw a digit, so the direct scan cannot have failed
+      raise(expectedTypeAtCurrent(RawSchema.Int))
+    else
+      decodeSigned[Int](
+        literal = negative =>
+          currentKind() match
+            case TokenKind.IntLit => currentIntValue(negative)
+            case _                => raise(expectedTypeAtCurrent(RawSchema.Int)),
+        store = v => pushInt(v)
+      )
 
   protected final def decodeLong(): Result[Unit, DecodeError] = Result.task:
-    decodeSigned[Long](
-      literal = negative =>
-        currentKind() match
-          case TokenKind.LongLit => currentLongValue(negative)
-          case TokenKind.IntLit  => currentIntValue(negative).toLong
-          case _                 => raise(expectedTypeAtCurrent(RawSchema.Long)),
-      store = v => pushLong(v)
-    )
+    val negative = tryReadSignChar()
+    if tryScanNumberDirect() then
+      scannedKind() match
+        case TokenKind.LongLit => pushLong(currentLongValue(negative))
+        case TokenKind.IntLit  => pushLong(currentIntValue(negative).toLong)
+        case _                 =>
+          adoptScannedToken()
+          raise(expectedTypeAtCurrent(RawSchema.Long))
+    else if negative then raise(expectedTypeAtCurrent(RawSchema.Long))
+    else
+      decodeSigned[Long](
+        literal = negative =>
+          currentKind() match
+            case TokenKind.LongLit => currentLongValue(negative)
+            case TokenKind.IntLit  => currentIntValue(negative).toLong
+            case _                 => raise(expectedTypeAtCurrent(RawSchema.Long)),
+        store = v => pushLong(v)
+      )
 
   protected final def decodeFloat(): Result[Unit, DecodeError] = Result.task:
-    decodeSigned[Float](
-      literal = negative =>
-        currentKind() match
-          case TokenKind.FloatLit =>
-            val magnitude = currentFloatValue()
-            if negative then -magnitude else magnitude
-          case TokenKind.IntLit =>
-            val value = currentIntValue(negative)
-            if NumericPromotions.isExactFloat(value) then value.toFloat
-            else raise(expectedTypeAtCurrent(RawSchema.Float))
-          case _ => raise(expectedTypeAtCurrent(RawSchema.Float)),
-      store = v => pushFloat(v)
-    )
+    val negative = tryReadSignChar()
+    if tryScanNumberDirect() then
+      scannedKind() match
+        case TokenKind.FloatLit =>
+          val magnitude = currentFloatValue()
+          pushFloat(if negative then -magnitude else magnitude)
+        case TokenKind.IntLit =>
+          val value = currentIntValue(negative)
+          if NumericPromotions.isExactFloat(value) then pushFloat(value.toFloat)
+          else
+            adoptScannedToken()
+            raise(expectedTypeAtCurrent(RawSchema.Float))
+        case _ =>
+          adoptScannedToken()
+          raise(expectedTypeAtCurrent(RawSchema.Float))
+    else if negative then raise(expectedTypeAtCurrent(RawSchema.Float))
+    else
+      decodeSigned[Float](
+        literal = negative =>
+          currentKind() match
+            case TokenKind.FloatLit =>
+              val magnitude = currentFloatValue()
+              if negative then -magnitude else magnitude
+            case TokenKind.IntLit =>
+              val value = currentIntValue(negative)
+              if NumericPromotions.isExactFloat(value) then value.toFloat
+              else raise(expectedTypeAtCurrent(RawSchema.Float))
+            case _ => raise(expectedTypeAtCurrent(RawSchema.Float)),
+        store = v => pushFloat(v)
+      )
 
   protected final def decodeDouble(): Result[Unit, DecodeError] = Result.task:
-    decodeSigned[Double](
-      literal = negative =>
-        currentKind() match
-          case TokenKind.DoubleLit =>
-            val magnitude = currentDoubleValue()
-            if negative then -magnitude else magnitude
-          case TokenKind.IntLit => currentIntValue(negative).toDouble
-          case _                => raise(expectedTypeAtCurrent(RawSchema.Double)),
-      store = v => pushDouble(v)
-    )
+    val negative = tryReadSignChar()
+    if tryScanNumberDirect() then
+      scannedKind() match
+        case TokenKind.DoubleLit =>
+          val magnitude = currentDoubleValue()
+          pushDouble(if negative then -magnitude else magnitude)
+        case TokenKind.IntLit => pushDouble(currentIntValue(negative).toDouble)
+        case _                =>
+          adoptScannedToken()
+          raise(expectedTypeAtCurrent(RawSchema.Double))
+    else if negative then raise(expectedTypeAtCurrent(RawSchema.Double))
+    else
+      decodeSigned[Double](
+        literal = negative =>
+          currentKind() match
+            case TokenKind.DoubleLit =>
+              val magnitude = currentDoubleValue()
+              if negative then -magnitude else magnitude
+            case TokenKind.IntLit => currentIntValue(negative).toDouble
+            case _                => raise(expectedTypeAtCurrent(RawSchema.Double)),
+        store = v => pushDouble(v)
+      )
 
   protected final def decodeBoolean(): Result[Unit, DecodeError] =
     Result.task:
