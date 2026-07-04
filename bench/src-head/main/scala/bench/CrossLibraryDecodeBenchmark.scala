@@ -111,11 +111,33 @@ class CrossLibraryDecodeBenchmark:
   @Benchmark def zioBlocksPrimitive10Bytes: Any =
     zioPrimitive10Codec.decode(jsonPrimitive10Bytes)
 
-  // compact SON rendering (no spaces), comparable in density to the compact JSON inputs
-  private val sonFlatCompactInput      = sonFlatInput.replace(" = ", "=").replace(", ", ",")
-  private val sonPrimitive10CompactInput =
-    sonPrimitive10Input.replace(" = ", "=").replace(", ", ",")
-  private val sonOrdersCompactInput = sonOrdersInput.replace(" = ", "=").replace(", ", ",")
+  // Compact SON rendering (minimal whitespace), comparable in density to the compact JSON
+  // inputs. `=` directly followed by `-` would scan as one operator token (Scala tokenization),
+  // so a single space stays in front of negative literals — the most compact valid form.
+  private def compactSon(son: String): String =
+    son.replace(" = ", "=").replace(", ", ",").replace("=-", "= -")
+
+  private val sonFlatCompactInput        = compactSon(sonFlatInput)
+  private val sonPrimitive10CompactInput = compactSon(sonPrimitive10Input)
+  private val sonOrdersCompactInput      = compactSon(sonOrdersInput)
+
+  // one-time guard: a benchmark over inputs that fail to decode measures fail-fast errors and
+  // reports meaningless (fast) numbers — every SON input must round-trip Ok
+  locally {
+    def requireOk(name: String, result: Any): Unit = result match
+      case steps.result.Result.Err(error) =>
+        throw new IllegalStateException(s"benchmark input $name does not decode: $error")
+      case _ => ()
+    requireOk("sonFlat", Readers.batched.readAs[TypedFlatClass](sonFlatInput))
+    requireOk("sonFlatCompact", Readers.batched.readAs[TypedFlatClass](sonFlatCompactInput))
+    requireOk("sonPrimitive10", Readers.batched.readAs[TypedPrimitive10Class](sonPrimitive10Input))
+    requireOk(
+      "sonPrimitive10Compact",
+      Readers.batched.readAs[TypedPrimitive10Class](sonPrimitive10CompactInput)
+    )
+    requireOk("sonOrders100", Readers.batched.readAs[OrderBatch](sonOrdersInput))
+    requireOk("sonOrders100Compact", Readers.batched.readAs[OrderBatch](sonOrdersCompactInput))
+  }
 
   @Benchmark def sonFlatCompact: Any =
     Readers.batched.readAs[TypedFlatClass](sonFlatCompactInput)
