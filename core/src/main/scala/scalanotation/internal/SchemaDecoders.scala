@@ -427,117 +427,192 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
     withRead(schema, _.read) { read =>
       withBorrowSlots(read.slotsFactory) { slots =>
         fieldIndexSetPool.withBorrowed { seenFields =>
-          decodeNamedTupleWithResources(schema, read, slots, seenFields)
+          decodeRecordFields(schema, read, slots, seenFields)
         }
       }
     }
 
-  private def decodeNamedTupleWithResources(
+  /** Decodes one named-tuple record with a single loop covering both ordered and
+    * skipped-nullable-field schemas. The happy path reads structure at the char level — a
+    * plain-identifier name slice compared against the expected field name, `=`, the value's own
+    * token, and the `,`/`)` separator — so a primitive field materializes exactly one token (its
+    * value). Any deviation (pending tokens, non-plain names, mismatches) rewinds and falls back to
+    * the token path over the same characters, preserving the generic loop's semantics and errors.
+    */
+  private def decodeRecordFields(
       schema: RawSchema.NamedTuple[?],
       read: RawSchema.NamedTupleRead,
       slots: scalanotation.BuilderSlots | Null,
       seenFields: Internal.FieldIndexSet
   ): Result[Unit, DecodeError] =
     Result.task {
-      val fields = schema.fields
+      val fields    = schema.fields
+      val allowSkip = schema.allowSkippedNullableFields
       seenFields.reset(fields.length)
       schema.isValidNamedTuple(namesPool).check
-      var state: read.State            = read.init(fields.length, slots)
-      var fieldIndex                   = 0
+      val plainNames        = schema.plainFieldNames
+      var state: read.State = read.init(fields.length, slots)
+
+      if !tryReadPunctChar('(') then
+        if currentKind() == TokenKind.LParen then advance()
+        else
+          raise(
+            DecodeError.ExpectedType(schema.describeSelf, describeCurrent()).atToken(currentSpan())
+          )
+
+      var fieldIndex                   = 0 // the next expected schema field
+      var decodedCount                 = 0 // fields actually present in the input
       var lastFieldName: String | Null = null
+      var closingOffset                = 0
 
-      val parsedResult =
-        parseKnownNamedTupleStructure(schema, allowEmpty = fields.isEmpty) {
-          (nameOffset, parsedFieldIndex) =>
-            Result.task {
-              val decodedIndex = {
-                if schema.allowSkippedNullableFields then
-                  val expectedBeforeSkip =
-                    if fieldIndex < fields.length then fields(fieldIndex) else null
-                  while fieldIndex < fields.length
-                    && !currentFieldNameMatches(fields(fieldIndex).name)
-                    && TokenDecoder.isNullable(fields(fieldIndex).schema)
-                  do
-                    state = read.add(state, fieldIndex, None)
-                    fieldIndex += 1
+      if tryConsumeRParen() then
+        closingOffset = consumedRParenOffset
+        if fields.nonEmpty then
+          raise(DecodeError.UnitValueNotAllowed().atToken(spanAt(closingOffset)))
+      else
+        var done = false
+        while !done do
+          // --- field name: char-level slice against the expected field, else the token path ---
+          var decodedIndex = -1
+          var nameOffset   = 0
+          if tryReadNameSlice() then
+            nameOffset = sliceNameOffset()
+            var index = fieldIndex
+            while index < fields.length && plainNames(index)
+              && !sliceNameMatches(fields(index).name)
+              && allowSkip && TokenDecoder.isNullable(fields(index).schema)
+            do index += 1
+            if index < fields.length && plainNames(index) && sliceNameMatches(fields(index).name)
+            then
+              // None-fill the skipped range — every schema in it is nullable (checked in the walk)
+              while fieldIndex < index do
+                state = read.add(state, fieldIndex, None)
+                fieldIndex += 1
+              decodedIndex = index
+              if seenFields.contains(decodedIndex) then
+                raise(makeDuplicateKnownFieldError(fields(decodedIndex).name, nameOffset))
+            else
+              // a mismatch, a non-plain expected name, or the end of the schema: rescan the name
+              // as a generic token and classify through the token path below
+              rescanNameSliceAsToken()
 
-                  if fieldIndex >= fields.length then
-                    duplicateKnownFieldError(fields, seenFields, nameOffset, null).check
-                    if expectedBeforeSkip == null then
-                      raise(
-                        currentFieldCountMismatchError(
-                          nameOffset,
-                          fields.length,
-                          parsedFieldIndex + 1
-                        )
-                      )
-                    else
-                      raise(
-                        currentFieldOrderMismatchError(
-                          nameOffset,
-                          expectedBeforeSkip.name
-                        )
-                      )
-                  else
-                    val expectedField = fields(fieldIndex)
-                    if currentFieldNameMatches(expectedField.name) then fieldIndex
-                    else
-                      duplicateKnownFieldError(fields, seenFields, nameOffset, null).check
-                      raise(
-                        currentFieldOrderMismatchError(nameOffset, expectedField.name)
-                      )
-                else if parsedFieldIndex >= fields.length then
+          if decodedIndex < 0 then
+            // --- token path: identical decisions to the previous generic loop ---
+            nameOffset = currentOffset()
+            if !isFieldNameStart(currentKind()) then
+              raise(DecodeError.ExpectedFieldName(describeCurrent()).atToken(currentSpan()))
+            decodedIndex = {
+              if allowSkip then
+                val expectedBeforeSkip =
+                  if fieldIndex < fields.length then fields(fieldIndex) else null
+                while fieldIndex < fields.length
+                  && !currentFieldNameMatches(fields(fieldIndex).name)
+                  && TokenDecoder.isNullable(fields(fieldIndex).schema)
+                do
+                  state = read.add(state, fieldIndex, None)
+                  fieldIndex += 1
+
+                if fieldIndex >= fields.length then
                   duplicateKnownFieldError(fields, seenFields, nameOffset, null).check
-                  raise(
-                    currentFieldCountMismatchError(
-                      nameOffset,
-                      fields.length,
-                      parsedFieldIndex + 1
+                  if expectedBeforeSkip == null then
+                    raise(
+                      currentFieldCountMismatchError(nameOffset, fields.length, decodedCount + 1)
                     )
-                  )
+                  else raise(currentFieldOrderMismatchError(nameOffset, expectedBeforeSkip.name))
                 else
-                  val expectedField = fields(parsedFieldIndex)
-                  if currentFieldNameMatches(expectedField.name) then parsedFieldIndex
+                  val expectedField = fields(fieldIndex)
+                  if currentFieldNameMatches(expectedField.name) then fieldIndex
                   else
                     duplicateKnownFieldError(fields, seenFields, nameOffset, null).check
                     raise(currentFieldOrderMismatchError(nameOffset, expectedField.name))
-              }
-
-              if seenFields.contains(decodedIndex) then
-                raise(makeDuplicateKnownFieldError(fields(decodedIndex).name, nameOffset))
+              else if fieldIndex >= fields.length then
+                duplicateKnownFieldError(fields, seenFields, nameOffset, null).check
+                raise(currentFieldCountMismatchError(nameOffset, fields.length, decodedCount + 1))
               else
-                val expectedField = fields(decodedIndex)
-                parseNamedFieldStartNoPush() match
-                  case err: Result.Err[DecodeError] => breakErr(err)
-                  case _                            =>
-                    decodeBase(expectedField.schema) match
-                      case Result.Err(error) =>
-                        raise(
-                          error
-                            .atPath(s".${expectedField.name}")
-                            .atToken(spanAt(nameOffset))
-                        )
-                      case _ =>
-                        state = addSlot(read)(state, decodedIndex)
-                        seenFields.mark(decodedIndex)
-                        fieldIndex = decodedIndex + 1
-                        lastFieldName = expectedField.name
+                val expectedField = fields(fieldIndex)
+                if currentFieldNameMatches(expectedField.name) then fieldIndex
+                else
+                  duplicateKnownFieldError(fields, seenFields, nameOffset, null).check
+                  raise(currentFieldOrderMismatchError(nameOffset, expectedField.name))
             }
-        }
+            if seenFields.contains(decodedIndex) then
+              raise(makeDuplicateKnownFieldError(fields(decodedIndex).name, nameOffset))
+            advance() // consume the field-name token
 
-      parsedResult match
-        case err: Result.Err[DecodeError]  => breakErr(err)
-        case parsed: NamedTupleParseResult =>
-          if schema.allowSkippedNullableFields then
-            state = fillTrailingSkippedNullableFields(read)(fields, state, fieldIndex)
-            fieldIndex = pullSkipFillIndex()
+          // --- '=' ---
+          if !tryReadEqualsChar() then
+            if currentKind() == TokenKind.Equals then advance()
+            else raise(DecodeError.ExpectedEquals(describeCurrent()).atToken(currentSpan()))
 
-          val decodedFieldCount =
-            if schema.allowSkippedNullableFields then fieldIndex else parsed.fieldCount
-          if decodedFieldCount != fields.length then
-            raise(fieldCountMismatchAtClosing(fields, parsed, lastFieldName))
-          else pushRef(read.finish(state))
+          // --- value ---
+          val expectedField = fields(decodedIndex)
+          decodeBase(expectedField.schema) match
+            case Result.Err(error) =>
+              raise(error.atPath(s".${expectedField.name}").atToken(spanAt(nameOffset)))
+            case _ =>
+              state = addSlot(read)(state, decodedIndex)
+              seenFields.mark(decodedIndex)
+              fieldIndex = decodedIndex + 1
+              decodedCount += 1
+              lastFieldName = expectedField.name
+
+          // --- separator ---
+          tryReadSeparatorChar() match
+            case 1 =>
+              if tryConsumeRParen() then
+                closingOffset = consumedRParenOffset
+                done = true
+            case 2 =>
+              closingOffset = charScanOffset()
+              done = true
+            case _ =>
+              currentKind() match
+                case TokenKind.Comma =>
+                  advance()
+                  if currentKind() == TokenKind.RParen then
+                    closingOffset = currentOffset()
+                    advance()
+                    done = true
+                case TokenKind.RParen =>
+                  closingOffset = currentOffset()
+                  advance()
+                  done = true
+                case _ =>
+                  raise(DecodeError.ExpectedRParen(describeCurrent()).atToken(currentSpan()))
+
+      if allowSkip then
+        state = fillTrailingSkippedNullableFields(read)(fields, state, fieldIndex)
+        fieldIndex = pullSkipFillIndex()
+
+      val decodedFieldCount = if allowSkip then fieldIndex else decodedCount
+      if decodedFieldCount != fields.length then
+        raise(
+          fieldCountMismatchAtClosing(
+            fields,
+            namedTupleParseResult.push(decodedCount, lastFieldName, closingOffset),
+            lastFieldName
+          )
+        )
+      else pushRef(read.finish(state))
     }
+
+  /** offset of the `)` consumed by the most recent successful [[tryConsumeRParen]] */
+  private var consumedRParenOffset = 0
+
+  /** Consumes a closing `)` from either stream state — char-level between tokens, or the pending
+    * current token. False consumes nothing.
+    */
+  private def tryConsumeRParen(): Boolean =
+    if betweenTokens then
+      if tryReadPunctChar(')') then
+        consumedRParenOffset = charScanOffset()
+        true
+      else false
+    else if currentKind() == TokenKind.RParen then
+      consumedRParenOffset = currentOffset()
+      advance()
+      true
+    else false
 
   private def fillTrailingSkippedNullableFields(read: RawSchema.NamedTupleRead)(
       fields: IArray[Field],
