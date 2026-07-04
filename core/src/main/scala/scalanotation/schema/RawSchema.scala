@@ -118,6 +118,7 @@ enum RawSchema[A]:
           val fields    = namedTuple.fields
           val kinds     = new Array[scala.Byte](fields.length)
           val nameChars = new Array[Array[scala.Char]](fields.length)
+          val nullable  = new Array[scala.Boolean](fields.length)
           var index     = 0
           while index < fields.length do
             val field = fields(index)
@@ -126,8 +127,9 @@ enum RawSchema[A]:
                 RawSchema.valuePlanOf(field.schema)
               else RawSchema.FieldPlan.TokenName
             nameChars(index) = field.name.toCharArray
+            nullable(index) = scalanotation.internal.TokenDecoder.isNullable(field.schema)
             index += 1
-          RawSchema.FieldPlans(kinds, nameChars)
+          RawSchema.FieldPlans(kinds, nameChars, nullable)
         case _ => RawSchema.FieldPlans.Empty
       fieldPlansCache = computed
       computed
@@ -219,21 +221,23 @@ object RawSchema:
 
   private[scalanotation] inline val UnsupportedRouterCase = -1
 
-  /** flat per-field decode plan: [[FieldPlan]] codes and the field names as char arrays (plain
-    * array loads in the header compare, no per-char String machinery)
+  /** Flat per-field decode plan: [[FieldPlan]] codes, the field names as char arrays (plain array
+    * loads in the header compare, no per-char String machinery), and precomputed nullability so
+    * skippable-field resolution never re-derives it from the schema.
     */
   private[scalanotation] final class FieldPlans(
       val kinds: Array[scala.Byte],
-      val nameChars: Array[Array[scala.Char]]
+      val nameChars: Array[Array[scala.Char]],
+      val nullable: Array[scala.Boolean]
   )
 
   private[scalanotation] object FieldPlans:
-    val Empty: FieldPlans = FieldPlans(Array.emptyByteArray, Array.empty)
+    val Empty: FieldPlans = FieldPlans(Array.emptyByteArray, Array.empty, Array.empty)
 
   /** entry values of [[fieldPlans]]: how a field's name is matched and its value dispatched */
   private[scalanotation] object FieldPlan:
-    inline val TokenName = 0 // name not slice-matchable: the whole field goes the token path
-    inline val Other     = 1 // plain name; value through the general dispatcher
+    inline val TokenName = 0  // name not slice-matchable: the whole field goes the token path
+    inline val Other     = 1  // plain name; value through the general dispatcher
     inline val IntV      = 2
     inline val LongV     = 3
     inline val DoubleV   = 4
@@ -241,18 +245,24 @@ object RawSchema:
     inline val BooleanV  = 6
     inline val StringV   = 7
     inline val CharV     = 8
+    inline val RecordV   = 9  // a named tuple: dispatches straight to the record decoder
+    inline val VectorV   = 10 // a vector: dispatches straight to the vector decoder
+    inline val OptionV   = 11 // an option: dispatches straight to the option decoder
 
   /** the [[FieldPlan]] dispatch code for a value of `schema` (independent of any field name) */
   private[scalanotation] def valuePlanOf(schema: RawSchema[?]): scala.Byte =
     schema match
-      case RawSchema.Int     => FieldPlan.IntV
-      case RawSchema.Long    => FieldPlan.LongV
-      case RawSchema.Double  => FieldPlan.DoubleV
-      case RawSchema.Float   => FieldPlan.FloatV
-      case RawSchema.Boolean => FieldPlan.BooleanV
-      case RawSchema.String  => FieldPlan.StringV
-      case RawSchema.Char    => FieldPlan.CharV
-      case _                 => FieldPlan.Other
+      case RawSchema.Int              => FieldPlan.IntV
+      case RawSchema.Long             => FieldPlan.LongV
+      case RawSchema.Double           => FieldPlan.DoubleV
+      case RawSchema.Float            => FieldPlan.FloatV
+      case RawSchema.Boolean          => FieldPlan.BooleanV
+      case RawSchema.String           => FieldPlan.StringV
+      case RawSchema.Char             => FieldPlan.CharV
+      case _: RawSchema.NamedTuple[?] => FieldPlan.RecordV
+      case _: RawSchema.Vector[?, ?]  => FieldPlan.VectorV
+      case _: RawSchema.Option[?]     => FieldPlan.OptionV
+      case _                          => FieldPlan.Other
 
   def describeTupleSlots(size: Int): String =
     size match
