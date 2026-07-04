@@ -103,26 +103,31 @@ enum RawSchema[A]:
   // the same value.
   @volatile private var isValidNamedTupleCache: Result[Unit, DecodeError] | Null = null
 
-  // Which named-tuple field names the decoder may match by char-level slice comparison — decided
-  // once per schema by running the real scanner over each name (parity by construction), so it must
-  // be a plain volatile read. Idempotent under races.
-  @volatile private var plainFieldNamesCache: Array[scala.Boolean] | Null = null
+  // Per-field decode plan: whether the decoder may match the name by char-level slice comparison
+  // (decided once per schema by running the real scanner over each name — parity by construction)
+  // and which primitive decoder the field value dispatches to directly. Plain volatile read;
+  // idempotent under races.
+  @volatile private var fieldPlansCache: Array[scala.Byte] | Null = null
 
-  private[scalanotation] def plainFieldNames: Array[scala.Boolean] =
-    val cached = plainFieldNamesCache
+  private[scalanotation] def fieldPlans: Array[scala.Byte] =
+    val cached = fieldPlansCache
     if cached != null then cached
     else
       val computed = this match
         case namedTuple: RawSchema.NamedTuple[?] =>
           val fields = namedTuple.fields
-          val plain  = new Array[scala.Boolean](fields.length)
+          val plans  = new Array[scala.Byte](fields.length)
           var index  = 0
           while index < fields.length do
-            plain(index) = scalanotation.internal.Tokenizer.isPlainFieldName(fields(index).name)
+            val field = fields(index)
+            plans(index) =
+              if scalanotation.internal.Tokenizer.isPlainFieldName(field.name) then
+                RawSchema.valuePlanOf(field.schema)
+              else RawSchema.FieldPlan.TokenName
             index += 1
-          plain
-        case _ => RawSchema.NoPlainFieldNames
-      plainFieldNamesCache = computed
+          plans
+        case _ => RawSchema.NoFieldPlans
+      fieldPlansCache = computed
       computed
 
   private[scalanotation] def isValidNamedTuple[T: PublicInternal.NameSet](
@@ -212,7 +217,31 @@ object RawSchema:
 
   private[scalanotation] inline val UnsupportedRouterCase = -1
 
-  private[scalanotation] val NoPlainFieldNames: Array[scala.Boolean] = new Array[scala.Boolean](0)
+  private[scalanotation] val NoFieldPlans: Array[scala.Byte] = new Array[scala.Byte](0)
+
+  /** entry values of [[fieldPlans]]: how a field's name is matched and its value dispatched */
+  private[scalanotation] object FieldPlan:
+    inline val TokenName = 0 // name not slice-matchable: the whole field goes the token path
+    inline val Other     = 1 // plain name; value through the general dispatcher
+    inline val IntV      = 2
+    inline val LongV     = 3
+    inline val DoubleV   = 4
+    inline val FloatV    = 5
+    inline val BooleanV  = 6
+    inline val StringV   = 7
+    inline val CharV     = 8
+
+  /** the [[FieldPlan]] dispatch code for a value of `schema` (independent of any field name) */
+  private[scalanotation] def valuePlanOf(schema: RawSchema[?]): scala.Byte =
+    schema match
+      case RawSchema.Int     => FieldPlan.IntV
+      case RawSchema.Long    => FieldPlan.LongV
+      case RawSchema.Double  => FieldPlan.DoubleV
+      case RawSchema.Float   => FieldPlan.FloatV
+      case RawSchema.Boolean => FieldPlan.BooleanV
+      case RawSchema.String  => FieldPlan.StringV
+      case RawSchema.Char    => FieldPlan.CharV
+      case _                 => FieldPlan.Other
 
   def describeTupleSlots(size: Int): String =
     size match
