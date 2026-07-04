@@ -616,47 +616,75 @@ private[scalanotation] final class Tokenizer private[internal] (
     out.accDigits = -1 // prefixed literals always interpret via the slow path
 
   private def scanDecimalNumber(): Unit =
-    // the digits are a slice of the input: track offsets, no per-token builder
-    var hasDot      = false
-    var hasExponent = false
+    // Locals-based walks: each literal char costs one bounds check and one load, with `index`
+    // written back once per phase. The integer-part walk accumulates the negated base-10 value
+    // alongside shape validation, so plain Int/Long literals need no second pass at consumption.
+    // Separators, unicode digits (accepted by the shape, interpreted slowly), or more than 18
+    // digits invalidate the accumulator.
+    val text   = input
+    val length = text.length
+    var i      = index
 
-    // reports a seen '_' separator via the result — assigning a captured local var from a local
-    // def would lift the var into a heap-allocated BooleanRef on every scan
-    def takeDigits(): Boolean =
-      var sawSeparator = false
-      while !isAtEnd && (currentChar().isDigit || currentChar() == '_') do
-        if currentChar() == '_' then sawSeparator = true
-        advance()
-      sawSeparator
-
-    // The integer-part walk accumulates the negated base-10 value alongside shape validation, so
-    // plain Int/Long literals need no second pass at consumption. Separators or more than 18
-    // digits invalidate the accumulator; consumers fall back to the exact slow interpretation.
+    var hasDot       = false
+    var hasExponent  = false
     var acc          = 0L
     var accDigits    = 0
     var sawSeparator = false
-    while !isAtEnd && (currentChar().isDigit || currentChar() == '_') do
-      val ch = currentChar()
-      if ch == '_' then
+
+    var walking = true
+    while walking && i < length do
+      val ch = text.charAt(i)
+      if ch >= '0' && ch <= '9' then
+        if accDigits >= 0 && accDigits < 18 then
+          acc = acc * 10 - (ch - '0')
+          accDigits += 1
+        else accDigits = -1
+        i += 1
+      else if ch == '_' then
         sawSeparator = true
         accDigits = -1
-      else if accDigits >= 0 && accDigits < 18 && ch >= '0' && ch <= '9' then
-        acc = acc * 10 - (ch - '0')
-        accDigits += 1
-      else accDigits = -1 // unicode digits and long runs interpret via the exact slow path
-      index += 1
-    if !isAtEnd && currentChar() == '.' && peekIsDigit() then
+        i += 1
+      else if ch > 127 && Character.isDigit(ch) then
+        accDigits = -1
+        i += 1
+      else walking = false
+
+    if i + 1 < length && text.charAt(i) == '.' && {
+        val d = text.charAt(i + 1)
+        (d >= '0' && d <= '9') || (d > 127 && Character.isDigit(d))
+      }
+    then
       hasDot = true
-      advance()
-      if takeDigits() then sawSeparator = true
+      i += 1
+      walking = true
+      while walking && i < length do
+        val ch = text.charAt(i)
+        if (ch >= '0' && ch <= '9') || (ch > 127 && Character.isDigit(ch)) then i += 1
+        else if ch == '_' then
+          sawSeparator = true
+          i += 1
+        else walking = false
 
-    if !isAtEnd && (currentChar() == 'e' || currentChar() == 'E') then
+    if i < length && { val ch = text.charAt(i); ch == 'e' || ch == 'E' } then
       hasExponent = true
-      advance()
-      if !isAtEnd && (currentChar() == '+' || currentChar() == '-') then advance()
-      if isAtEnd || !currentChar().isDigit then fail("Exponent requires at least one digit")
-      if takeDigits() then sawSeparator = true
+      i += 1
+      if i < length && { val ch = text.charAt(i); ch == '+' || ch == '-' } then i += 1
+      index = i
+      if i >= length || !{
+          val ch = text.charAt(i)
+          (ch >= '0' && ch <= '9') || (ch > 127 && Character.isDigit(ch))
+        }
+      then fail("Exponent requires at least one digit")
+      walking = true
+      while walking && i < length do
+        val ch = text.charAt(i)
+        if (ch >= '0' && ch <= '9') || (ch > 127 && Character.isDigit(ch)) then i += 1
+        else if ch == '_' then
+          sawSeparator = true
+          i += 1
+        else walking = false
 
+    index = i
     val digitsEnd = index
     // '\u0000' marks "no suffix" — no Option[Char] is allocated per literal
     val suffix =
