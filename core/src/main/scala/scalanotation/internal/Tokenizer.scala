@@ -153,8 +153,15 @@ private[scalanotation] final class Tokenizer private[internal] (
   private[internal] var dbl: Double        = 0.0
 
   private def sliceEquals(from: Int, until: Int, expected: String): Boolean =
+    // keywords are all short, so a plain char loop beats regionMatches' vectorized setup
     val len = until - from
-    len == expected.length && input.regionMatches(from, expected, 0, len)
+    if len != expected.length then false
+    else
+      var i = 0
+      while i < len do
+        if input.charAt(from + i) != expected.charAt(i) then return false
+        i += 1
+      true
 
   /** Scan the next token into the slot fields. Throws [[TokenizeException]] on malformed input. */
   def scanNext(): Unit =
@@ -643,7 +650,15 @@ private[scalanotation] final class Tokenizer private[internal] (
       else keepGoing = false
 
   private def skipWhitespace(): Unit =
-    while !isAtEnd && currentChar().isWhitespace do advance()
+    // ' ' and '\t'..'\r' cover virtually all whitespace in real input; Character.isWhitespace
+    // (which also accepts the unicode spaces and the file separators) only runs for the leftovers
+    while !isAtEnd do
+      val ch = currentChar()
+      if ch == ' ' || (ch >= '\t' && ch <= '\r') then index += 1
+      else if ch > 127 || (ch >= 28 && ch <= 31) then
+        if ch.isWhitespace then index += 1
+        else return
+      else return
 
   private def skipLineComment(): Unit =
     advance()
@@ -1000,9 +1015,16 @@ private[scalanotation] abstract class TokenStream private[internal] (
       case _                      => false
 
   private def sliceMatches(slot: Int, expected: String): Boolean =
+    // field names are typically a handful of chars: a plain loop beats regionMatches' setup
     val from = starts(slot)
     val len  = ends(slot) - from
-    len == expected.length && input.regionMatches(from, expected, 0, len)
+    if len != expected.length then false
+    else
+      var i = 0
+      while i < len do
+        if input.charAt(from + i) != expected.charAt(i) then return false
+        i += 1
+      true
 
   protected def currentIntValue(negative: Boolean): Int =
     Tokenizer.intValueAt(input, starts(cur), ends(cur), negative)
