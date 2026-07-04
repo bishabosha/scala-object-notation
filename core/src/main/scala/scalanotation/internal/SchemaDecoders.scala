@@ -468,7 +468,7 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
         if planKind != RawSchema.FusePlan.None && tryFuseFieldHeader(fields(index).name) then
           // header fused: the field name matched fields(index) and '=' was consumed; a primitive
           // field value is parsed straight off the input into its typed slot — no token at all
-          val field = fields(index)
+          val field      = fields(index)
           val valueFused = (planKind: @scala.annotation.switch) match
             case RawSchema.FusePlan.IntValue     => tryFusedIntValue()
             case RawSchema.FusePlan.LongValue    => tryFusedLongValue()
@@ -477,11 +477,20 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
             case RawSchema.FusePlan.StringValue  => tryFusedStringValue()
             case _                               => false
           if valueFused then
-            scanPendingToken() // the separator becomes the current token
             state = addSlot(read)(state, index)
             lastFieldName = field.name
             index += 1
-            decodedField = true
+            // the separator is fused too: a comma keeps the stream between tokens for the next
+            // header, a closing paren ends the record; anything else rescans generically
+            tryFusedSeparator() match
+              case 1 => () // comma consumed; the next iteration fuses or scans the next header
+              case 2 =>
+                closingOffset = lastFusedSeparatorOffset()
+                scanPendingToken() // establish the current token for the enclosing context
+                done = true
+              case _ =>
+                scanPendingToken()
+                decodedField = true // generic separator handling below
           else
             scanPendingToken() // unusual literal: rescan the value generically
             decodeBase(field.schema) match

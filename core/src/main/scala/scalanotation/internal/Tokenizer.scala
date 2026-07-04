@@ -170,18 +170,18 @@ private[scalanotation] final class Tokenizer private[internal] (
   // needs to preserve a token. The forwarders below keep the scanning code reading naturally.
   private[internal] val out: TokenSlots = new TokenSlots
 
-  private def kind: Int                            = out.kind
-  private def kind_=(value: Int): Unit             = out.kind = value
-  private def start: Int                           = out.start
-  private def start_=(value: Int): Unit            = out.start = value
-  private def end: Int                             = out.end
-  private def end_=(value: Int): Unit              = out.end = value
-  private def str: String | Null                   = out.str
-  private def str_=(value: String | Null): Unit    = out.str = value
-  private def num: Long                            = out.num
-  private def num_=(value: Long): Unit             = out.num = value
-  private def dbl: Double                          = out.dbl
-  private def dbl_=(value: Double): Unit           = out.dbl = value
+  private def kind: Int                         = out.kind
+  private def kind_=(value: Int): Unit          = out.kind = value
+  private def start: Int                        = out.start
+  private def start_=(value: Int): Unit         = out.start = value
+  private def end: Int                          = out.end
+  private def end_=(value: Int): Unit           = out.end = value
+  private def str: String | Null                = out.str
+  private def str_=(value: String | Null): Unit = out.str = value
+  private def num: Long                         = out.num
+  private def num_=(value: Long): Unit          = out.num = value
+  private def dbl: Double                       = out.dbl
+  private def dbl_=(value: Double): Unit        = out.dbl = value
 
   private def sliceEquals(from: Int, until: Int, expected: String): Boolean =
     // keywords are all short, so a plain char loop beats regionMatches' vectorized setup
@@ -243,8 +243,8 @@ private[scalanotation] final class Tokenizer private[internal] (
   private[internal] var fusedDbl: Double        = 0.0
   private[internal] var fusedStr: String | Null = null
 
-  /** Fused scan of a plain signed decimal integer literal into [[fusedNum]], range-checked for
-    * Int or Long. Anything unusual — separators, prefixes, suffixes (except `l`/`L` when
+  /** Fused scan of a plain signed decimal integer literal into [[fusedNum]], range-checked for Int
+    * or Long. Anything unusual — separators, prefixes, suffixes (except `l`/`L` when
     * `acceptLongSuffix`), non-decimal shapes, out-of-range magnitudes — restores the position and
     * returns false so the generic token path takes over with identical semantics.
     */
@@ -276,7 +276,8 @@ private[scalanotation] final class Tokenizer private[internal] (
     // accumulate negatively so MinValue's magnitude stays representable — see negatedValueAt
     val limit =
       if negative then (if isLong then Long.MinValue else scala.Int.MinValue.toLong)
-      else (if isLong then -Long.MaxValue else -scala.Int.MaxValue.toLong)
+      else (if isLong then -Long.MaxValue
+            else -scala.Int.MaxValue.toLong)
     val multmin = limit / 10
     var result  = 0L
     while i < length && { ch = input.charAt(i); ch >= '0' && ch <= '9' } do
@@ -308,14 +309,14 @@ private[scalanotation] final class Tokenizer private[internal] (
     index = i
     true
 
-  /** Fused scan of a plain decimal floating literal (optional fraction and exponent, no
-    * separators, no suffix) into [[fusedDbl]]. Restores the position and returns false on any
-    * other shape. Non-finite results fail exactly like the generic scanner.
+  /** Fused scan of a plain decimal floating literal (optional fraction and exponent, no separators,
+    * no suffix) into [[fusedDbl]]. Restores the position and returns false on any other shape.
+    * Non-finite results fail exactly like the generic scanner.
     *
     * When the mantissa fits 2^53 and the decimal exponent stays within ±22 the value is computed
-    * with one exact multiply or divide by a power of ten — both operands are exactly
-    * representable, so the single rounding is IEEE-correct and Double.parseDouble (which trims,
-    * substrings, and reparses) is skipped. Everything else falls back to parseDouble.
+    * with one exact multiply or divide by a power of ten — both operands are exactly representable,
+    * so the single rounding is IEEE-correct and Double.parseDouble (which trims, substrings, and
+    * reparses) is skipped. Everything else falls back to parseDouble.
     */
   private[internal] def tryScanFusedDouble(): Boolean =
     val saved = index
@@ -433,8 +434,8 @@ private[scalanotation] final class Tokenizer private[internal] (
       index = saved
       -1
 
-  /** Fused scan of an escape-free string literal into [[fusedStr]]. Escapes, dedented strings,
-    * and a following `+` (concatenation) restore the position and return false.
+  /** Fused scan of an escape-free string literal into [[fusedStr]]. Escapes, dedented strings, and
+    * a following `+` (concatenation) restore the position and return false.
     */
   private[internal] def tryScanFusedString(): Boolean =
     val saved = index
@@ -461,6 +462,31 @@ private[scalanotation] final class Tokenizer private[internal] (
     fusedStr = input.substring(contentStart, i)
     index = afterClose
     true
+
+  /** offset of the separator consumed by the last successful [[tryScanFusedSeparator]] */
+  private[internal] var fusedSeparatorStart: Int = 0
+
+  /** Fused scan of a field separator: 1 for a consumed `,`, 2 for a consumed `)`, or 0 with the
+    * position restored for anything else (the caller rescans generically).
+    */
+  private[internal] def tryScanFusedSeparator(): Int =
+    val saved = index
+    skipTrivia()
+    if isAtEnd then
+      index = saved
+      0
+    else
+      fusedSeparatorStart = index
+      currentChar() match
+        case ',' =>
+          index += 1
+          1
+        case ')' =>
+          index += 1
+          2
+        case _ =>
+          index = saved
+          0
 
   /** Scan the next token into the slot fields. Throws [[TokenizeException]] on malformed input. */
   def scanNext(): Unit =
@@ -1146,11 +1172,11 @@ private[scalanotation] object Tokenizer:
       i += 1
     result
 
-  /** Whether `name` scans as one plain (unquoted, non-keyword, non-special) identifier covering
-    * the whole string, so a [[Tokenizer.tryScanFieldHeader]] char-by-char match is exactly
-    * equivalent to the generic scan. Parity is guaranteed by construction: the check runs the real
-    * scanner over the name. Names ending in '_' are excluded because the operator-continuation
-    * rule would let the generic scanner consume past them. Cold: run once per schema and cached.
+  /** Whether `name` scans as one plain (unquoted, non-keyword, non-special) identifier covering the
+    * whole string, so a [[Tokenizer.tryScanFieldHeader]] char-by-char match is exactly equivalent
+    * to the generic scan. Parity is guaranteed by construction: the check runs the real scanner
+    * over the name. Names ending in '_' are excluded because the operator-continuation rule would
+    * let the generic scanner consume past them. Cold: run once per schema and cached.
     */
   private[scalanotation] def scansAsPlainFieldName(name: String): Boolean =
     if name.isEmpty || name.charAt(name.length - 1) == '_' then false
@@ -1227,10 +1253,10 @@ private[scalanotation] object Tokenizer:
 
 /** A bounded buffer over a streaming [[Tokenizer]]: at most three tokens (the current token plus
   * two lookahead tokens) are live at any time, held as unboxed [[TokenSlots]]. The current-token
-  * pointer usually aims straight at the scanner's own output slots, so the common no-lookahead
-  * path never copies a token; a peek preserves the current token by copying it into one of two
-  * buffers first. Boxed [[Token]]s and [[DecodeError.Span]]s are only materialized when
-  * constructing a [[DecodeError]] (or for debug output).
+  * pointer usually aims straight at the scanner's own output slots, so the common no-lookahead path
+  * never copies a token; a peek preserves the current token by copying it into one of two buffers
+  * first. Boxed [[Token]]s and [[DecodeError.Span]]s are only materialized when constructing a
+  * [[DecodeError]] (or for debug output).
   */
 private[scalanotation] abstract class TokenStream private[internal] (
     private var input: String,
@@ -1318,10 +1344,10 @@ private[scalanotation] abstract class TokenStream private[internal] (
       lookaheadCount = 1
 
   /** Fused consumption of a `<expected> =` field header in one scanner pass, skipping token
-    * classification and materialization for both tokens. On success the stream is *between*
-    * tokens: the caller must follow up with a fused value scan or [[scanPendingToken]]. On
-    * failure nothing is consumed and false is returned — the caller advances generically.
-    * `expected` must satisfy [[Tokenizer.scansAsPlainFieldName]].
+    * classification and materialization for both tokens. On success the stream is *between* tokens:
+    * the caller must follow up with a fused value scan or [[scanPendingToken]]. On failure nothing
+    * is consumed and false is returned — the caller advances generically. `expected` must satisfy
+    * [[Tokenizer.scansAsPlainFieldName]].
     */
   protected final def tryFuseFieldHeader(expected: String): Boolean =
     lookaheadCount == 0 && cur.kind != TokenKind.Eof && scanner.tryScanFieldHeader(expected)
@@ -1335,6 +1361,15 @@ private[scalanotation] abstract class TokenStream private[internal] (
 
   /** offset of the identifier consumed by the last fused [[tryFuseFieldHeader]] */
   protected final def lastFieldHeaderOffset(): Int = scanner.fieldHeaderStart
+
+  /** Fused scan of the separator after a fused value, while the stream is between tokens: 1 for a
+    * consumed `,` (the stream stays between tokens — the caller must fuse or scan next), 2 for a
+    * consumed `)`, 0 when neither was found (nothing consumed; caller uses [[scanPendingToken]]).
+    */
+  protected final def tryFusedSeparator(): Int = scanner.tryScanFusedSeparator()
+
+  /** offset of the separator consumed by the last fused [[tryFusedSeparator]] */
+  protected final def lastFusedSeparatorOffset(): Int = scanner.fusedSeparatorStart
 
   // Fused primitive value scans, valid only between tokens (after a fused header): each parses
   // the literal straight off the input into the matching typed slot — no token is materialized.
