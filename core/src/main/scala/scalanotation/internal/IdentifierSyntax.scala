@@ -99,10 +99,14 @@ private[scalanotation] object IdentifierSyntax:
     index == name.length
 
   private[internal] def isIdentifierStart(ch: Char): Boolean =
-    isScalaLetter(ch)
+    // ASCII fast path first: Character.isLetter costs a character-data table lookup per char
+    (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || ch == '_' || ch == '$'
+      || (ch > 127 && Character.isLetter(ch))
 
   private[internal] def isIdentifierPart(ch: Char): Boolean =
-    isScalaLetter(ch) || ch.isDigit
+    (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9')
+      || ch == '_' || ch == '$'
+      || (ch > 127 && (Character.isLetter(ch) || Character.isDigit(ch)))
 
   private[internal] def isOperatorPart(ch: Char): Boolean =
     ch match
