@@ -420,6 +420,38 @@ private[scalanotation] final class Tokenizer private[internal] (
     !isAtEnd && currentChar() == '+'
     && (index + 1 >= input.length || !isOperatorPart(input.charAt(index + 1)))
 
+  /** Fused scan of a field separator and the next expected header in one pass: 2 = `closing`
+    * consumed, 3 = trailing `,` and `closing` consumed, and after a consumed `,` the
+    * [[scanFieldHeader]] outcomes — 4 = `<expected> =` consumed, 5 = a name slice consumed
+    * (resolution needed), 1 = only the `,` consumed (no plain identifier next). 0 = nothing
+    * consumed. `expected == null` skips the header match and scans a slice directly.
+    */
+  private[internal] def scanSeparatorHeader(closing: Char, expected: Array[Char] | Null): Int =
+    skipTrivia()
+    if isAtEnd then 0
+    else
+      val ch = currentChar()
+      if ch == closing then
+        charScanStart = index
+        index += 1
+        2
+      else if ch != ',' then 0
+      else
+        charScanStart = index
+        index += 1
+        skipTrivia()
+        if !isAtEnd && currentChar() == closing then
+          charScanStart = index
+          index += 1
+          3
+        else if expected != null then
+          scanFieldHeader(expected) match
+            case 1 => 4
+            case 0 => 5
+            case _ => 1
+        else if scanIdentSlice() then 5
+        else 1
+
   /** Consumes a single expected punctuation char: false consumes nothing. */
   private[internal] def scanPunctChar(expected: Char): Boolean =
     skipTrivia()
@@ -1464,6 +1496,10 @@ private[scalanotation] abstract class TokenStream private[internal] (
     */
   protected final def expectFieldHeader(expected: Array[Char]): Int =
     if hasToken then -1 else scanner.scanFieldHeader(expected)
+
+  /** fused separator + next-header read — see [[Tokenizer.scanSeparatorHeader]] for the codes */
+  protected final def tryReadSeparatorHeader(closing: Char, expected: Array[Char] | Null): Int =
+    if hasToken then 0 else scanner.scanSeparatorHeader(closing, expected)
 
   /** Scans a plain-identifier field name as an offset slice — no token, no classification. On
     * success the slice is readable via [[sliceNameMatches]]/[[sliceNameOffset]] until the next

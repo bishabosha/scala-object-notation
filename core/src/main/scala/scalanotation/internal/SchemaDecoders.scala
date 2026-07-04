@@ -474,17 +474,13 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
         if fields.nonEmpty then
           raise(DecodeError.UnitValueNotAllowed().atToken(spanAt(closingOffset)))
       else
-        var done = false
+        var done        = false
+        var headerProbe = probeRecordHeader(fields, plans, nameChars, fieldIndex)
         while !done do
-          // --- field name (+ '='): fused char-level header against the expected field, else the
-          // cold resolver over the same characters ---
+          // --- field name (+ '='): fused char-level header against the expected field (read by
+          // the previous separator scan after the first field), else the cold resolver ---
           var decodedIndex = -1
           var nameOffset   = 0
-          val headerProbe  =
-            if fieldIndex < fields.length && plans(fieldIndex) != RawSchema.FieldPlan.TokenName
-            then expectFieldHeader(nameChars(fieldIndex))
-            else if tryReadNameSlice() then 0
-            else -1
           if headerProbe == 1 then
             decodedIndex = fieldIndex // name and '=' both consumed
             nameOffset = sliceNameOffset()
@@ -537,9 +533,15 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
               decodedCount += 1
               lastFieldName = expectedField.name
 
-          // --- separator ---
-          tryReadSeparatorChar(')') match
-            case 1     => () // comma consumed; the next field follows
+          // --- separator, fused with the next field's header ---
+          val nextExpected =
+            if fieldIndex < fields.length && plans(fieldIndex) != RawSchema.FieldPlan.TokenName
+            then nameChars(fieldIndex)
+            else null
+          tryReadSeparatorHeader(')', nextExpected) match
+            case 4     => headerProbe = 1  // comma, name and '=' all consumed
+            case 5     => headerProbe = 0  // comma and a name slice consumed
+            case 1     => headerProbe = -1 // only the comma consumed: token-path name
             case 2 | 3 =>
               closingOffset = charScanOffset()
               done = true
@@ -547,6 +549,7 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
               if recordSeparatorToken().ok == 1 then
                 closingOffset = consumedRParenOffset
                 done = true
+              else headerProbe = probeRecordHeader(fields, plans, nameChars, fieldIndex)
 
       if allowSkip then
         state = fillTrailingSkippedNullableFields(read)(fields, state, fieldIndex)
@@ -563,6 +566,20 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
         )
       else pushRef(read.finish(state))
     }
+
+  /** probes the next field name at the char level — the record loop's entry and token-fallback
+    * header read: 1 = expected header consumed, 0 = a name slice consumed, -1 = token path
+    */
+  private def probeRecordHeader(
+      fields: IArray[Field],
+      plans: Array[scala.Byte],
+      nameChars: Array[Array[scala.Char]],
+      atField: Int
+  ): Int =
+    if atField < fields.length && plans(atField) != RawSchema.FieldPlan.TokenName then
+      expectFieldHeader(nameChars(atField))
+    else if tryReadNameSlice() then 0
+    else -1
 
   /** Cold path of the record loop's name step. Resolves the arriving field name to its schema index
     * — walking skippable nullable fields, classifying duplicates, order and count mismatches — with
