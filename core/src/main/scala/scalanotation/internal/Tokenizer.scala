@@ -561,10 +561,10 @@ private[scalanotation] final class Tokenizer private[internal] (
       if ch == '_' then
         sawSeparator = true
         accDigits = -1
-      else if accDigits >= 0 && accDigits < 18 then
+      else if accDigits >= 0 && accDigits < 18 && ch >= '0' && ch <= '9' then
         acc = acc * 10 - (ch - '0')
         accDigits += 1
-      else accDigits = -1
+      else accDigits = -1 // unicode digits and long runs interpret via the exact slow path
       index += 1
     if !isAtEnd && currentChar() == '.' && peekIsDigit() then
       hasDot = true
@@ -1028,8 +1028,7 @@ private[scalanotation] object Tokenizer:
     while i < end do
       val ch = input.charAt(i)
       if ch != '_' && ch != 'l' && ch != 'L' then
-        // the scanner has validated the shape, so base-10 digits need no table lookup
-        val digit = if base == 10 then ch - '0' else Character.digit(ch, base)
+        val digit = Character.digit(ch, base)
         if digit < 0 || digit >= base || result < multmin then invalid()
         result = result * base
         if result < limit + digit then invalid()
