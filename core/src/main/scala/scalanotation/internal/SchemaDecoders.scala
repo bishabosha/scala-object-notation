@@ -454,29 +454,11 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
       decodeOrderedRecordFields(schema, read, slots).check
     }
 
-  /** true while a record decode may leave the stream between tokens after its fused closing paren —
-    * set by [[decodeOrderedRecordVector]] immediately before each record, consumed on entry by
-    * [[decodeOrderedRecordFields]]
-    */
-  private var allowBetweenTokensEnd = false
-
-  /** true when the last ordered record ended between tokens (its `)` consumed fused, nothing
-    * scanned after) — set at the record's close, consumed by [[decodeOrderedRecordVector]]
-    */
-  private var endedBetweenTokens = false
-
-  protected final def resetFusedState(): Unit =
-    allowBetweenTokensEnd = false
-    endedBetweenTokens = false
-
-  /** Decodes the fields and closing paren of an ordered record. The opening `(` has either just
-    * been scanned as the current token or — when the stream is between tokens — consumed fused;
-    * both leave the scanner directly after it, and this body only ever moves forward, so the two
-    * entries are equivalent.
+  /** Decodes the fields and closing paren of an ordered record; the opening `(` has just been
+    * scanned as the current token.
     *
-    * The happy path matches each field's precompiled `, name = ` pattern (in whichever spacing
-    * style the input last used) in a single pass and parses the primitive value straight into its
-    * typed slot; any deviation steps down to the flexible fused header, and from there to
+    * The happy path consumes each `name =` header with the fused scanner match against the expected
+    * name and parses the primitive value straight into its typed slot; any deviation steps down to
     * generically scanned tokens with the same errors as the general decoder.
     */
   private def decodeOrderedRecordFields(
@@ -484,15 +466,12 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
       read: RawSchema.NamedTupleRead,
       slots: scalanotation.BuilderSlots | Null
   ): Result[Unit, DecodeError] =
-    val mayEndBetweenTokens = allowBetweenTokensEnd
-    allowBetweenTokensEnd = false
     Result.task {
       val fields = schema.fields
       schema.isValidNamedTuple(namesPool).check
       var state: read.State = read.init(fields.length, slots)
 
-      val plan  = schema.fusedFieldPlan
-      val kinds = plan.kinds
+      val kinds = schema.fusedFieldPlan.kinds
 
       var index                        = 0
       var lastFieldName: String | Null = null
@@ -507,31 +486,25 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
 
         if betweenFields then
           betweenFields = false
-          // one-pass `, name = ` continuation in the input's spacing style
-          if planKind != RawSchema.FusePlan.None && tryFusedCommaHeader(plan, index) then
-            headerReady = true
-          else
-            tryFusedSeparator() match
-              case 1 => () // comma consumed; the flexible header logic below proceeds
-              case 2 =>
-                closingOffset = lastFusedSeparatorOffset()
-                if mayEndBetweenTokens then endedBetweenTokens = true
-                else scanPendingToken() // establish the current token for the enclosing context
-                done = true
-              case _ =>
-                scanPendingToken()
-                currentKind() match
-                  case TokenKind.Comma  => () // the flexible header logic below proceeds
-                  case TokenKind.RParen =>
-                    closingOffset = currentOffset()
-                    advance()
-                    done = true
-                  case _ =>
-                    raise(DecodeError.ExpectedRParen(describeCurrent()).atToken(currentSpan()))
+          tryFusedSeparator() match
+            case 1 => () // comma consumed; the header logic below proceeds
+            case 2 =>
+              closingOffset = lastFusedSeparatorOffset()
+              scanPendingToken() // establish the current token for the enclosing context
+              done = true
+            case _ =>
+              scanPendingToken()
+              currentKind() match
+                case TokenKind.Comma  => () // the header logic below proceeds
+                case TokenKind.RParen =>
+                  closingOffset = currentOffset()
+                  advance()
+                  done = true
+                case _ =>
+                  raise(DecodeError.ExpectedRParen(describeCurrent()).atToken(currentSpan()))
 
-        if !done && !headerReady then
-          if planKind != RawSchema.FusePlan.None
-            && (tryFusedLeadingHeader(plan, index) || tryFuseFieldHeader(fields(index).name))
+        if !done then
+          if planKind != RawSchema.FusePlan.None && tryFuseFieldHeader(fields(index).name)
           then headerReady = true
           else
             // generic fallback: scan and inspect the next token normally
@@ -619,31 +592,6 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
         )
       else pushRef(read.finish(state))
     }
-
-  /** last-used input spacing style: 0 = spaced (`a = 1, b = 2`), 1 = compact (`a=1,b=2`) */
-  private var fusedStyleHint = 0
-
-  /** one-pass match of field `index`'s header pattern, trying the hinted spacing style first */
-  private def tryFusedLeadingHeader(plan: RawSchema.FusedFieldPlan, index: Int): Boolean =
-    val spacedFirst = fusedStyleHint == 0
-    val first       = if spacedFirst then plan.headSpaced(index) else plan.headCompact(index)
-    val second      = if spacedFirst then plan.headCompact(index) else plan.headSpaced(index)
-    if first != null && tryFusedHeaderPattern(first) then true
-    else if second != null && tryFusedHeaderPattern(second) then
-      fusedStyleHint ^= 1
-      true
-    else false
-
-  /** one-pass match of `,` plus field `index`'s header pattern — only between tokens */
-  private def tryFusedCommaHeader(plan: RawSchema.FusedFieldPlan, index: Int): Boolean =
-    val spacedFirst = fusedStyleHint == 0
-    val first       = if spacedFirst then plan.headSpaced(index) else plan.headCompact(index)
-    val second      = if spacedFirst then plan.headCompact(index) else plan.headSpaced(index)
-    if first != null && tryFusedCommaHeaderPattern(first) then true
-    else if second != null && tryFusedCommaHeaderPattern(second) then
-      fusedStyleHint ^= 1
-      true
-    else false
 
   /** Cold path: classifies an out-of-order field in an ordered decode. The fields decoded so far
     * are exactly `fields(0 until seenCount)`, so a repeated name is reported as a duplicate;
@@ -1164,118 +1112,21 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
       var values = read.init()
       if currentKind() == closingKind then advance()
       else
-        schema.element match
-          case element: RawSchema.NamedTuple[?]
-              if closingKind == TokenKind.RParen
-                && !element.allowSkippedNullableFields
-                && element.read != null =>
-            decodeOrderedRecordElements(element, element.read.nn, read, values) match
-              case err: Result.Err[?] => breakErr(err.asInstanceOf[Result.Err[DecodeError]])
-              case next               => values = next.asInstanceOf[Repr]
-          case _ =>
-            var indexInVector = 0
-            var done          = false
-            while !done do
-              checkOrRaise(decodeBase(schema.element))(_.atPath(s"[$indexInVector]"))
-              values = addSlot(read)(values)
-              indexInVector += 1
+        var indexInVector = 0
+        var done          = false
+        while !done do
+          checkOrRaise(decodeBase(schema.element))(_.atPath(s"[$indexInVector]"))
+          values = addSlot(read)(values)
+          indexInVector += 1
 
-              vectorElementSeparator(closingKind) match
-                case 0 => ()
-                case 1 => done = true
-                case _ => raise(expectedVectorClosingError(closingKind))
+          vectorElementSeparator(closingKind) match
+            case 0 => ()
+            case 1 => done = true
+            case _ => raise(expectedVectorClosingError(closingKind))
 
-            if currentKind() == closingKind then advance()
+        if currentKind() == closingKind then advance()
 
       pushRef(read.finish(values))
-
-  /** Element loop for a `Vector( (…), (…), … )` of ordered records: the builder slots are borrowed
-    * once for all elements, and both the inter-record separators and the record-opening parens are
-    * consumed fused whenever the previous record closed between tokens — a record costs no generic
-    * token scans at all on the happy path. Any deviation drops back to generically scanned tokens
-    * with the same errors as the general element loop.
-    */
-  private def decodeOrderedRecordElements[Elem, Repr, A](
-      element: RawSchema.NamedTuple[?],
-      elementRead: RawSchema.NamedTupleRead,
-      read: Reader.VectorBuilder[Elem, Repr, A],
-      values0: Repr
-  ): StateDecodeResult[Repr] =
-    withBorrowSlots(elementRead.slotsFactory) { slots =>
-      var values        = values0
-      var index         = 0
-      var done          = false
-      var betweenTokens = false // stream position: before this record's `(`
-      var failure: Result.Err[DecodeError] | Null = null
-      while !done && failure == null do
-        // establish the record start: `(` must be the current token or get consumed fused
-        var decodeRecord = true
-        if betweenTokens then
-          betweenTokens = false
-          if !tryFusedLParen() then
-            scanPendingToken()
-            currentKind() match
-              case TokenKind.RParen => // trailing comma before the vector's closing paren
-                advance()
-                done = true
-                decodeRecord = false
-              case TokenKind.LParen => () // generic entry; the record body starts after it
-              case _                =>
-                failure = Result.Err(
-                  DecodeError
-                    .ExpectedType(element.describeSelf, describeCurrent())
-                    .atToken(currentSpan())
-                    .atPath(s"[$index]")
-                )
-                decodeRecord = false
-        else if currentKind() != TokenKind.LParen then
-          failure = Result.Err(
-            DecodeError
-              .ExpectedType(element.describeSelf, describeCurrent())
-              .atToken(currentSpan())
-              .atPath(s"[$index]")
-          )
-          decodeRecord = false
-
-        if decodeRecord then
-          if !enterNesting() then failure = Result.Err(nestingLimitError().atPath(s"[$index]"))
-          else
-            allowBetweenTokensEnd = true
-            val decoded = decodeOrderedRecordFields(element, elementRead, slots)
-            allowBetweenTokensEnd = false
-            exitNesting()
-            decoded match
-              case Result.Err(error) =>
-                failure = Result.Err(error.atPath(s"[$index]"))
-              case _ =>
-                values = addSlot(read)(values)
-                index += 1
-                if endedBetweenTokens then
-                  endedBetweenTokens = false
-                  tryFusedSeparator() match
-                    case 1 => betweenTokens = true // comma consumed; next record starts fused
-                    case 2 =>
-                      scanPendingToken() // the vector's `)`: establish the enclosing context
-                      done = true
-                    case _ =>
-                      scanPendingToken()
-                      vectorElementSeparator(TokenKind.RParen) match
-                        case 0 => ()
-                        case 1 =>
-                          advance() // consume the vector's closing paren
-                          done = true
-                        case _ =>
-                          failure = Result.Err(expectedVectorClosingError(TokenKind.RParen))
-                else
-                  vectorElementSeparator(TokenKind.RParen) match
-                    case 0 => ()
-                    case 1 =>
-                      advance() // consume the vector's closing paren
-                      done = true
-                    case _ =>
-                      failure = Result.Err(expectedVectorClosingError(TokenKind.RParen))
-      if failure != null then failure else values
-    }
 
   private def currentVectorClosingKind(): Int =
     if currentKind() == TokenKind.VectorId && peekKind() == TokenKind.LParen then TokenKind.RParen
