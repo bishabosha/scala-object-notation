@@ -15,7 +15,7 @@ final class BuilderSlots private[scalanotation] () extends Product:
   private var refs: Array[AnyRef] = new Array[AnyRef](8)
   private var prims: Array[Long]  = new Array[Long](8)
   private var arity: Int          = 0
-  private var maxFilled: Int      = -1
+  private var maxFilled: Int      = BuilderSlots.NoSlotFilled
 
   /** Re-sizes for a product of `size` fields. Stale values from the previous use are NOT cleared —
     * a pooled instance may have more capacity than the record needs. Instead [[maxFilled]] tracks
@@ -31,7 +31,7 @@ final class BuilderSlots private[scalanotation] () extends Product:
       refs = new Array[AnyRef](capacity)
       prims = new Array[Long](capacity)
     arity = size
-    maxFilled = -1
+    maxFilled = BuilderSlots.NoSlotFilled
     this
 
   private inline def markFilled(index: Int): Unit =
@@ -134,3 +134,7 @@ final class BuilderSlots private[scalanotation] () extends Product:
       case _                => refs(n)
 
   def canEqual(that: Any): Boolean = false
+
+private[scalanotation] object BuilderSlots:
+  /** the [[BuilderSlots]] fill watermark before any slot has been written since the last reset */
+  private[scalanotation] inline val NoSlotFilled = -1
