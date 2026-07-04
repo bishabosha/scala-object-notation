@@ -15,12 +15,23 @@ import scalanotation.schema.RawSchema
 private[internal] object Internal {
 
   final class LocalPool[T: Alloc as factory] extends PublicInternal.Pool[T]:
-    // non-atomic pull/push, but this should be single-threaded code
-    private val pool = mutable.ArrayDeque.empty[T]
-    def borrow(): T  =
-      if pool.isEmpty then factory.alloc() else factory.prepare(pool.removeHead())
+    // Non-atomic push/pop on a plain array stack: this is single-threaded code, and a borrow or
+    // release happens once per decoded record, so it must stay a few loads and stores.
+    private var items = new Array[AnyRef](8)
+    private var size  = 0
+
+    def borrow(): T =
+      if size == 0 then factory.alloc()
+      else
+        size -= 1
+        val t = items(size).asInstanceOf[T]
+        items(size) = null
+        factory.prepare(t)
+
     def release(t: T): Unit =
-      pool.prepend(t)
+      if size == items.length then items = java.util.Arrays.copyOf(items, size * 2)
+      items(size) = t.asInstanceOf[AnyRef]
+      size += 1
 
   /** A lock-free, fixed-capacity pool that can be shared between threads — including virtual
     * threads, where a ThreadLocal cache would never be reused. Borrow and release probe the slot
