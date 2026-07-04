@@ -16,7 +16,12 @@ final class BuilderSlots private[scalanotation] () extends Product:
   private var prims: Array[Long]  = new Array[Long](8)
   private var arity: Int          = 0
 
-  /** clears references from the previous use and re-sizes for a product of `size` fields */
+  /** Re-sizes for a product of `size` fields. Stale references from the previous use are NOT
+    * cleared: every decode path writes all `size` slots before [[TypedFactory.fromSlots]] reads
+    * them (skipped nullable fields store `None`, and a failed decode never reaches the factory), so
+    * clearing per record would only bound retention — which is already limited to the last record's
+    * field values per pooled instance.
+    */
   private[scalanotation] def reset(size: Int): this.type =
     if kinds.length < size then
       var capacity = kinds.length
@@ -24,7 +29,6 @@ final class BuilderSlots private[scalanotation] () extends Product:
       kinds = new Array[Int](capacity)
       refs = new Array[AnyRef](capacity)
       prims = new Array[Long](capacity)
-    else if arity > 0 then java.util.Arrays.fill(refs, 0, arity, null)
     arity = size
     this
 
