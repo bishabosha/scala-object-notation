@@ -111,6 +111,19 @@ class CrossLibraryDecodeBenchmark:
   @Benchmark def zioBlocksPrimitive10Bytes: Any =
     zioPrimitive10Codec.decode(jsonPrimitive10Bytes)
 
+  // compact SON rendering (no spaces), comparable in density to the compact JSON inputs
+  private val sonFlatCompactInput      = sonFlatInput.replace(" = ", "=").replace(", ", ",")
+  private val sonPrimitive10CompactInput =
+    sonPrimitive10Input.replace(" = ", "=").replace(", ", ",")
+  private val sonOrdersCompactInput = sonOrdersInput.replace(" = ", "=").replace(", ", ",")
+
+  @Benchmark def sonFlatCompact: Any =
+    Readers.batched.readAs[TypedFlatClass](sonFlatCompactInput)
+  @Benchmark def sonPrimitive10Compact: Any =
+    Readers.batched.readAs[TypedPrimitive10Class](sonPrimitive10CompactInput)
+  @Benchmark def sonOrders100Compact: Any =
+    Readers.batched.readAs[OrderBatch](sonOrdersCompactInput)
+
   @Benchmark def sonOrders100: Any =
     Readers.batched.readAs[OrderBatch](sonOrdersInput)
   @Benchmark def jsoniterOrders100String: Any =
