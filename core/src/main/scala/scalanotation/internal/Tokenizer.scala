@@ -304,7 +304,14 @@ private[scalanotation] final class Tokenizer private[internal] (
       if ch == ',' then
         charScanStart = index
         index += 1
-        1
+        // a trailing comma may directly precede the closing char: consuming both here saves the
+        // caller a separate probe after every element
+        skipTrivia()
+        if !isAtEnd && currentChar() == closing then
+          charScanStart = index
+          index += 1
+          3
+        else 1
       else if ch == closing then
         charScanStart = index
         index += 1
@@ -1480,8 +1487,8 @@ private[scalanotation] abstract class TokenStream private[internal] (
   protected final def tryReadEqualsChar(): Boolean =
     !hasToken && scanner.scanEqualsChar()
 
-  /** 1 = `,` consumed, 2 = `closing` consumed, 0 = nothing consumed (pending token or another
-    * shape).
+  /** 1 = `,` consumed, 2 = `closing` consumed, 3 = a trailing `,` and the `closing` both
+    * consumed, 0 = nothing consumed (pending token or another shape).
     */
   protected final def tryReadSeparatorChar(closing: Char): Int =
     if hasToken then 0 else scanner.scanSeparatorChar(closing)

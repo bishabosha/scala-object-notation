@@ -525,11 +525,8 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
 
           // --- separator ---
           tryReadSeparatorChar(')') match
-            case 1 =>
-              if tryConsumeRParen() then
-                closingOffset = consumedRParenOffset
-                done = true
-            case 2 =>
+            case 1 => () // comma consumed; the next field follows
+            case 2 | 3 =>
               closingOffset = charScanOffset()
               done = true
             case _ =>
@@ -1191,10 +1188,9 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
           indexInVector += 1
 
           tryReadSeparatorChar(closingChar) match
-            case 2 => done = true // closing consumed
-            case 1 =>             // comma consumed; a trailing comma may still close the vector
-              if tryConsumeClosing(closingKind, closingChar) then done = true
-            case _ =>
+            case 1     => () // comma consumed; the next element follows
+            case 2 | 3 => done = true // closing consumed (possibly via a trailing comma)
+            case _     =>
               // token fallback: a pending token (e.g. after a string value) or another shape
               currentKind() match
                 case TokenKind.Comma =>
