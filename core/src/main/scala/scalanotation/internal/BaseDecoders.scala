@@ -33,8 +33,7 @@ private[scalanotation] trait BaseDecoders extends SharedHelpers:
       inline store: N => Unit
   ): Unit =
     val negative =
-      if tryReadSignChar() then true // char-level sign; the literal token follows directly
-      else if currentKind() == TokenKind.Minus then
+      if currentKind() == TokenKind.Minus then
         advance()
         true
       else false
@@ -291,25 +290,6 @@ private[scalanotation] trait BaseDecoders extends SharedHelpers:
       case err: Result.Err[DecodeError]  =>
         scala.util.boundary.break(err) // TODO: replace with Result.breakErr
   }
-
-  protected inline def parseKnownNamedTupleStructure(
-      schema: RawSchema[?],
-      allowEmpty: Boolean
-  )(
-      inline consumeFieldValue: (Int, Int) => Result[Unit, DecodeError]
-  ): NamedTupleParseResult | Result.Err[DecodeError] =
-    if currentKind() == TokenKind.LParen then
-      advance()
-      parsePartialKnownNamedTupleStructure(schema)(consumeFieldValue) match
-        case parsed: NamedTupleParseResult =>
-          if !allowEmpty && parsed.fieldCount == 0 then
-            Result.Err(DecodeError.UnitValueNotAllowed().atToken(spanAt(parsed.closingOffset)))
-          else parsed
-        case err: Result.Err[DecodeError] => err
-    else
-      Result.Err(
-        DecodeError.ExpectedType(schema.describeSelf, describeCurrent()).atToken(currentSpan())
-      )
 
   protected inline def parsePartialKnownNamedTupleStructure(
       schema: RawSchema[?]

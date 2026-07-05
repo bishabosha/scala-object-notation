@@ -668,22 +668,6 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
   ): DecodeError =
     error.atPath(s".${field.name}").atToken(spanAt(nameOffset))
 
-  /** Dispatches a value decode through its precomputed [[RawSchema.FieldPlan]] code: direct
-    * primitive decoders for direct primitive schemas, the general dispatcher for everything else.
-    * Semantically identical to [[decodeBase]] — this only skips re-deriving the dispatch from the
-    * schema on every value.
-    */
-  private def decodePlannedValue(plan: Byte, schema: RawSchema[?]): Result[Unit, DecodeError] =
-    (plan: @scala.annotation.switch) match
-      case RawSchema.FieldPlan.IntV     => decodeInt()
-      case RawSchema.FieldPlan.LongV    => decodeLong()
-      case RawSchema.FieldPlan.DoubleV  => decodeDouble()
-      case RawSchema.FieldPlan.FloatV   => decodeFloat()
-      case RawSchema.FieldPlan.BooleanV => decodeBoolean()
-      case RawSchema.FieldPlan.StringV  => decodeString()
-      case RawSchema.FieldPlan.CharV    => decodeChar()
-      case _                            => decodeBase(schema)
-
   /** Decodes a planned field value and appends it into the named-tuple builder state in a single
     * plan dispatch: the plan already names the live typed slot, so the [[addSlot]] kind switch and
     * the [[PushSlots]] round trip collapse into a direct typed `add`. Returns the error instead of
