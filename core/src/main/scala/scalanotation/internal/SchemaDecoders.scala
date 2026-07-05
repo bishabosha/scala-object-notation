@@ -430,9 +430,9 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
         // duplicates); in ordered mode the decoded set is always the contiguous prefix
         if schema.allowSkippedNullableFields then
           fieldIndexSetPool.withBorrowed { seenFields =>
-            decodeRecordFields(schema, read, slots, seenFields)
+            decodeRecordFields(schema, read, slots, seenFields, null, openParen = true)
           }
-        else decodeRecordFields(schema, read, slots, null)
+        else decodeRecordFields(schema, read, slots, null, null, openParen = true)
       }
     }
 
@@ -449,19 +449,25 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
       schema: RawSchema.NamedTuple[?],
       read: RawSchema.NamedTupleRead,
       slots: scalanotation.BuilderSlots | Null,
-      seenFields: Internal.FieldIndexSet | Null
+      seenFields: Internal.FieldIndexSet | Null,
+      alreadySeenField: String | Null,
+      openParen: Boolean
   ): Result[Unit, DecodeError] =
     Result.task {
       val fields    = schema.fields
       val allowSkip = schema.allowSkippedNullableFields
-      if seenFields != null then seenFields.reset(fields.length)
+      if seenFields != null then
+        seenFields.reset(fields.length)
+        if alreadySeenField != null then
+          val alreadySeenIndex = indexOfField(fields, alreadySeenField)
+          if alreadySeenIndex >= 0 then seenFields.mark(alreadySeenIndex)
       schema.isValidNamedTuple(namesPool).check
       val fieldPlans        = schema.fieldPlans
       val plans             = fieldPlans.kinds
       val nameChars         = fieldPlans.nameChars
       var state: read.State = read.init(fields.length, slots)
 
-      if !tryReadPunctChar('(') then consumeRecordLParenToken(schema).check
+      if openParen && !tryReadPunctChar('(') then consumeRecordLParenToken(schema).check
 
       var fieldIndex                   = 0 // the next expected schema field
       var decodedCount                 = 0 // fields actually present in the input
@@ -470,7 +476,9 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
 
       if tryConsumeRParen() then
         closingOffset = consumedRParenOffset
-        if fields.nonEmpty then
+        // partial records close legitimately with no further fields: the count check below
+        // classifies a shortfall, matching the token path's decisions
+        if openParen && fields.nonEmpty then
           raise(DecodeError.UnitValueNotAllowed().atToken(spanAt(closingOffset)))
       else
         var done        = false
@@ -483,6 +491,10 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
           if headerProbe == Tokenizer.HeaderMatched then
             decodedIndex = fieldIndex // name and '=' both consumed
             nameOffset = sliceNameOffset()
+            // only pre-marking (an already-seen field such as a sum discriminator) can make an
+            // exact-order match a duplicate
+            if seenFields != null && seenFields.contains(decodedIndex) then
+              raise(makeDuplicateKnownFieldError(fields(decodedIndex).name, nameOffset))
           else
             if headerProbe == Tokenizer.HeaderNameSlice then
               nameOffset = sliceNameOffset()
@@ -490,9 +502,10 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
                 fields,
                 fieldPlans,
                 seenFields,
+                alreadySeenField,
                 allowSkip,
                 fieldIndex,
-                true
+                sliceRead = true
               ).check
               decodedIndex = pullControl()
             else
@@ -501,9 +514,10 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
                 fields,
                 fieldPlans,
                 seenFields,
+                alreadySeenField,
                 allowSkip,
                 fieldIndex,
-                false
+                sliceRead = false
               ).check
               decodedIndex = pullControl()
 
@@ -588,6 +602,7 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
       fields: IArray[Field],
       fieldPlans: RawSchema.FieldPlans,
       seenFields: Internal.FieldIndexSet | Null,
+      alreadySeenField: String | Null,
       allowSkip: Boolean,
       fieldIndexStart: Int,
       sliceRead: Boolean
@@ -606,12 +621,12 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
     do index += 1
 
     if index >= fields.length then
-      duplicateDecodedFieldError(fields, seenFields, index, nameOffset).check
+      duplicateDecodedFieldError(fields, seenFields, alreadySeenField, index, nameOffset).check
       if expectedBeforeSkip == null then
         raise(currentFieldCountMismatchError(nameOffset, fields.length, index + 1))
       else raise(currentFieldOrderMismatchError(nameOffset, expectedBeforeSkip.name))
     else if !currentFieldNameMatches(fields(index).name) then
-      duplicateDecodedFieldError(fields, seenFields, index, nameOffset).check
+      duplicateDecodedFieldError(fields, seenFields, alreadySeenField, index, nameOffset).check
       raise(currentFieldOrderMismatchError(nameOffset, fields(index).name))
     if seenFields != null && seenFields.contains(index) then
       raise(makeDuplicateKnownFieldError(fields(index).name, nameOffset))
@@ -805,10 +820,12 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
   private def duplicateDecodedFieldError(
       fields: IArray[Field],
       seenFields: Internal.FieldIndexSet | Null,
+      alreadySeenField: String | Null,
       seenCount: Int,
       nameOffset: Int
   ): Result[Unit, DecodeError] =
-    if seenFields != null then duplicateKnownFieldError(fields, seenFields, nameOffset, null)
+    if seenFields != null then
+      duplicateKnownFieldError(fields, seenFields, nameOffset, alreadySeenField)
     else
       Result.task {
         var index = 0
@@ -1044,138 +1061,13 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
   ): Result[Unit, DecodeError] =
     withRead(schema, _.read) { read =>
       withBorrowSlots(read.slotsFactory) { slots =>
+        // the opening paren and the already-seen field (e.g. a sum discriminator) were consumed by
+        // the caller; the bitset is always borrowed so re-sent seen fields classify as duplicates
         fieldIndexSetPool.withBorrowed { seenFields =>
-          decodePartialNamedTupleWithResources(schema, alreadySeenField, read, slots, seenFields)
+          decodeRecordFields(schema, read, slots, seenFields, alreadySeenField, openParen = false)
         }
       }
     }
-
-  private def decodePartialNamedTupleWithResources(
-      schema: RawSchema.NamedTuple[?],
-      alreadySeenField: String,
-      read: RawSchema.NamedTupleRead,
-      slots: scalanotation.BuilderSlots | Null,
-      seenFields: Internal.FieldIndexSet
-  ): Result[Unit, DecodeError] =
-    Result.task {
-      val fields = schema.fields
-      seenFields.reset(fields.length)
-      val alreadySeenIndex = indexOfField(fields, alreadySeenField)
-      if alreadySeenIndex >= 0 then seenFields.mark(alreadySeenIndex)
-
-      schema.isValidNamedTuple(namesPool).check
-      var state: read.State            = read.init(fields.length, slots)
-      var fieldIndex                   = 0
-      var lastFieldName: String | Null = null
-
-      val parsedResult = parsePartialKnownNamedTupleStructure(schema) {
-        (nameOffset, parsedFieldIndex) =>
-          Result.task {
-            val decodedIndex = {
-              if schema.allowSkippedNullableFields then
-                val expectedBeforeSkip =
-                  if fieldIndex < fields.length then fields(fieldIndex) else null
-                while fieldIndex < fields.length
-                  && !currentFieldNameMatches(fields(fieldIndex).name)
-                  && TokenDecoder.isNullable(fields(fieldIndex).schema)
-                do
-                  state = read.add(state, fieldIndex, None)
-                  fieldIndex += 1
-
-                if fieldIndex >= fields.length then
-                  duplicateKnownFieldError(
-                    fields,
-                    seenFields,
-                    nameOffset,
-                    alreadySeenField
-                  ).check
-                  if expectedBeforeSkip == null then
-                    raise(
-                      currentFieldCountMismatchError(
-                        nameOffset,
-                        fields.length,
-                        parsedFieldIndex + 1
-                      )
-                    )
-                  else
-                    raise(
-                      currentFieldOrderMismatchError(
-                        nameOffset,
-                        expectedBeforeSkip.name
-                      )
-                    )
-                else
-                  val expectedField = fields(fieldIndex)
-                  if currentFieldNameMatches(expectedField.name) then fieldIndex
-                  else
-                    duplicateKnownFieldError(
-                      fields,
-                      seenFields,
-                      nameOffset,
-                      alreadySeenField
-                    ).check
-                    raise(currentFieldOrderMismatchError(nameOffset, expectedField.name))
-              else if parsedFieldIndex >= fields.length then
-                duplicateKnownFieldError(
-                  fields,
-                  seenFields,
-                  nameOffset,
-                  alreadySeenField
-                ).check
-                raise(
-                  currentFieldCountMismatchError(
-                    nameOffset,
-                    fields.length,
-                    parsedFieldIndex + 1
-                  )
-                )
-              else
-                val expectedField = fields(parsedFieldIndex)
-                if currentFieldNameMatches(expectedField.name) then parsedFieldIndex
-                else
-                  duplicateKnownFieldError(
-                    fields,
-                    seenFields,
-                    nameOffset,
-                    alreadySeenField
-                  ).check
-                  raise(
-                    currentFieldOrderMismatchError(nameOffset, expectedField.name)
-                  )
-            }
-            if seenFields.contains(decodedIndex) then
-              raise(makeDuplicateKnownFieldError(fields(decodedIndex).name, nameOffset))
-            else
-              val expectedField = fields(decodedIndex)
-              parseNamedFieldStartNoPush().check
-              decodeBase(expectedField.schema)
-                .mapErr(error =>
-                  error
-                    .atPath(s".${expectedField.name}")
-                    .atToken(spanAt(nameOffset))
-                )
-                .check
-              state = addSlot(read)(state, decodedIndex)
-              seenFields.mark(decodedIndex)
-              fieldIndex = decodedIndex + 1
-              lastFieldName = expectedField.name
-          }
-      }
-
-      parsedResult match
-        case err: Result.Err[DecodeError]  => breakErr(err)
-        case parsed: NamedTupleParseResult =>
-          if schema.allowSkippedNullableFields then
-            state = fillTrailingSkippedNullableFields(read)(fields, state, fieldIndex)
-            fieldIndex = pullSkipFillIndex()
-
-          val decodedFieldCount =
-            if schema.allowSkippedNullableFields then fieldIndex else parsed.fieldCount
-          if decodedFieldCount != fields.length then
-            raise(fieldCountMismatchAtClosing(fields, parsed, lastFieldName))
-          else pushRef(read.finish(state))
-    }
-
   private def indexOfField(fields: IArray[Field], name: String): Int =
     var index = 0
     while index < fields.length do
