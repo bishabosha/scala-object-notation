@@ -480,11 +480,11 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
           // the previous separator scan after the first field), else the cold resolver ---
           var decodedIndex = -1
           var nameOffset   = 0
-          if headerProbe == 1 then
+          if headerProbe == Tokenizer.HeaderMatched then
             decodedIndex = fieldIndex // name and '=' both consumed
             nameOffset = sliceNameOffset()
           else
-            if headerProbe == 0 then
+            if headerProbe == Tokenizer.HeaderNameSlice then
               nameOffset = sliceNameOffset()
               resolveRecordFieldSlow(
                 fields,
@@ -536,12 +536,13 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
 
           // --- separator ---
           tryReadSeparatorChar(')') match
-            case 1     => headerProbe = probeRecordHeader(fields, plans, nameChars, fieldIndex)
-            case 2 | 3 =>
+            case Tokenizer.SeparatorComma =>
+              headerProbe = probeRecordHeader(fields, plans, nameChars, fieldIndex)
+            case Tokenizer.SeparatorClosing | Tokenizer.SeparatorTrailingClosing =>
               closingOffset = charScanOffset()
               done = true
             case _ =>
-              if { recordSeparatorToken().check; pullControl() == 1 } then
+              if { recordSeparatorToken().check; pullControl() == RecordClosed } then
                 closingOffset = consumedRParenOffset
                 done = true
               else headerProbe = probeRecordHeader(fields, plans, nameChars, fieldIndex)
@@ -573,8 +574,8 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
   ): Int =
     if atField < fields.length && plans(atField) != RawSchema.FieldPlan.TokenName then
       expectFieldHeader(nameChars(atField))
-    else if tryReadNameSlice() then 0
-    else -1
+    else if tryReadNameSlice() then Tokenizer.HeaderNameSlice
+    else Tokenizer.HeaderNone
 
   /** Cold path of the record loop's name step: resolves an arriving field name that was not the
     * exact expected header. The name is first normalized to a generic token — a consumed char-level
@@ -634,8 +635,14 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
     else raise(DecodeError.ExpectedEquals(describeCurrent()).atToken(currentSpan()))
   }
 
-  /** Cold separator fallback on the token path: 0 = comma consumed (another field follows), 1 =
-    * record closed (offset left in [[consumedRParenOffset]]).
+  /** [[recordSeparatorToken]]'s control-slot value when the record closed */
+  private inline val RecordClosed = 1
+
+  /** [[recordSeparatorToken]]'s control-slot value when a comma was consumed — a field follows */
+  private inline val RecordContinues = 0
+
+  /** Cold separator fallback on the token path: leaves [[RecordContinues]] or [[RecordClosed]] in
+    * the control slot (the closing offset in [[consumedRParenOffset]]).
     */
   private def recordSeparatorToken(): Result[Unit, DecodeError] = Result.task {
     currentKind() match
@@ -644,12 +651,12 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
         if currentKind() == TokenKind.RParen then
           consumedRParenOffset = currentOffset()
           advance()
-          pushControl(1)
-        else pushControl(0)
+          pushControl(RecordClosed)
+        else pushControl(RecordContinues)
       case TokenKind.RParen =>
         consumedRParenOffset = currentOffset()
         advance()
-        pushControl(1)
+        pushControl(RecordClosed)
       case _ => raise(DecodeError.ExpectedRParen(describeCurrent()).atToken(currentSpan()))
   }
 
@@ -1221,9 +1228,10 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
           indexInVector += 1
 
           tryReadSeparatorChar(closingChar) match
-            case 1     => ()          // comma consumed; the next element follows
-            case 2 | 3 => done = true // closing consumed (possibly via a trailing comma)
-            case _     =>
+            case Tokenizer.SeparatorComma => () // the next element follows
+            case Tokenizer.SeparatorClosing | Tokenizer.SeparatorTrailingClosing =>
+              done = true // closing consumed (possibly via a trailing comma)
+            case _ =>
               // token fallback: a pending token (e.g. after a string value) or another shape
               currentKind() match
                 case TokenKind.Comma =>
@@ -1865,8 +1873,8 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
 
   protected final def decodeInt(): Result[Unit, DecodeError] = Result.task:
     val signedScan = tryScanSignedNumberDirect()
-    if signedScan != 0 then
-      val negative = signedScan == 2
+    if signedScan != Tokenizer.NumberNone then
+      val negative = signedScan == Tokenizer.NumberNegated
       if scannedKind() == TokenKind.IntLit then pushInt(currentIntValue(negative))
       else
         adoptScannedToken()
@@ -1882,8 +1890,8 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
 
   protected final def decodeLong(): Result[Unit, DecodeError] = Result.task:
     val signedScan = tryScanSignedNumberDirect()
-    if signedScan != 0 then
-      val negative = signedScan == 2
+    if signedScan != Tokenizer.NumberNone then
+      val negative = signedScan == Tokenizer.NumberNegated
       scannedKind() match
         case TokenKind.LongLit => pushLong(currentLongValue(negative))
         case TokenKind.IntLit  => pushLong(currentIntValue(negative).toLong)
@@ -1902,8 +1910,8 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
 
   protected final def decodeFloat(): Result[Unit, DecodeError] = Result.task:
     val signedScan = tryScanSignedNumberDirect()
-    if signedScan != 0 then
-      val negative = signedScan == 2
+    if signedScan != Tokenizer.NumberNone then
+      val negative = signedScan == Tokenizer.NumberNegated
       scannedKind() match
         case TokenKind.FloatLit =>
           val magnitude = currentFloatValue()
@@ -1934,8 +1942,8 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
 
   protected final def decodeDouble(): Result[Unit, DecodeError] = Result.task:
     val signedScan = tryScanSignedNumberDirect()
-    if signedScan != 0 then
-      val negative = signedScan == 2
+    if signedScan != Tokenizer.NumberNone then
+      val negative = signedScan == Tokenizer.NumberNegated
       scannedKind() match
         case TokenKind.DoubleLit =>
           val magnitude = currentDoubleValue()
@@ -1959,9 +1967,9 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
   protected final def decodeBoolean(): Result[Unit, DecodeError] =
     Result.task:
       tryReadBooleanChar() match
-        case 1 => pushBoolean(true)
-        case 0 => pushBoolean(false)
-        case _ =>
+        case Tokenizer.BooleanTrue  => pushBoolean(true)
+        case Tokenizer.BooleanFalse => pushBoolean(false)
+        case _                      =>
           currentKind() match
             case TokenKind.TrueKw =>
               advance()
