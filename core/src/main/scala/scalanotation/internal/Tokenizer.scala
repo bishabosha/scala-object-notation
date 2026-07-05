@@ -1604,6 +1604,23 @@ private[scalanotation] abstract class TokenStream private[internal] (
 
   protected final def sliceNameOffset(): Int = scanner.out.start
 
+  /** Compares the last [[tryReadNameSlice]] result against an expected name's chars — a plain array
+    * compare, no classification and no allocation.
+    */
+  protected final def sliceNameEquals(expected: Array[Char]): Boolean =
+    val slots = scanner.out
+    val from  = slots.start
+    val len   = slots.end - from
+    if len != expected.length then false
+    else
+      val text = scanner.chars
+      var i    = 0
+      var ok   = true
+      while ok && i < len do
+        if text(from + i) != expected(i) then ok = false
+        else i += 1
+      ok
+
   /** Rescans the last [[tryReadNameSlice]] result as a generic token, so the token path sees the
     * identical characters (classification included) for error reporting and non-plain matching.
     */
