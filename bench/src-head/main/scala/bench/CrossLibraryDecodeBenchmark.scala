@@ -31,9 +31,9 @@ object OrderBatch:
 
 /** Cross-library comparison: SON typed batched decoding against jsoniter-scala, uPickle, and
   * zio-blocks decoding the equivalent JSON. SON reads a String; the JSON libraries are measured
-  * both from a String (input parity) and — where supported — from a byte array (their fastest
-  * entry point). Codecs, schemas, and readers are built once per fork so every side measures
-  * decoding only.
+  * both from a String (input parity) and — where supported — from a byte array (their fastest entry
+  * point). Codecs, schemas, and readers are built once per fork so every side measures decoding
+  * only.
   */
 @State(Scope.Thread)
 @BenchmarkMode(Array(Mode.AverageTime))
@@ -121,6 +121,13 @@ class CrossLibraryDecodeBenchmark:
   private val sonPrimitive10CompactInput = compactSon(sonPrimitive10Input)
   private val sonOrdersCompactInput      = compactSon(sonOrdersInput)
 
+  // UTF-8 byte forms of the SON inputs — apples-to-apples with the jsoniter/zio byte benchmarks
+  private val sonFlatBytesInput          = sonFlatInput.getBytes(StandardCharsets.UTF_8)
+  private val sonPrimitive10BytesInput   = sonPrimitive10Input.getBytes(StandardCharsets.UTF_8)
+  private val sonOrdersBytesInput        = sonOrdersInput.getBytes(StandardCharsets.UTF_8)
+  private val sonOrdersCompactBytesInput =
+    sonOrdersCompactInput.getBytes(StandardCharsets.UTF_8)
+
   // one-time guard: a benchmark over inputs that fail to decode measures fail-fast errors and
   // reports meaningless (fast) numbers — every SON input must round-trip Ok
   locally {
@@ -137,6 +144,16 @@ class CrossLibraryDecodeBenchmark:
     )
     requireOk("sonOrders100", Readers.batched.readAs[OrderBatch](sonOrdersInput))
     requireOk("sonOrders100Compact", Readers.batched.readAs[OrderBatch](sonOrdersCompactInput))
+    requireOk("sonFlatBytes", Readers.batched.readAs[TypedFlatClass](sonFlatBytesInput))
+    requireOk(
+      "sonPrimitive10Bytes",
+      Readers.batched.readAs[TypedPrimitive10Class](sonPrimitive10BytesInput)
+    )
+    requireOk("sonOrders100Bytes", Readers.batched.readAs[OrderBatch](sonOrdersBytesInput))
+    requireOk(
+      "sonOrders100CompactBytes",
+      Readers.batched.readAs[OrderBatch](sonOrdersCompactBytesInput)
+    )
   }
 
   @Benchmark def sonFlatCompact: Any =
@@ -145,6 +162,15 @@ class CrossLibraryDecodeBenchmark:
     Readers.batched.readAs[TypedPrimitive10Class](sonPrimitive10CompactInput)
   @Benchmark def sonOrders100Compact: Any =
     Readers.batched.readAs[OrderBatch](sonOrdersCompactInput)
+
+  @Benchmark def sonFlatBytes: Any =
+    Readers.batched.readAs[TypedFlatClass](sonFlatBytesInput)
+  @Benchmark def sonPrimitive10Bytes: Any =
+    Readers.batched.readAs[TypedPrimitive10Class](sonPrimitive10BytesInput)
+  @Benchmark def sonOrders100Bytes: Any =
+    Readers.batched.readAs[OrderBatch](sonOrdersBytesInput)
+  @Benchmark def sonOrders100CompactBytes: Any =
+    Readers.batched.readAs[OrderBatch](sonOrdersCompactBytesInput)
 
   @Benchmark def sonOrders100: Any =
     Readers.batched.readAs[OrderBatch](sonOrdersInput)
