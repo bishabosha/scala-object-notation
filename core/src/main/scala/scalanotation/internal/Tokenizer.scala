@@ -132,7 +132,7 @@ private[scalanotation] object ExperimentalFlags:
   * bounded regardless of input size.
   */
 private[scalanotation] final class Tokenizer private[internal] (
-    private var input: String,
+    initialInput: String,
     private var index: Int,
     private var experimentalFlags: Int
 ):
@@ -141,29 +141,69 @@ private[scalanotation] final class Tokenizer private[internal] (
 
   import Tokenizer.*
 
-  /** The input as a char array: every scan reads plain array loads instead of paying
-    * String.charAt's coder dispatch per char (the String stays for substrings and error text).
-    * Inputs up to [[Tokenizer.MaxPooledInputChars]] refill a buffer pooled with the scanner — a
-    * copy but no allocation, with retention hard-bounded by the cap; larger inputs take a transient
-    * copy that the next pooled use discards. The buffer may therefore be longer than the input:
-    * every scan limit must come from `input.length`, never from `chars.length`.
+  /** The decoded input as a char array — the scanner's only view of the input: every scan reads
+    * plain array loads, and values and error text materialize via `new String(chars, ...)`. Both
+    * input forms fill it: a String copies its chars, a UTF-8 byte array widens (see
+    * [[resetBytes]]). Inputs up to [[Tokenizer.MaxPooledInputChars]] refill the buffer pooled with
+    * the scanner — a copy but no allocation, with retention hard-bounded by the cap; larger inputs
+    * take a transient buffer that the next pooled use discards. The buffer may be longer than the
+    * input: every scan limit must come from [[inputLength]], never from `chars.length`.
     */
-  private[internal] var chars: Array[Char] = input.toCharArray
+  private[internal] var chars: Array[Char] = initialInput.toCharArray
+
+  /** the number of live chars in [[chars]] */
+  private[internal] var inputLength: Int = initialInput.length
+
+  /** Sizes [[chars]] for `needed` live chars under the pooling policy. */
+  private def prepareBuffer(needed: Int): Unit =
+    if needed <= MaxPooledInputChars then
+      if chars.length < needed || chars.length > MaxPooledInputChars then
+        var capacity = 16
+        while capacity < needed do capacity *= 2
+        chars = new Array[Char](capacity)
+    else if chars.length < needed then chars = new Array[Char](needed)
 
   /** Repositions this scanner at the start of a new input, for reuse from a pool. */
   private[internal] def reset(
       newInput: String,
       newExperimentalFlags: Int = ExperimentalFlags.None
   ): Unit =
-    input = newInput
-    val inputLength = newInput.length
-    if inputLength <= MaxPooledInputChars then
-      if chars.length < inputLength || chars.length > MaxPooledInputChars then
-        var capacity = 16
-        while capacity < inputLength do capacity *= 2
-        chars = new Array[Char](capacity)
-      newInput.getChars(0, inputLength, chars, 0)
-    else chars = newInput.toCharArray
+    val newLength = newInput.length
+    prepareBuffer(newLength)
+    newInput.getChars(0, newLength, chars, 0)
+    inputLength = newLength
+    index = 0
+    experimentalFlags = newExperimentalFlags
+    kind = TokenKind.Eof
+    str = null
+
+  /** Repositions this scanner at the start of a UTF-8 byte input. ASCII bytes widen directly into
+    * the char buffer (widening is not UTF-8 decoding — each non-negative byte is its char); the
+    * first non-ASCII byte delegates the whole input to the JDK's UTF-8 decoder through one
+    * transient String. Identifier and name inspection stay allocation-free either way.
+    */
+  private[internal] def resetBytes(
+      newInput: Array[Byte],
+      newExperimentalFlags: Int = ExperimentalFlags.None
+  ): Unit =
+    val byteLength = newInput.length
+    prepareBuffer(byteLength)
+    val text  = chars
+    var i     = 0
+    var ascii = true
+    while ascii && i < byteLength do
+      val b = newInput(i)
+      if b >= 0 then
+        text(i) = b.toChar
+        i += 1
+      else ascii = false
+    if ascii then inputLength = byteLength
+    else
+      val decoded       = new String(newInput, java.nio.charset.StandardCharsets.UTF_8)
+      val decodedLength = decoded.length
+      prepareBuffer(decodedLength)
+      decoded.getChars(0, decodedLength, chars, 0)
+      inputLength = decodedLength
     index = 0
     experimentalFlags = newExperimentalFlags
     kind = TokenKind.Eof
@@ -177,13 +217,13 @@ private[scalanotation] final class Tokenizer private[internal] (
     */
   def tokenize(debug: Boolean): Result[List[Token], DecodeError] =
     Result.catchException({ case e: TokenizeException =>
-      DecodeError.TokenFormat(e.message).atToken(spanAt(input, e.offset))
+      DecodeError.TokenFormat(e.message).atToken(spanAt(chars, inputLength, e.offset))
     }):
       val tokens = List.newBuilder[Token]
       var done   = false
       while !done do
         scanNext()
-        val token = materialize(input, this)
+        val token = materialize(this)
         tokens += token
         if debug then Console.err.println(token)
         done = kind == TokenKind.Eof
@@ -266,7 +306,7 @@ private[scalanotation] final class Tokenizer private[internal] (
     // text/index with a single write-back, since this is the hottest scan in record decoding.
     // Unusual whitespace (comments, unicode spaces) diverts to the general reader path.
     val text   = chars
-    val length = input.length
+    val length = inputLength
     var i      = index
     while i < length && { val ch = text(i); ch == ' ' || (ch >= '\t' && ch <= '\r') } do i += 1
     val from = i
@@ -302,7 +342,7 @@ private[scalanotation] final class Tokenizer private[internal] (
   private[internal] def scanEqualsChar(): Boolean =
     skipTrivia()
     if !isAtEnd && currentChar() == '='
-      && (index + 1 >= input.length || !isOperatorPart(chars(index + 1)))
+      && (index + 1 >= inputLength || !isOperatorPart(chars(index + 1)))
     then
       charScanStart = index
       index += 1
@@ -355,7 +395,7 @@ private[scalanotation] final class Tokenizer private[internal] (
     */
   private[internal] def scanSignedNumberValue(): Int =
     skipTrivia()
-    val length = input.length
+    val length = inputLength
     val from   = index
     if from >= length then 0
     else
@@ -396,7 +436,7 @@ private[scalanotation] final class Tokenizer private[internal] (
     */
   private[internal] def scanSignChar(): Boolean =
     skipTrivia()
-    if !isAtEnd && currentChar() == '-' && index + 1 < input.length
+    if !isAtEnd && currentChar() == '-' && index + 1 < inputLength
       && { val ch = chars(index + 1); ch >= '0' && ch <= '9' }
     then
       index += 1
@@ -410,7 +450,7 @@ private[scalanotation] final class Tokenizer private[internal] (
   private[internal] def scanBooleanValue(): Int =
     skipTrivia()
     val i      = index
-    val length = input.length
+    val length = inputLength
     if i + 4 <= length
       && chars(i) == 't' && chars(i + 1) == 'r'
       && chars(i + 2) == 'u' && chars(i + 3) == 'e'
@@ -432,7 +472,7 @@ private[scalanotation] final class Tokenizer private[internal] (
   private[internal] def peekPlusChar(): Boolean =
     skipTrivia()
     !isAtEnd && currentChar() == '+'
-    && (index + 1 >= input.length || !isOperatorPart(chars(index + 1)))
+    && (index + 1 >= inputLength || !isOperatorPart(chars(index + 1)))
 
   /** Consumes a single expected punctuation char: false consumes nothing. */
   private[internal] def scanPunctChar(expected: Char): Boolean =
@@ -471,7 +511,7 @@ private[scalanotation] final class Tokenizer private[internal] (
       case ch                             => fail(s"Unexpected character '$ch'")
 
   /** the raw source text of the token scanned so far — used in error messages only */
-  private def rawText: String = input.substring(start, index)
+  private def rawText: String = new String(chars, start, index - start)
 
   private def scanIdentifier(): Unit =
     // the identifier is a slice of the input: track offsets, no per-token builder
@@ -659,7 +699,7 @@ private[scalanotation] final class Tokenizer private[internal] (
     // Separators, unicode digits (accepted by the shape, interpreted slowly), or more than 18
     // digits invalidate the accumulator.
     val text   = chars
-    val length = input.length
+    val length = inputLength
     var i      = index
 
     var hasDot       = false
@@ -773,7 +813,7 @@ private[scalanotation] final class Tokenizer private[internal] (
     // platform. The separator flag is a parameter: capturing the var would lift it into a
     // heap-allocated Ref.
     def normalizedDigits(sawSeparator: Boolean): String =
-      val digits = input.substring(start, digitsEnd)
+      val digits = new String(chars, start, digitsEnd - start)
       if sawSeparator then digits.replace("_", "") else digits
 
     suffix match
@@ -812,11 +852,11 @@ private[scalanotation] final class Tokenizer private[internal] (
     while !isAtEnd && currentChar() != '"' && currentChar() != '\\' do advance()
     if isAtEnd then fail("Unterminated string literal")
     if currentChar() == '"' then
-      str = input.substring(contentStart, index)
+      str = new String(chars, contentStart, index - contentStart)
       advance()
       kind = TokenKind.StringLit
     else
-      val value = new StringBuilder(input.substring(contentStart, index))
+      val value = new StringBuilder(new String(chars, contentStart, index - contentStart))
       while !isAtEnd && currentChar() != '"' do
         if currentChar() == '\\' then
           advance()
@@ -867,7 +907,7 @@ private[scalanotation] final class Tokenizer private[internal] (
 
   private def quoteRunLength(): Int =
     var i = 0
-    while index + i < input.length && chars(index + i) == '\'' do i += 1
+    while index + i < inputLength && chars(index + i) == '\'' do i += 1
     i
 
   private def trimDedentedString(
@@ -910,7 +950,8 @@ private[scalanotation] final class Tokenizer private[internal] (
       sawCR: Boolean
   ): String =
     if closingIndentStart == closingIndentEnd then
-      if sawCR then normalizedSubstring(bodyStart, bodyEnd) else input.substring(bodyStart, bodyEnd)
+      if sawCR then normalizedSubstring(bodyStart, bodyEnd)
+      else new String(chars, bodyStart, bodyEnd - bodyStart)
     else
       val out           = new StringBuilder
       val closingIndent = closingIndentEnd - closingIndentStart
@@ -928,7 +969,7 @@ private[scalanotation] final class Tokenizer private[internal] (
               "Line in dedented string literal must be indented at least as much as the closing delimiter",
               lineStart
             )
-        out.append(input.substring(lineStart + cut, lineEnd))
+        out.appendAll(chars, lineStart + cut, lineEnd - (lineStart + cut))
         if lineEnd < bodyEnd then
           out.append('\n')
           lineStart = afterLineBreak(lineEnd)
@@ -943,7 +984,14 @@ private[scalanotation] final class Tokenizer private[internal] (
   ): Boolean =
     val prefixLength = prefixEnd - prefixStart
     lineEnd - lineStart >= prefixLength
-    && input.regionMatches(lineStart, input, prefixStart, prefixLength)
+    && {
+      var i  = 0
+      var ok = true
+      while ok && i < prefixLength do
+        if chars(lineStart + i) != chars(prefixStart + i) then ok = false
+        else i += 1
+      ok
+    }
 
   private def isIndentOnlyLine(lineStart: Int, lineEnd: Int): Boolean =
     var i = lineStart
@@ -955,10 +1003,10 @@ private[scalanotation] final class Tokenizer private[internal] (
   private def normalizedSubstring(from: Int, until: Int): String =
     var i = from
     while i < until && chars(i) != '\r' do i += 1
-    if i >= until then input.substring(from, until)
+    if i >= until then new String(chars, from, until - from)
     else
       val out = new StringBuilder(until - from)
-      out.append(input.substring(from, i))
+      out.appendAll(chars, from, i - from)
       while i < until do
         chars(i) match
           case '\r' =>
@@ -977,7 +1025,7 @@ private[scalanotation] final class Tokenizer private[internal] (
     ch == '\n' || ch == '\r'
 
   private def afterLineBreak(offset: Int): Int =
-    if chars(offset) == '\r' && offset + 1 < input.length && chars(offset + 1) == '\n'
+    if chars(offset) == '\r' && offset + 1 < inputLength && chars(offset + 1) == '\n'
     then offset + 2
     else offset + 1
 
@@ -1012,7 +1060,7 @@ private[scalanotation] final class Tokenizer private[internal] (
     // Gaps between tokens are almost always zero or one ' ': both exits are reached with at most
     // two char loads and no loop. Everything else diverts to the general walk.
     val text   = chars
-    val length = input.length
+    val length = inputLength
     var i      = index
     if i < length then
       val ch0 = text(i)
@@ -1034,7 +1082,7 @@ private[scalanotation] final class Tokenizer private[internal] (
 
   private def skipTriviaWalk(): Unit =
     val text   = chars
-    val length = input.length
+    val length = inputLength
     var i      = index
     while i < length do
       val ch = text(i)
@@ -1094,22 +1142,22 @@ private[scalanotation] final class Tokenizer private[internal] (
         depth -= 1
       else advance()
 
-  private def isAtEnd: Boolean = index >= input.length
+  private def isAtEnd: Boolean = index >= inputLength
 
   private def currentChar(): Char = chars(index)
 
   private def peekCompare(expected: Char, offset: Int = 1): Boolean =
     val nextIndex = index + offset
-    nextIndex < input.length && chars(nextIndex) == expected
+    nextIndex < inputLength && chars(nextIndex) == expected
 
   private def peekIsDigit(offset: Int = 1): Boolean =
     val nextIndex = index + offset
-    nextIndex < input.length && chars(nextIndex).isDigit
+    nextIndex < inputLength && chars(nextIndex).isDigit
 
   private def canScanPairArrow: Boolean =
     peekCompare('>') && {
       val afterArrow = index + 2
-      afterArrow >= input.length || !isOperatorPart(chars(afterArrow))
+      afterArrow >= inputLength || !isOperatorPart(chars(afterArrow))
     }
 
   private def advance(): Char =
@@ -1230,15 +1278,25 @@ private[scalanotation] object Tokenizer:
     * consumption, where the sign is known — otherwise `Int.MinValue` would be rejected, since its
     * magnitude overflows a positive Int.
     */
-  private[internal] def intValueAt(input: String, start: Int, end: Int, negative: Boolean): Int =
+  private[internal] def intValueAt(
+      chars: Array[Char],
+      start: Int,
+      end: Int,
+      negative: Boolean
+  ): Int =
     val limit   = if negative then Int.MinValue.toLong else -Int.MaxValue.toLong
-    val negated = negatedValueAt(input, start, end, limit, "Int")
+    val negated = negatedValueAt(chars, start, end, limit, "Int")
     (if negative then negated else -negated).toInt
 
   /** interprets a `LongLit` token's value in place from its input slice — see [[intValueAt]] */
-  private[internal] def longValueAt(input: String, start: Int, end: Int, negative: Boolean): Long =
+  private[internal] def longValueAt(
+      chars: Array[Char],
+      start: Int,
+      end: Int,
+      negative: Boolean
+  ): Long =
     val limit   = if negative then Long.MinValue else -Long.MaxValue
-    val negated = negatedValueAt(input, start, end, limit, "Long")
+    val negated = negatedValueAt(chars, start, end, limit, "Long")
     if negative then negated else -negated
 
   /** Accumulates the literal's magnitude negatively (mirroring `java.lang.Long.parseLong`), so
@@ -1247,19 +1305,22 @@ private[scalanotation] object Tokenizer:
     * The scanner has already validated every char in the slice.
     */
   private def negatedValueAt(
-      input: String,
+      chars: Array[Char],
       start: Int,
       end: Int,
       limit: Long,
       name: String
   ): Long =
     def invalid(): Nothing =
-      throw TokenizeException(s"Invalid $name literal '${input.substring(start, end)}'", start)
+      throw TokenizeException(
+        s"Invalid $name literal '${new String(chars, start, end - start)}'",
+        start
+      )
 
     var from = start
     var base = 10
-    if end - start > 2 && input.charAt(start) == '0' then
-      input.charAt(start + 1) match
+    if end - start > 2 && chars(start) == '0' then
+      chars(start + 1) match
         case 'x' | 'X' => base = 16; from = start + 2
         case 'b' | 'B' => base = 2; from = start + 2
         case _         => ()
@@ -1268,7 +1329,7 @@ private[scalanotation] object Tokenizer:
     var result  = 0L
     var i       = from
     while i < end do
-      val ch = input.charAt(i)
+      val ch = chars(i)
       if ch != '_' && ch != 'l' && ch != 'L' then
         val digit = Character.digit(ch, base)
         if digit < 0 || digit >= base || result < multmin then invalid()
@@ -1312,10 +1373,28 @@ private[scalanotation] object Tokenizer:
       i += 1
     DecodeError.Span(offset, line, column)
 
+  /** [[spanAt]] over a decoded char buffer — error/debug path only. */
+  private[internal] def spanAt(
+      chars: Array[Char],
+      inputLength: Int,
+      offset: Int
+  ): DecodeError.Span =
+    var line   = 1
+    var column = 1
+    var i      = 0
+    val limit  = math.min(offset, inputLength)
+    while i < limit do
+      if chars(i) == '\n' then
+        line += 1
+        column = 1
+      else column += 1
+      i += 1
+    DecodeError.Span(offset, line, column)
+
   /** Materialize the scanner's current slots as a boxed [[Token]] — debug/test path only. */
-  private[internal] def materialize(input: String, scanner: Tokenizer): Token =
-    val span = spanAt(input, scanner.start)
-    def raw  = input.substring(scanner.start, scanner.end)
+  private[internal] def materialize(scanner: Tokenizer): Token =
+    val span = spanAt(scanner.chars, scanner.inputLength, scanner.start)
+    def raw  = new String(scanner.chars, scanner.start, scanner.end - scanner.start)
     scanner.kind match
       case TokenKind.PackageKw    => Token.PackageKw(span)
       case TokenKind.ValKw        => Token.ValKw(span)
@@ -1331,9 +1410,17 @@ private[scalanotation] object Tokenizer:
       // no sign context here: the boxed token carries the positive interpretation, and a literal
       // only valid with a leading '-' (MinValue's magnitude) is rejected like any other overflow
       case TokenKind.IntLit =>
-        Token.IntLit(raw, intValueAt(input, scanner.start, scanner.end, negative = false), span)
+        Token.IntLit(
+          raw,
+          intValueAt(scanner.chars, scanner.start, scanner.end, negative = false),
+          span
+        )
       case TokenKind.LongLit =>
-        Token.LongLit(raw, longValueAt(input, scanner.start, scanner.end, negative = false), span)
+        Token.LongLit(
+          raw,
+          longValueAt(scanner.chars, scanner.start, scanner.end, negative = false),
+          span
+        )
       case TokenKind.FloatLit  => Token.FloatLit(raw, scanner.dbl.toFloat, span)
       case TokenKind.DoubleLit => Token.DoubleLit(raw, scanner.dbl, span)
       case TokenKind.StringLit => Token.StringLit(raw, scanner.str.nn, span)
@@ -1367,7 +1454,7 @@ private[scalanotation] object Tokenizer:
   * [[DecodeError]] (or for debug output).
   */
 private[scalanotation] abstract class TokenStream private[internal] (
-    private var input: String,
+    initialInput: String,
     private var debug: Boolean,
     scanOnInit: Boolean
 ) extends PushSlots {
@@ -1375,7 +1462,7 @@ private[scalanotation] abstract class TokenStream private[internal] (
     this(input, debug, scanOnInit = true)
 
   private val scanner =
-    Tokenizer(input, 0, ExperimentalFlags.None)
+    Tokenizer(initialInput, 0, ExperimentalFlags.None)
 
   private var experimentalFlags = ExperimentalFlags.None
 
@@ -1398,10 +1485,19 @@ private[scalanotation] abstract class TokenStream private[internal] (
 
   /** Re-aims this stream at the start of a new input, for reuse from a pool. */
   protected def resetStream(newInput: String, newDebug: Boolean): Unit =
-    input = newInput
     debug = newDebug
     experimentalFlags = ExperimentalFlags.None
     scanner.reset(newInput, experimentalFlags)
+    resetStreamState()
+
+  /** [[resetStream]] over a UTF-8 byte input — see [[Tokenizer.resetBytes]]. */
+  protected def resetStreamBytes(newInput: Array[Byte], newDebug: Boolean): Unit =
+    debug = newDebug
+    experimentalFlags = ExperimentalFlags.None
+    scanner.resetBytes(newInput, experimentalFlags)
+    resetStreamState()
+
+  private def resetStreamState(): Unit =
     bufA.str = null // release references to the previous input's strings
     bufB.str = null
     cur = scanner.out
@@ -1412,7 +1508,7 @@ private[scalanotation] abstract class TokenStream private[internal] (
     scanner.scanNext()
     if debug then
       Console.err.println(
-        Tokenizer.materialize(input, scanner)
+        Tokenizer.materialize(scanner)
       ) // TODO: should allow logger customization in the future
 
   private def ensureToken(): Unit =
@@ -1574,7 +1670,7 @@ private[scalanotation] abstract class TokenStream private[internal] (
     val cached = slots.str
     if cached != null then cached
     else
-      val name = input.substring(slots.start, slots.end)
+      val name = new String(scanner.chars, slots.start, slots.end - slots.start)
       slots.str = name
       name
 
@@ -1610,7 +1706,7 @@ private[scalanotation] abstract class TokenStream private[internal] (
       var i  = 0
       var ok = true
       while ok && i < len do
-        if input.charAt(from + i) != expected.charAt(i) then ok = false
+        if scanner.chars(from + i) != expected.charAt(i) then ok = false
         else i += 1
       ok
 
@@ -1620,18 +1716,19 @@ private[scalanotation] abstract class TokenStream private[internal] (
       val negated = cur.num
       val limit   = if negative then Int.MinValue.toLong else -Int.MaxValue.toLong
       if negated >= limit then (if negative then negated else -negated).toInt
-      else Tokenizer.intValueAt(input, cur.start, cur.end, negative) // exact overflow error
-    else Tokenizer.intValueAt(input, cur.start, cur.end, negative)
+      else Tokenizer.intValueAt(scanner.chars, cur.start, cur.end, negative) // exact overflow
+    else Tokenizer.intValueAt(scanner.chars, cur.start, cur.end, negative)
 
   protected def currentLongValue(negative: Boolean): Long =
     val digits = cur.accDigits
     // up to 18 digits the negated magnitude cannot overflow, so no range check is needed
     if digits >= 1 && digits <= Tokenizer.MaxAccumulatedDigits then
       if negative then cur.num else -cur.num
-    else Tokenizer.longValueAt(input, cur.start, cur.end, negative)
+    else Tokenizer.longValueAt(scanner.chars, cur.start, cur.end, negative)
 
   // error-path materialization
-  protected def spanAt(offset: Int): DecodeError.Span = Tokenizer.spanAt(input, offset)
+  protected def spanAt(offset: Int): DecodeError.Span =
+    Tokenizer.spanAt(scanner.chars, scanner.inputLength, offset)
 
   protected def currentSpan(): DecodeError.Span =
     ensureToken()
@@ -1642,7 +1739,7 @@ private[scalanotation] abstract class TokenStream private[internal] (
     describeSlot(cur)
 
   private def describeSlot(slots: TokenSlots): String =
-    def raw = input.substring(slots.start, slots.end)
+    def raw = new String(scanner.chars, slots.start, slots.end - slots.start)
     slots.kind match
       case TokenKind.PackageKw    => "'package'"
       case TokenKind.ValKw        => "'val'"
