@@ -158,7 +158,7 @@ private[scalanotation] final class Tokenizer private[internal] (
   private def prepareBuffer(needed: Int): Unit =
     if needed <= MaxPooledInputChars then
       if chars.length < needed || chars.length > MaxPooledInputChars then
-        var capacity = 16
+        var capacity = MinPooledInputChars
         while capacity < needed do capacity *= 2
         chars = new Array[Char](capacity)
     else if chars.length < needed then chars = new Array[Char](needed)
@@ -1239,6 +1239,9 @@ private[scalanotation] object Tokenizer:
     * power of two, so the buffer's doubling growth never exceeds it.
     */
   private[internal] inline val MaxPooledInputChars = 8192
+
+  /** the pooled char buffer's smallest capacity — a power of two like the cap */
+  private[internal] inline val MinPooledInputChars = 16
 
   private[internal] inline val MinSeparatorControl = 28
   private[internal] inline val MaxSeparatorControl = 31
