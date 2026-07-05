@@ -72,8 +72,9 @@ class RenderBenchmark:
   private val typedPrimitive10Value =
     TypedWritePrimitive10Class(1001, -2002, 3003, -4004, 5005, -6006, 7007, -8008, 9009, -10010)
 
-  private val withVecValue: WithVec           = (label = "bench", nums = Vector.tabulate(100)(_ * 1000))
-  private val withIntArrayValue: WithIntArray = (label = "bench", nums = Array.tabulate(100)(_ * 1000))
+  private val withVecValue: WithVec = (label = "bench", nums = Vector.tabulate(100)(_ * 1000))
+  private val withIntArrayValue: WithIntArray =
+    (label = "bench", nums = Array.tabulate(100)(_ * 1000))
 
   private val stringsValue: Strings =
     (

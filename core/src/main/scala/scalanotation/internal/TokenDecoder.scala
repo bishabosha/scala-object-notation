@@ -27,6 +27,10 @@ private[scalanotation] object TokenDecoder:
   private def oneShot(input: String, debug: Boolean): TokenDecoder =
     TokenDecoder(input, debug, slotsPooling = false, scanOnInit = true)
 
+  private def oneShotBytes(input: Array[Byte], debug: Boolean): TokenDecoder =
+    val decoder = TokenDecoder("", debug, slotsPooling = false, scanOnInit = false)
+    decoder.resetBytes(input, debug)
+
   private object PoolDecoderAlloc extends Internal.Alloc[TokenDecoder]:
     def alloc(): TokenDecoder            = TokenDecoder.pooled()
     def prepare(t: TokenDecoder): t.type = t // re-aimed by reset(input, debug) after borrowing
@@ -52,6 +56,17 @@ private[scalanotation] object TokenDecoder:
           useDecoder(decoder.reset(input, debug))
         }
       case PoolHolder.NoPoolHolder => useDecoder(TokenDecoder.oneShot(input, debug))
+
+  private inline def withPooledBytes[A](ctx: PoolHolder, input: Array[Byte], debug: Boolean)(
+      inline use: TokenDecoder => A
+  ): A =
+    def useDecoder(decoder: TokenDecoder): A = use(decoder)
+    ctx match
+      case PoolHolder.RealPoolHolder(pool) =>
+        pool.withBorrowed { decoder =>
+          useDecoder(decoder.resetBytes(input, debug))
+        }
+      case PoolHolder.NoPoolHolder => useDecoder(TokenDecoder.oneShotBytes(input, debug))
 
   private[scalanotation] def decode[T](
       input: String,
@@ -101,6 +116,14 @@ private[scalanotation] object TokenDecoder:
     catchingTokenErrors(input):
       withPooled(ctx, input, debugTokens)(_.decodeExpression(decoder))
 
+  private[scalanotation] def decodeExpressionBytes[T](
+      input: Array[Byte],
+      debugTokens: Boolean,
+      decoder: Reader[T]
+  )(using ctx: PoolHolder): Result[T, DecodeError] =
+    catchingTokenErrorsBytes(input):
+      withPooledBytes(ctx, input, debugTokens)(_.decodeExpression(decoder))
+
   private[scalanotation] def decodeExperimentalExpression[T](
       input: String,
       debugTokens: Boolean,
@@ -119,6 +142,16 @@ private[scalanotation] object TokenDecoder:
     catch
       case e: TokenizeException =>
         Result.Err(DecodeError.TokenFormat(e.message).atToken(Tokenizer.spanAt(input, e.offset)))
+
+  /** [[catchingTokenErrors]] for byte inputs: the span decodes the bytes only on the error path */
+  private inline def catchingTokenErrorsBytes[A](input: Array[Byte])(
+      inline body: => Result[A, DecodeError]
+  ): Result[A, DecodeError] =
+    try body
+    catch
+      case e: TokenizeException =>
+        val decoded = new String(input, java.nio.charset.StandardCharsets.UTF_8)
+        Result.Err(DecodeError.TokenFormat(e.message).atToken(Tokenizer.spanAt(decoded, e.offset)))
 
   private[scalanotation] def isNullable(schema: RawSchema[?]): Boolean =
     schema match
@@ -157,6 +190,13 @@ private final class TokenDecoder private (
   /** Clears decode state and re-aims at a new input, for reuse via [[TokenDecoder.withPooled]]. */
   def reset(input: String, debug: Boolean): this.type =
     resetStream(input, debug)
+    resetSlots()
+    namedTupleParseResult.fieldName = null
+    this
+
+  /** [[reset]] over a UTF-8 byte input — see [[Tokenizer.resetBytes]]. */
+  def resetBytes(input: Array[Byte], debug: Boolean): this.type =
+    resetStreamBytes(input, debug)
     resetSlots()
     namedTupleParseResult.fieldName = null
     this
