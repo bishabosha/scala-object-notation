@@ -324,17 +324,17 @@ private[scalanotation] final class Tokenizer private[internal] (
       then
         charScanStart = i
         index = i + 1
-        1
+        HeaderMatched
       else
         index = i
         // '=' not found directly: comments or unusual whitespace may hide it — the general
         // char reader retries before the caller falls back to the token path
-        if scanEqualsChar() then 1 else 0
+        if scanEqualsChar() then HeaderMatched else HeaderNameSlice
     else
       // a different (or non-plain) name, or unusual leading trivia: rescan generically as a
       // slice for the caller's resolution
       index = from
-      if scanIdentSlice() then 0 else -1
+      if scanIdentSlice() then HeaderNameSlice else HeaderNone
 
   /** Consumes a single `=` that is a whole operator (rejecting `==`, `=>`, ...): false consumes
     * nothing.
@@ -352,7 +352,7 @@ private[scalanotation] final class Tokenizer private[internal] (
   /** Consumes an element separator: 1 for `,`, 2 for `closing`, 0 (nothing consumed) otherwise. */
   private[internal] def scanSeparatorChar(closing: Char): Int =
     skipTrivia()
-    if isAtEnd then 0
+    if isAtEnd then SeparatorNone
     else
       val ch = currentChar()
       if ch == ',' then
@@ -364,13 +364,13 @@ private[scalanotation] final class Tokenizer private[internal] (
         if !isAtEnd && currentChar() == closing then
           charScanStart = index
           index += 1
-          3
-        else 1
+          SeparatorTrailingClosing
+        else SeparatorComma
       else if ch == closing then
         charScanStart = index
         index += 1
-        2
-      else 0
+        SeparatorClosing
+      else SeparatorNone
 
   /** Scanner-direct scan of a numeric literal at a value position: runs the exact number-token
     * grammar into the slots, skipping the token-stream bookkeeping. False consumes nothing (not an
@@ -389,15 +389,16 @@ private[scalanotation] final class Tokenizer private[internal] (
         true
       else false
 
-  /** Scanner-direct scan of an optionally negated numeric literal in one trivia pass: 0 = nothing
-    * consumed, 1 = positive literal scanned, 2 = `-` and literal scanned. The token path treats the
-    * sign as its own Minus token with identical interpretation, so only the round trip is skipped.
+  /** Scanner-direct scan of an optionally negated numeric literal in one trivia pass — the
+    * [[Tokenizer.NumberNone]]/[[Tokenizer.NumberPositive]]/[[Tokenizer.NumberNegated]] codes. The
+    * token path treats the sign as its own Minus token with identical interpretation, so only the
+    * round trip is skipped.
     */
   private[internal] def scanSignedNumberValue(): Int =
     skipTrivia()
     val length = inputLength
     val from   = index
-    if from >= length then 0
+    if from >= length then NumberNone
     else
       val ch0 = chars(from)
       if ch0 >= '0' && ch0 <= '9' then
@@ -405,7 +406,7 @@ private[scalanotation] final class Tokenizer private[internal] (
         str = null
         scanNumber()
         end = index
-        1
+        NumberPositive
       else if ch0 == '-' && from + 1 < length
         && { val d = chars(from + 1); d >= '0' && d <= '9' }
       then
@@ -414,8 +415,8 @@ private[scalanotation] final class Tokenizer private[internal] (
         str = null
         scanNumber()
         end = index
-        2
-      else 0
+        NumberNegated
+      else NumberNone
 
   /** Scanner-direct scan of a string literal at a value position — see [[scanNumberValue]].
     * Dedented multi-quote strings stay on the token path.
@@ -457,7 +458,7 @@ private[scalanotation] final class Tokenizer private[internal] (
       && (i + 4 >= length || !isIdentifierPart(chars(i + 4)))
     then
       index = i + 4
-      1
+      BooleanTrue
     else if i + 5 <= length
       && chars(i) == 'f' && chars(i + 1) == 'a'
       && chars(i + 2) == 'l' && chars(i + 3) == 's'
@@ -465,8 +466,8 @@ private[scalanotation] final class Tokenizer private[internal] (
       && (i + 5 >= length || !isIdentifierPart(chars(i + 5)))
     then
       index = i + 5
-      0
-    else -1
+      BooleanFalse
+    else BooleanNone
 
   /** Whether the next char begins a `+` operator (string concatenation) — consumes only trivia. */
   private[internal] def peekPlusChar(): Boolean =
@@ -1243,6 +1244,47 @@ private[scalanotation] object Tokenizer:
   /** the pooled char buffer's smallest capacity — a power of two like the cap */
   private[internal] inline val MinPooledInputChars = 16
 
+  // ---- kernel op result codes ----
+
+  /** [[Tokenizer.scanFieldHeader]]: the expected name and its `=` were both consumed */
+  private[scalanotation] inline val HeaderMatched = 1
+
+  /** [[Tokenizer.scanFieldHeader]]: a name slice was consumed — the caller resolves it */
+  private[scalanotation] inline val HeaderNameSlice = 0
+
+  /** [[Tokenizer.scanFieldHeader]]: nothing consumed — the token path takes over */
+  private[scalanotation] inline val HeaderNone = -1
+
+  /** [[Tokenizer.scanSeparatorChar]]: nothing consumed (a pending token or another shape) */
+  private[scalanotation] inline val SeparatorNone = 0
+
+  /** [[Tokenizer.scanSeparatorChar]]: a `,` was consumed — another element follows */
+  private[scalanotation] inline val SeparatorComma = 1
+
+  /** [[Tokenizer.scanSeparatorChar]]: the closing char was consumed */
+  private[scalanotation] inline val SeparatorClosing = 2
+
+  /** [[Tokenizer.scanSeparatorChar]]: a trailing `,` and the closing char were both consumed */
+  private[scalanotation] inline val SeparatorTrailingClosing = 3
+
+  /** [[Tokenizer.scanSignedNumberValue]]: nothing consumed */
+  private[scalanotation] inline val NumberNone = 0
+
+  /** [[Tokenizer.scanSignedNumberValue]]: a positive literal was scanned */
+  private[scalanotation] inline val NumberPositive = 1
+
+  /** [[Tokenizer.scanSignedNumberValue]]: a `-` sign and its literal were scanned */
+  private[scalanotation] inline val NumberNegated = 2
+
+  /** [[Tokenizer.scanBooleanValue]]: `true` was consumed */
+  private[scalanotation] inline val BooleanTrue = 1
+
+  /** [[Tokenizer.scanBooleanValue]]: `false` was consumed */
+  private[scalanotation] inline val BooleanFalse = 0
+
+  /** [[Tokenizer.scanBooleanValue]]: nothing consumed — the token path takes over */
+  private[scalanotation] inline val BooleanNone = -1
+
   private[internal] inline val MinSeparatorControl = 28
   private[internal] inline val MaxSeparatorControl = 31
 
@@ -1581,7 +1623,7 @@ private[scalanotation] abstract class TokenStream private[internal] (
     * pending token or no plain identifier next).
     */
   protected final def expectFieldHeader(expected: Array[Char]): Int =
-    if hasToken then -1 else scanner.scanFieldHeader(expected)
+    if hasToken then Tokenizer.HeaderNone else scanner.scanFieldHeader(expected)
 
   /** Scans a plain-identifier field name as an offset slice — no token, no classification. On
     * success the slice offset is readable via [[sliceNameOffset]] until the next scan;
@@ -1606,7 +1648,7 @@ private[scalanotation] abstract class TokenStream private[internal] (
     * 0 = nothing consumed (pending token or another shape).
     */
   protected final def tryReadSeparatorChar(closing: Char): Int =
-    if hasToken then 0 else scanner.scanSeparatorChar(closing)
+    if hasToken then Tokenizer.SeparatorNone else scanner.scanSeparatorChar(closing)
 
   protected final def tryReadPunctChar(expected: Char): Boolean =
     !hasToken && scanner.scanPunctChar(expected)
@@ -1623,7 +1665,7 @@ private[scalanotation] abstract class TokenStream private[internal] (
 
   /** Char-level read of a `true`/`false` value: 1/0 consumed, -1 nothing consumed. */
   protected final def tryReadBooleanChar(): Int =
-    if hasToken then -1 else scanner.scanBooleanValue()
+    if hasToken then Tokenizer.BooleanNone else scanner.scanBooleanValue()
 
   // Scanner-direct value scans: on success the literal sits in the scanner slots (`cur` aims at
   // them whenever the stream is between tokens) and is semantically consumed — no pending token.
@@ -1635,7 +1677,7 @@ private[scalanotation] abstract class TokenStream private[internal] (
 
   /** 0 = nothing consumed, 1 = positive literal scanned, 2 = negated literal scanned */
   protected final def tryScanSignedNumberDirect(): Int =
-    if hasToken then 0 else scanner.scanSignedNumberValue()
+    if hasToken then Tokenizer.NumberNone else scanner.scanSignedNumberValue()
 
   protected final def tryScanStringDirect(): Boolean =
     !hasToken && scanner.scanStringValue()
