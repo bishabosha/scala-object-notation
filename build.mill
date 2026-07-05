@@ -115,6 +115,15 @@ object core extends ScalaObjectNotationModule, CorePublishedModule, Mima, TastyM
     Seq("scalanotation.internal")
   }
 
+  override def tastyMimaProblemFilters: Seq[tastymima.intf.ProblemMatcher] = Seq(
+    // the internal token-based named-tuple structure helpers (and their synthetic inline
+    // accessors) were replaced by the kernel record loop; BaseDecoders is private[scalanotation]
+    tastymima.intf.ProblemMatcher.make(
+      tastymima.intf.ProblemKind.MissingTermMember,
+      "scalanotation.internal.BaseDecoders.*"
+    )
+  )
+
   object js     extends ScalaObjectNotationJsModule, CorePublishedModule
   object jsWasm extends ScalaObjectNotationJsWasmModule, CoreModuleBase
   object native extends ScalaObjectNotationNativeModule, CorePublishedModule
