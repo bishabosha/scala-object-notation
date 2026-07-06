@@ -18,6 +18,12 @@ private[scalanotation] trait BaseDecoders extends SharedHelpers:
 
   protected type Resulting[+A, +E] = Label[Result.Err[E]] ?=> A
 
+  /** The raising channel of a value-returning decoder: a plain `using` parameter — NOT a context
+    * function result type, which would allocate a closure per call — through which decode errors
+    * break to the enclosing boundary while decoded values return directly to the caller.
+    */
+  protected type Raise = Label[Result.Err[DecodeError]]
+
   protected def namedTupleParseResult: NamedTupleParseResult
 
   protected final def expectedTypeAtCurrent(schema: RawSchema[?]): DecodeError =
@@ -28,18 +34,15 @@ private[scalanotation] trait BaseDecoders extends SharedHelpers:
   // overflows a positive Int. Parameters are inline so the lambda literals beta-reduce away
   // instead of going through Function1, which is not specialized for Float and would box on
   // every float decode.
-  protected inline def decodeSigned[N](
-      inline literal: Boolean => N,
-      inline store: N => Unit
-  ): Unit =
+  protected inline def decodeSigned[N](inline literal: Boolean => N): N =
     val negative =
       if currentKind() == TokenKind.Minus then
         advance()
         true
       else false
     val value = literal(negative)
-    advance()
-    store(value)
+    if pendingValueError == null then advance()
+    value
 
   protected final def expectVal(): Result[Unit, DecodeError] = Result.task:
     if currentKind() == TokenKind.ValKw then advance()
