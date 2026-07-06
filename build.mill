@@ -121,12 +121,6 @@ object core extends ScalaObjectNotationModule, CorePublishedModule, Mima, TastyM
     tastymima.intf.ProblemMatcher.make(
       tastymima.intf.ProblemKind.MissingTermMember,
       "scalanotation.internal.BaseDecoders.*"
-    ),
-    // the push-based atomic decoders were replaced by the value-returning forms; SchemaDecoders
-    // is private[scalanotation]
-    tastymima.intf.ProblemMatcher.make(
-      tastymima.intf.ProblemKind.MissingTermMember,
-      "scalanotation.internal.SchemaDecoders.*"
     )
   )
 

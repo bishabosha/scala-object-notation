@@ -173,26 +173,6 @@ private[scalanotation] abstract class PushSlots extends Internal.PoolHolder:
 
   protected final def pullControl(): Int = controlSlot
 
-  /** The error channel of the value-returning decoders: a failed decode parks its error here and
-    * returns a zero value, and the caller checks-and-consumes in the same frame — no boundary is
-    * entered per value (a `boundary` allocates its Label whenever the label escapes into a
-    * non-inlined callee), and decoded values return through registers, not slots.
-    */
-  // public on this internal class: inline bodies in several traits read it, and any tighter
-  // visibility makes each trait mint a clashing `inline$` accessor
-  var pendingValueError: DecodeError | Null = null
-
-  /** parks `error` as the pending value error and returns `zero` to the caller's checked frame */
-  protected inline def failValue[T](error: DecodeError, inline zero: T): T =
-    pendingValueError = error
-    zero
-
-  /** consumes the pending value error — call only when [[pendingValueError]] was seen non-null */
-  protected final def takeValueError(): DecodeError =
-    val error = pendingValueError.nn
-    pendingValueError = null
-    error
-
   /** pulls the most recent push as a single value, boxing the live typed slot if necessary */
   protected final def pullAny(): Any =
     (lastSlotKind: @switch) match
@@ -211,7 +191,6 @@ private[scalanotation] abstract class PushSlots extends Internal.PoolHolder:
     stringSlot = ""
     lastSlotKind = SlotKind.Ref
     nestingDepth = 0
-    pendingValueError = null
 
   /** appends the live slot to a vector builder state, unboxed when a typed slot is live */
   protected final def addSlot[Elem, Repr, A](
