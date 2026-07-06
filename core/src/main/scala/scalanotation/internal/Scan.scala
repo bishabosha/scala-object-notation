@@ -170,37 +170,6 @@ private[internal] trait Scan:
       if text(i - 1) == '_' then while i < limit && operatorPart(text(i)) do i += 1
       i
 
-  /** [[plainTrivia]], then every char of `expected`, then an identifier boundary — the leading form
-    * of a field header. On success the word spans the returned cursor minus `expected.length` to
-    * the cursor.
-    */
-  protected inline def wordAfterTrivia(p: Int, expected: Array[Char]): Int =
-    val text  = chars
-    val limit = inputLength
-    var i     = p
-    // probe-first: the word's first char is never a trivia char, so a direct hit at the cursor
-    // needs no whitespace walk; a single space before it — the idiomatic spaced form — shifts
-    // inline, and only wider gaps walk plain whitespace
-    if !(i < limit && text(i) == expected(0)) then i = plainGap(i)
-    val len = expected.length
-    var j   = 0
-    while j < len && i < limit && text(i) == expected(j) do
-      i += 1
-      j += 1
-    if j == len && (i >= limit || identifierEndsAt(text(i))) then i
-    else Failed
-
-  /** [[plainTrivia]] then [[wholeOperator]] — the operator sits at the returned cursor minus 1 */
-  protected inline def operatorAfterTrivia(p: Int, inline expected: Char): Int =
-    val text  = chars
-    val limit = inputLength
-    var i     = p
-    if !(i < limit && text(i) == expected) then i = plainGap(i)
-    if i < limit && text(i) == expected
-      && (i + 1 >= limit || !operatorPart(text(i + 1)))
-    then i + 1
-    else Failed
-
   /** A whole escape-free `"` string literal from `p`: the cursor past the closing quote, with the
     * content between `p + 1` and the returned cursor minus one. An escape, a missing opening quote,
     * or the end of input fails — the general string reader sees identical characters.
