@@ -182,14 +182,12 @@ private[internal] trait Scan:
     // needs no whitespace walk; only a first-char miss walks plain whitespace
     if !(i < limit && text(i) == expected(0)) then i = plainGap(i)
     val len = expected.length
-    if i + len > limit then Failed
-    else
-      var j = 0
-      while j < len && text(i) == expected(j) do
-        i += 1
-        j += 1
-      if j == len && (i >= limit || identifierEndsAt(text(i))) then i
-      else Failed
+    var j   = 0
+    while j < len && i < limit && text(i) == expected(j) do
+      i += 1
+      j += 1
+    if j == len && (i >= limit || identifierEndsAt(text(i))) then i
+    else Failed
 
   /** [[plainTrivia]] then [[wholeOperator]] — the operator sits at the returned cursor minus 1 */
   protected inline def operatorAfterTrivia(p: Int, inline expected: Char): Int =
