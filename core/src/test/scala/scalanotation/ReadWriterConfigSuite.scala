@@ -167,6 +167,10 @@ class ReadWriterConfigSuite extends ScalanotationSuite:
       Readers.readAs[Command]("""(kind = "" + "Copy", from = "a", to = "b")"""),
       expected
     )
+    assertEquals(
+      Readers.readAs[Command]("""(kind = "Co" /* comment */ + "py", from = "a", to = "b")"""),
+      expected
+    )
 
   test("configured discriminator sum decoder reports unknown cases in any literal form"):
     enum Command:
