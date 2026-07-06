@@ -343,6 +343,7 @@ private[scalanotation] final class Tokenizer private[internal] (
     * nothing.
     */
   private[internal] def scanEqualsChar(): Boolean =
+    if peek(index) == ' ' then index += 1 // a single space — the idiomatic spaced form
     if peek(index) != '=' then skipTrivia()
     val from = index
     val eq   = wholeOperator(from, '=')
@@ -383,6 +384,7 @@ private[scalanotation] final class Tokenizer private[internal] (
     * round trip is skipped.
     */
   private[internal] def scanSignedNumberValue(): Int =
+    if peek(index) == ' ' then index += 1
     val ch0 = peek(index)
     if ch0 != '-' && (ch0 < '0' || ch0 > '9') then skipTrivia()
     val from = index
@@ -407,6 +409,7 @@ private[scalanotation] final class Tokenizer private[internal] (
     * Dedented multi-quote strings stay on the token path.
     */
   private[internal] def scanStringValue(): Boolean =
+    if peek(index) == ' ' then index += 1
     if peek(index) != '"' then skipTrivia()
     val from = index
     if peek(from) == '"' then
@@ -424,6 +427,7 @@ private[scalanotation] final class Tokenizer private[internal] (
     * and returns false, so the general string decode sees the identical characters.
     */
   private[internal] def scanStringContentSlice(): Boolean =
+    if peek(index) == ' ' then index += 1
     if peek(index) != '"' then skipTrivia()
     val literal = index
     val closed  = stringSlice(literal) // no `"` literal, an escape or the end of input fail here
@@ -479,6 +483,7 @@ private[scalanotation] final class Tokenizer private[internal] (
 
   /** Consumes a single expected punctuation char: false consumes nothing. */
   private[internal] def scanPunctChar(expected: Char): Boolean =
+    if peek(index) == ' ' then index += 1
     if peek(index) != expected then skipTrivia()
     val from = index
     if peek(from) == expected then
