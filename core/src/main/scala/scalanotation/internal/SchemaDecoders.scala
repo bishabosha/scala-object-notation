@@ -1033,12 +1033,17 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
   private def consumeDiscriminatorSumStart(
       schema: RawSchema.DiscriminatorSum[?]
   ): DecodeError | Null =
-    if currentKind() == TokenKind.LParen then
-      advance()
-      if currentKind() == TokenKind.RParen then
-        DecodeError.UnitValueNotAllowed().atToken(currentSpan())
-      else null
-    else DecodeError.ExpectedType(schema.describeSelf, describeCurrent()).atToken(currentSpan())
+    // char-level like the record entry: the empty-record probe must not tokenize the
+    // discriminator name, or the fused header below can never match
+    if !tryReadPunctChar('(') then
+      if currentKind() == TokenKind.LParen then advance()
+      else
+        return DecodeError
+          .ExpectedType(schema.describeSelf, describeCurrent())
+          .atToken(currentSpan())
+    if tryConsumeRParen() then
+      DecodeError.UnitValueNotAllowed().atToken(spanAt(consumedRParenOffset))
+    else null
 
   private def discriminatorFieldOrderError(
       expected: String,
