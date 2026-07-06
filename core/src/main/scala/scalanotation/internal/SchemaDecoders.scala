@@ -1015,20 +1015,35 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
           discriminatorFieldOrderError(discriminatorField, actualName, headerOffset)
         )
 
-    decodeString() match
-      case Result.Err(error) => return Result.Err(error.atPath(s".$discriminatorField"))
-      case _                 =>
-
-    val caseName = pullStringStrict()
-    val sumCase  = RawSchema.findCase(schema, caseName)
-    if sumCase == null then
-      return Result.Err(
-        unexpectedDiscriminatorCaseError(caseName, discriminatorField, headerOffset)
-      )
+    // the case name reads like an identifier in quotes: an escape-free literal's content
+    // slice-compares against the plan-cached case chars (entries 1..n), so no String
+    // materializes on the match path; escapes, concatenation, or a non-string value fall
+    // back to the general string decode, which sees the identical characters
+    var sumCase: RawSchema.SumCase | Null = null
+    if tryReadStringContentSlice() then
+      val cases = schema.cases
+      var index = 0
+      while sumCase == null && index < cases.length do
+        if sliceNameEquals(plans.nameChars(index + 1)) then sumCase = cases(index)
+        else index += 1
+      if sumCase == null then
+        return Result.Err(
+          unexpectedDiscriminatorCaseError(sliceContentString(), discriminatorField, headerOffset)
+        )
+    else
+      decodeString() match
+        case Result.Err(error) => return Result.Err(error.atPath(s".$discriminatorField"))
+        case _                 =>
+      val caseName = pullStringStrict()
+      sumCase = RawSchema.findCase(schema, caseName)
+      if sumCase == null then
+        return Result.Err(
+          unexpectedDiscriminatorCaseError(caseName, discriminatorField, headerOffset)
+        )
 
     val endError = consumeDiscriminatorPayloadStart()
     if endError != null then Result.Err(endError)
-    else sumCase
+    else sumCase.nn
 
   private def consumeDiscriminatorSumStart(
       schema: RawSchema.DiscriminatorSum[?]
@@ -1054,12 +1069,6 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
       .FieldOrderMismatch(expected, actualName)
       .atPath(s".$actualName")
       .atToken(spanAt(nameOffset))
-
-  private def findDiscriminatorSumCase(
-      schema: RawSchema.DiscriminatorSum[?],
-      caseName: String
-  ): RawSchema.SumCase | Null =
-    RawSchema.findCase(schema, caseName)
 
   private def unexpectedDiscriminatorCaseError(
       caseName: String,
