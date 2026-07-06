@@ -283,9 +283,14 @@ private[scalanotation] final class Tokenizer private[internal] (
     * '_'-then-operator continuation rule.
     */
   private[internal] def scanIdentSlice(): Boolean =
-    skipTrivia()
-    val from  = index
-    val ident = identifier(from)
+    // probe-first: an identifier start is never a trivia char, so a direct hit at the cursor
+    // needs no whitespace machinery at all; a miss backs out to the general trivia reader
+    var from  = index
+    var ident = identifier(from)
+    if ident < 0 then
+      skipTrivia()
+      from = index
+      ident = identifier(from)
     if ident < 0 then false
     else
       start = from
@@ -338,7 +343,7 @@ private[scalanotation] final class Tokenizer private[internal] (
     * nothing.
     */
   private[internal] def scanEqualsChar(): Boolean =
-    skipTrivia()
+    if peek(index) != '=' then skipTrivia()
     val from = index
     val eq   = wholeOperator(from, '=')
     if eq >= 0 then
@@ -349,15 +354,17 @@ private[scalanotation] final class Tokenizer private[internal] (
 
   /** Consumes an element separator: 1 for `,`, 2 for `closing`, 0 (nothing consumed) otherwise. */
   private[internal] def scanSeparatorChar(closing: Char): Int =
-    skipTrivia()
+    var ch = peek(index)
+    if ch != ',' && ch != closing then
+      skipTrivia()
+      ch = peek(index)
     val from = index
-    val ch   = peek(from)
     if ch == ',' then
       charScanStart = from
       index = from + 1
       // a trailing comma may directly precede the closing char: consuming both here saves the
       // caller a separate probe after every element
-      skipTrivia()
+      if peek(index) != closing then skipTrivia()
       val at = index
       if peek(at) == closing then
         charScanStart = at
@@ -376,7 +383,8 @@ private[scalanotation] final class Tokenizer private[internal] (
     * round trip is skipped.
     */
   private[internal] def scanSignedNumberValue(): Int =
-    skipTrivia()
+    val ch0 = peek(index)
+    if ch0 != '-' && (ch0 < '0' || ch0 > '9') then skipTrivia()
     val from = index
     val ch   = peek(from)
     if ch >= '0' && ch <= '9' then
@@ -399,7 +407,7 @@ private[scalanotation] final class Tokenizer private[internal] (
     * Dedented multi-quote strings stay on the token path.
     */
   private[internal] def scanStringValue(): Boolean =
-    skipTrivia()
+    if peek(index) != '"' then skipTrivia()
     val from = index
     if peek(from) == '"' then
       start = from
@@ -416,7 +424,7 @@ private[scalanotation] final class Tokenizer private[internal] (
     * and returns false, so the general string decode sees the identical characters.
     */
   private[internal] def scanStringContentSlice(): Boolean =
-    skipTrivia()
+    if peek(index) != '"' then skipTrivia()
     val literal = index
     val closed  = stringSlice(literal) // no `"` literal, an escape or the end of input fail here
     if closed < 0 then false
@@ -445,7 +453,8 @@ private[scalanotation] final class Tokenizer private[internal] (
     * (`trueish`, `true_`) is left for the token path, which classifies it identically.
     */
   private[internal] def scanBooleanValue(): Int =
-    skipTrivia()
+    val ch0 = peek(index)
+    if ch0 != 't' && ch0 != 'f' then skipTrivia()
     val from   = index
     val isTrue = keyword["true"](from)
     if isTrue >= 0 then
@@ -465,12 +474,12 @@ private[scalanotation] final class Tokenizer private[internal] (
 
   /** Whether the next char begins a `+` operator (string concatenation) — consumes only trivia. */
   private[internal] def peekPlusChar(): Boolean =
-    skipTrivia()
+    if peek(index) != '+' then skipTrivia()
     wholeOperator(index, '+') >= 0
 
   /** Consumes a single expected punctuation char: false consumes nothing. */
   private[internal] def scanPunctChar(expected: Char): Boolean =
-    skipTrivia()
+    if peek(index) != expected then skipTrivia()
     val from = index
     if peek(from) == expected then
       charScanStart = from
@@ -1586,14 +1595,15 @@ private[scalanotation] abstract class TokenStream private[internal] (
     * name consumed as a slice (readable via [[sliceNameOffset]]), -1 with nothing consumed (a
     * pending token or no plain identifier next).
     */
-  protected final def expectFieldHeader(expected: Array[Char]): Int =
-    if hasToken then Tokenizer.HeaderNone else scanner.scanFieldHeader(expected)
+  protected final inline def expectFieldHeader(expected: Array[Char]): Int =
+    if hasToken then -1 /* Tokenizer.HeaderNone: inline vals cannot fold here */
+    else scanner.scanFieldHeader(expected)
 
   /** Scans a plain-identifier field name as an offset slice — no token, no classification. On
     * success the slice offset is readable via [[sliceNameOffset]] until the next scan;
     * [[rescanNameSliceAsToken]] rewinds and rescans it generically for mismatch handling.
     */
-  protected final def tryReadNameSlice(): Boolean =
+  protected final inline def tryReadNameSlice(): Boolean =
     !hasToken && scanner.scanIdentSlice()
 
   protected final def sliceNameOffset(): Int = scanner.out.start
@@ -1622,27 +1632,29 @@ private[scalanotation] abstract class TokenStream private[internal] (
     scanner.rewindTo(scanner.out.start)
     ensureToken()
 
-  protected final def tryReadEqualsChar(): Boolean =
+  protected final inline def tryReadEqualsChar(): Boolean =
     !hasToken && scanner.scanEqualsChar()
 
   /** 1 = `,` consumed, 2 = `closing` consumed, 3 = a trailing `,` and the `closing` both consumed,
     * 0 = nothing consumed (pending token or another shape).
     */
-  protected final def tryReadSeparatorChar(closing: Char): Int =
-    if hasToken then Tokenizer.SeparatorNone else scanner.scanSeparatorChar(closing)
+  protected final inline def tryReadSeparatorChar(closing: Char): Int =
+    if hasToken then 0 /* Tokenizer.SeparatorNone: inline vals cannot fold here */
+    else scanner.scanSeparatorChar(closing)
 
-  protected final def tryReadPunctChar(expected: Char): Boolean =
+  protected final inline def tryReadPunctChar(expected: Char): Boolean =
     !hasToken && scanner.scanPunctChar(expected)
 
   /** Whether a `+` operator follows, probed at the char level — consumes nothing (beyond trivia),
     * so the stream stays between tokens when the answer is false.
     */
-  protected final def probePlusChar(): Boolean =
+  protected final inline def probePlusChar(): Boolean =
     !hasToken && scanner.peekPlusChar()
 
   /** Char-level read of a `true`/`false` value: 1/0 consumed, -1 nothing consumed. */
-  protected final def tryReadBooleanChar(): Int =
-    if hasToken then Tokenizer.BooleanNone else scanner.scanBooleanValue()
+  protected final inline def tryReadBooleanChar(): Int =
+    if hasToken then -1 /* Tokenizer.BooleanNone: inline vals cannot fold here */
+    else scanner.scanBooleanValue()
 
   // Scanner-direct value scans: on success the literal sits in the scanner slots (`cur` aims at
   // them whenever the stream is between tokens) and is semantically consumed — no pending token.
@@ -1650,10 +1662,11 @@ private[scalanotation] abstract class TokenStream private[internal] (
   // error paths that must report it exactly like the generic token path.
 
   /** 0 = nothing consumed, 1 = positive literal scanned, 2 = negated literal scanned */
-  protected final def tryScanSignedNumberDirect(): Int =
-    if hasToken then Tokenizer.NumberNone else scanner.scanSignedNumberValue()
+  protected final inline def tryScanSignedNumberDirect(): Int =
+    if hasToken then 0 /* Tokenizer.NumberNone: inline vals cannot fold here */
+    else scanner.scanSignedNumberValue()
 
-  protected final def tryScanStringDirect(): Boolean =
+  protected final inline def tryScanStringDirect(): Boolean =
     !hasToken && scanner.scanStringValue()
 
   /** Char-level read of an escape-free, non-concatenated string literal's content as a slice — see
@@ -1661,7 +1674,7 @@ private[scalanotation] abstract class TokenStream private[internal] (
     * (and materializes via [[sliceContentString]] for error text only) until the next scan; on
     * false nothing is consumed and the general string decode sees the identical characters.
     */
-  protected final def tryReadStringContentSlice(): Boolean =
+  protected final inline def tryReadStringContentSlice(): Boolean =
     !hasToken && scanner.scanStringContentSlice()
 
   /** materializes the last [[tryReadStringContentSlice]] result — error paths only */
