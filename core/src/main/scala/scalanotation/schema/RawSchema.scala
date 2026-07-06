@@ -146,6 +146,14 @@ enum RawSchema[A]:
             nullable(index) = scalanotation.internal.TokenDecoder.isNullable(sumCase.schema)
             index += 1
           RawSchema.FieldPlans(kinds, nameChars, nullable)
+        case sum: RawSchema.DiscriminatorSum[?] =>
+          // a single entry: the discriminator header (its value is always a string)
+          val name             = sum.discriminatorField
+          val kind: scala.Byte =
+            if scalanotation.internal.Tokenizer.isPlainFieldName(name) then
+              RawSchema.FieldPlan.StringV
+            else RawSchema.FieldPlan.TokenName
+          RawSchema.FieldPlans(Array(kind), Array(name.toCharArray), Array(false))
         case _ => RawSchema.FieldPlans.Empty
       fieldPlansCache = computed
       computed
