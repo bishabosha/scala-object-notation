@@ -414,6 +414,37 @@ private[scalanotation] final class Tokenizer private[internal] (
       end = index
       true
 
+  /** Scans an escape-free, non-concatenated `"` string literal's CONTENT as a slice: true with the
+    * literal consumed and the content bounds in `out.start`/`out.end` — nothing materializes, so
+    * callers compare the content like an identifier in quotes. Any discrepancy — not a `"` literal,
+    * an escape, an unterminated literal, or a following `+` (concatenation) — restores the position
+    * and returns false, so the general string decode sees the identical characters.
+    */
+  private[internal] def scanStringContentSlice(): Boolean =
+    skipTrivia()
+    if isAtEnd || currentChar() != '"' then false
+    else
+      val text    = chars
+      val length  = inputLength
+      val literal = index
+      var i       = literal + 1
+      var ch      = ' '
+      while i < length && { ch = text(i); ch != '"' && ch != '\\' } do i += 1
+      if i >= length || ch == '\\' then false
+      else
+        // a `+` after the closing quote means concatenation — only the general decode handles it
+        var j = i + 1
+        while j < length && { val c = text(j); c == ' ' || (c >= '\t' && c <= '\r') } do j += 1
+        if j < length && text(j) == '+'
+          && (j + 1 >= length || !isOperatorPart(text(j + 1)))
+        then false
+        else
+          out.start = literal + 1
+          out.end = i
+          charScanStart = literal
+          index = i + 1
+          true
+
   /** Fused scan of a `true`/`false` literal at a value position: 1/0 with it consumed, -1 with
     * nothing consumed. The boundary check mirrors [[scanIdentifier]], so any other identifier shape
     * (`trueish`, `true_`) is left for the token path, which classifies it identically.
@@ -1661,6 +1692,18 @@ private[scalanotation] abstract class TokenStream private[internal] (
 
   protected final def tryScanStringDirect(): Boolean =
     !hasToken && scanner.scanStringValue()
+
+  /** Char-level read of an escape-free, non-concatenated string literal's content as a slice — see
+    * [[Tokenizer.scanStringContentSlice]]. On success the slice compares via [[sliceNameEquals]]
+    * (and materializes via [[sliceContentString]] for error text only) until the next scan; on
+    * false nothing is consumed and the general string decode sees the identical characters.
+    */
+  protected final def tryReadStringContentSlice(): Boolean =
+    !hasToken && scanner.scanStringContentSlice()
+
+  /** materializes the last [[tryReadStringContentSlice]] result — error paths only */
+  protected final def sliceContentString(): String =
+    new String(scanner.chars, scanner.out.start, scanner.out.end - scanner.out.start)
 
   /** the kind of the literal scanned by the last successful direct scan */
   protected final def scannedKind(): Int = scanner.out.kind
