@@ -47,6 +47,15 @@ private[internal] trait Scan:
 
   protected def identifierPart(ch: Char): Boolean = IdentifierSyntax.isIdentifierPart(ch)
 
+  /** Whether an identifier ENDS at `ch` — the boundary check after every matched name. Every legal
+    * boundary char of real input (`,`, `)`, space, `=`, digits-as-continuation aside) sits below
+    * 64, so one bit test on the low identifier-part mask answers inline; chars above (which mean
+    * the identifier continues — the mismatch path) fall back to the full classifier.
+    */
+  protected inline def identifierEndsAt(ch: Char): Boolean =
+    if ch < 64 then ((0x03ff001000000000L >>> ch) & 1L) == 0L // bits: digits and '$'
+    else !IdentifierSyntax.isIdentifierPart(ch)
+
   protected def operatorPart(ch: Char): Boolean = IdentifierSyntax.isOperatorPart(ch)
 
   protected def identifierStart(ch: Char): Boolean = IdentifierSyntax.isIdentifierStart(ch)
@@ -145,7 +154,7 @@ private[internal] trait Scan:
     if p < 0 || p + constValue[Length[S]] > limit then Failed
     else
       val at = litChars[S, 0](text, p)
-      if at < 0 || (at < limit && identifierPart(text(at))) then Failed
+      if at < 0 || (at < limit && !identifierEndsAt(text(at))) then Failed
       else at
 
   /** A whole plain identifier from `p`: a start char, its part chars, and the trailing
@@ -179,7 +188,7 @@ private[internal] trait Scan:
       while j < len && text(i) == expected(j) do
         i += 1
         j += 1
-      if j == len && (i >= limit || !identifierPart(text(i))) then i
+      if j == len && (i >= limit || identifierEndsAt(text(i))) then i
       else Failed
 
   /** [[plainTrivia]] then [[wholeOperator]] — the operator sits at the returned cursor minus 1 */
