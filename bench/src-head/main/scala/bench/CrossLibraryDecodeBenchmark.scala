@@ -37,6 +37,18 @@ enum Shape derives scalanotation.ReadWriter:
 
 case class ShapeBatch(shapes: Vector[Shape]) derives scalanotation.ReadWriter
 
+// The same shapes under a discriminator-field encoding — SON's counterpart of jsoniter's and
+// uPickle's default ADT encodings, decoded through the partial named-tuple path.
+enum ShapeK:
+  case Circle(radius: Double)
+  case Rect(width: Double, height: Double)
+  case Label(text: String)
+object ShapeK:
+  given Configured[ShapeK]               = Configured.discriminator("kind")
+  given scalanotation.ReadWriter[ShapeK] = scalanotation.ReadWriter.configured.derived
+
+case class ShapeKBatch(shapes: Vector[ShapeK]) derives scalanotation.ReadWriter
+
 /** Cross-library comparison: SON typed batched decoding against jsoniter-scala, uPickle, and
   * zio-blocks decoding the equivalent JSON. SON reads a String; the JSON libraries are measured
   * both from a String (input parity) and — where supported — from a byte array (their fastest entry
@@ -84,6 +96,15 @@ class CrossLibraryDecodeBenchmark:
     }
   )
 
+  private val shapeKBatch = ShapeKBatch(
+    (1 to 100).toVector.map { i =>
+      (i % 3: @unchecked) match
+        case 0 => ShapeK.Circle(i * 1.5)
+        case 1 => ShapeK.Rect(i * 2.0, i * 3.0)
+        case 2 => ShapeK.Label(s"shape-$i")
+    }
+  )
+
   // codecs, schemas, and readers derived once — every side measures pure decoding
   private given JsonValueCodec[TypedFlatClass]        = JsonCodecMaker.make
   private given JsonValueCodec[TypedPrimitive10Class] = JsonCodecMaker.make
@@ -108,6 +129,8 @@ class CrossLibraryDecodeBenchmark:
   private val upickleShapesInput   = upickle.default.write(shapeBatch)
   private val zioShapesInput       = zioShapesCodec.encode(shapeBatch)
   private val sonShapesBytesInput  = sonShapesInput.getBytes(StandardCharsets.UTF_8)
+  private val sonShapesKInput      = scalanotation.Writers.write(shapeKBatch)
+  private val sonShapesKBytesInput = sonShapesKInput.getBytes(StandardCharsets.UTF_8)
   private val jsonShapesBytesInput = jsonShapesInput.getBytes(StandardCharsets.UTF_8)
 
   private val zioFlatCodec        = Schema.derived[TypedFlatClass].derive(JsonFormat)
@@ -188,6 +211,8 @@ class CrossLibraryDecodeBenchmark:
     )
     requireOk("sonShapes100", Readers.batched.readAs[ShapeBatch](sonShapesInput))
     requireOk("sonShapes100Bytes", Readers.batched.readAs[ShapeBatch](sonShapesBytesInput))
+    requireOk("sonShapesDisc100", Readers.batched.readAs[ShapeKBatch](sonShapesKInput))
+    requireOk("sonShapesDisc100Bytes", Readers.batched.readAs[ShapeKBatch](sonShapesKBytesInput))
   }
 
   @Benchmark def sonFlatCompact: Any =
@@ -210,6 +235,10 @@ class CrossLibraryDecodeBenchmark:
     Readers.batched.readAs[ShapeBatch](sonShapesInput)
   @Benchmark def sonShapes100Bytes: Any =
     Readers.batched.readAs[ShapeBatch](sonShapesBytesInput)
+  @Benchmark def sonShapesDisc100: Any =
+    Readers.batched.readAs[ShapeKBatch](sonShapesKInput)
+  @Benchmark def sonShapesDisc100Bytes: Any =
+    Readers.batched.readAs[ShapeKBatch](sonShapesKBytesInput)
   @Benchmark def jsoniterShapes100String: Any =
     readFromString[ShapeBatch](jsonShapesInput)
   @Benchmark def jsoniterShapes100Bytes: Any =
