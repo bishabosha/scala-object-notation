@@ -29,13 +29,22 @@ object OrderBatch:
   given Configured[OrderBatch]   = Configured.typed
   given Reader[OrderBatch]       = Reader.configured.derived
 
-// mixed-case enum batch — each library decodes its own default sum encoding
-enum Shape derives scalanotation.ReadWriter:
+// mixed-case enum batch — each library decodes its own default sum encoding, with SON in its
+// typed-factory configuration (like OrderRecord)
+enum Shape:
   case Circle(radius: Double)
   case Rect(width: Double, height: Double)
   case Label(text: String)
+object Shape:
+  given TypedFactory[Shape]             = TypedFactories.derived
+  given Configured[Shape]               = Configured.default[Shape].withTypedFactories
+  given scalanotation.ReadWriter[Shape] = scalanotation.ReadWriter.configured.derived
 
-case class ShapeBatch(shapes: Vector[Shape]) derives scalanotation.ReadWriter
+case class ShapeBatch(shapes: Vector[Shape])
+object ShapeBatch:
+  given TypedFactory[ShapeBatch]             = TypedFactories.derived
+  given Configured[ShapeBatch]               = Configured.typed
+  given scalanotation.ReadWriter[ShapeBatch] = scalanotation.ReadWriter.configured.derived
 
 // The same shapes under a discriminator-field encoding — SON's counterpart of jsoniter's and
 // uPickle's default ADT encodings, decoded through the partial named-tuple path.
@@ -44,10 +53,15 @@ enum ShapeK:
   case Rect(width: Double, height: Double)
   case Label(text: String)
 object ShapeK:
-  given Configured[ShapeK]               = Configured.discriminator("kind")
+  given TypedFactory[ShapeK] = TypedFactories.derived
+  given Configured[ShapeK]   = Configured.discriminator[ShapeK]("kind").withTypedFactories
   given scalanotation.ReadWriter[ShapeK] = scalanotation.ReadWriter.configured.derived
 
-case class ShapeKBatch(shapes: Vector[ShapeK]) derives scalanotation.ReadWriter
+case class ShapeKBatch(shapes: Vector[ShapeK])
+object ShapeKBatch:
+  given TypedFactory[ShapeKBatch]             = TypedFactories.derived
+  given Configured[ShapeKBatch]               = Configured.typed
+  given scalanotation.ReadWriter[ShapeKBatch] = scalanotation.ReadWriter.configured.derived
 
 /** Cross-library comparison: SON typed batched decoding against jsoniter-scala, uPickle, and
   * zio-blocks decoding the equivalent JSON. SON reads a String; the JSON libraries are measured
