@@ -509,10 +509,9 @@ private[scalanotation] final class Tokenizer private[internal] (
   private def rawText: String = new String(chars, start, index - start)
 
   private def scanIdentifier(): Unit =
-    // the identifier is a slice of the input: track offsets, no per-token builder
-    while !isAtEnd && isIdentifierPart(currentChar()) do advance()
-    if index > start && chars(index - 1) == '_' then
-      while !isAtEnd && isOperatorPart(currentChar()) do advance()
+    // the identifier is a slice of the input: track offsets, no per-token builder (the
+    // dispatcher guarantees an identifier start char, so the scan cannot fail)
+    index = identifier(index)
     kind = classifyIdentifier()
 
   /** Classifies the identifier slice against the special and reserved keywords, dispatching on the
@@ -627,7 +626,7 @@ private[scalanotation] final class Tokenizer private[internal] (
     else scanDecimalNumber()
 
   private def scanOperator(): Unit =
-    while !isAtEnd && isOperatorPart(currentChar()) do advance()
+    index = takeWhile(index)(ch => isOperatorPart(ch))
     val len = index - start
     // the fixed punctuation operators are classified straight from the slice — `=` especially is
     // scanned once per named-tuple field, so it must never allocate
@@ -688,15 +687,11 @@ private[scalanotation] final class Tokenizer private[internal] (
     out.accDigits = AccumulatorInvalid // prefixed literals always interpret via the slow path
 
   private def scanDecimalNumber(): Unit =
-    // Locals-based walks: each literal char costs one bounds check and one load, with `index`
-    // written back once per phase. The integer-part walk accumulates the negated base-10 value
-    // alongside shape validation, so plain Int/Long literals need no second pass at consumption.
-    // Separators, unicode digits (accepted by the shape, interpreted slowly), or more than 18
-    // digits invalidate the accumulator.
-    val text   = chars
-    val length = inputLength
-    var i      = index
-
+    // Three [[digitRun]] walks — integer, fraction, exponent — with the accumulation living in
+    // this method's locals through the run's inline callbacks. The integer-part walk accumulates
+    // the negated base-10 value alongside shape validation, so plain Int/Long literals need no
+    // second pass at consumption. Separators, unicode digits (accepted by the shape, interpreted
+    // slowly), or more than 18 digits invalidate the accumulator.
     var hasDot       = false
     var hasExponent  = false
     var acc          = 0L
@@ -710,27 +705,21 @@ private[scalanotation] final class Tokenizer private[internal] (
     var dblOk = true
     var exp10 = 0
 
-    var walking = true
-    while walking && i < length do
-      val ch = text(i)
-      if ch >= '0' && ch <= '9' then
-        if accDigits != AccumulatorInvalid && accDigits < MaxAccumulatedDigits then
-          acc = acc * 10 - (ch - '0')
-          accDigits += 1
-        else
-          accDigits = AccumulatorInvalid
-          dblOk = false
-        i += 1
-      else if ch == '_' then
-        sawSeparator = true
+    val text   = chars
+    val length = inputLength
+
+    var i = digitRun(index) { ch =>
+      if accDigits != AccumulatorInvalid && accDigits < MaxAccumulatedDigits then
+        acc = acc * 10 - (ch - '0')
+        accDigits += 1
+      else
         accDigits = AccumulatorInvalid
         dblOk = false
-        i += 1
-      else if ch > IdentifierSyntax.MaxAscii && Character.isDigit(ch) then
-        accDigits = AccumulatorInvalid
-        dblOk = false
-        i += 1
-      else walking = false
+    } { isSeparator =>
+      if isSeparator then sawSeparator = true
+      accDigits = AccumulatorInvalid
+      dblOk = false
+    }
 
     if i + 1 < length && text(i) == '.' && {
         val d = text(i + 1)
@@ -738,25 +727,16 @@ private[scalanotation] final class Tokenizer private[internal] (
       }
     then
       hasDot = true
-      i += 1
-      walking = true
-      while walking && i < length do
-        val ch = text(i)
-        if ch >= '0' && ch <= '9' then
-          if accDigits != AccumulatorInvalid && accDigits < MaxAccumulatedDigits then
-            acc = acc * 10 - (ch - '0')
-            accDigits += 1
-            exp10 -= 1
-          else dblOk = false
-          i += 1
-        else if ch == '_' then
-          sawSeparator = true
-          dblOk = false
-          i += 1
-        else if ch > IdentifierSyntax.MaxAscii && Character.isDigit(ch) then
-          dblOk = false
-          i += 1
-        else walking = false
+      i = digitRun(i + 1) { ch =>
+        if accDigits != AccumulatorInvalid && accDigits < MaxAccumulatedDigits then
+          acc = acc * 10 - (ch - '0')
+          accDigits += 1
+          exp10 -= 1
+        else dblOk = false
+      } { isSeparator =>
+        if isSeparator then sawSeparator = true
+        dblOk = false
+      }
 
     if i < length && { val ch = text(i); ch == 'e' || ch == 'E' } then
       hasExponent = true
@@ -772,20 +752,12 @@ private[scalanotation] final class Tokenizer private[internal] (
         }
       then fail("Exponent requires at least one digit")
       var explicitExp = 0
-      walking = true
-      while walking && i < length do
-        val ch = text(i)
-        if ch >= '0' && ch <= '9' then
-          if explicitExp < ExponentSaturation then explicitExp = explicitExp * 10 + (ch - '0')
-          i += 1
-        else if ch == '_' then
-          sawSeparator = true
-          dblOk = false
-          i += 1
-        else if ch > IdentifierSyntax.MaxAscii && Character.isDigit(ch) then
-          dblOk = false
-          i += 1
-        else walking = false
+      i = digitRun(i) { ch =>
+        if explicitExp < ExponentSaturation then explicitExp = explicitExp * 10 + (ch - '0')
+      } { isSeparator =>
+        if isSeparator then sawSeparator = true
+        dblOk = false
+      }
       exp10 += (if expNegative then -explicitExp else explicitExp)
 
     index = i
@@ -844,7 +816,7 @@ private[scalanotation] final class Tokenizer private[internal] (
     advance()
     // fast path: an escape-free string is a slice of the input, no builder needed
     val contentStart = index
-    while !isAtEnd && currentChar() != '"' && currentChar() != '\\' do advance()
+    index = takeWhile(index)(ch => ch != '"' && ch != '\\')
     if isAtEnd then fail("Unterminated string literal")
     if currentChar() == '"' then
       str = new String(chars, contentStart, index - contentStart)
@@ -1116,9 +1088,7 @@ private[scalanotation] final class Tokenizer private[internal] (
       else return
 
   private def skipLineComment(): Unit =
-    advance()
-    advance()
-    while !isAtEnd && currentChar() != '\n' do advance()
+    index = takeWhile(index + 2)(ch => ch != '\n')
 
   private def skipBlockComment(): Unit =
     val startOffset = index
