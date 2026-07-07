@@ -426,13 +426,9 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
   ): Result[Unit, DecodeError] =
     withRead(schema, _.read) { read =>
       withBorrowSlots(read.slotsFactory) { slots =>
-        // the seen-field bitset only matters when fields can be skipped (out-of-schema-order
-        // duplicates); in ordered mode the decoded set is always the contiguous prefix
-        if schema.allowSkippedNullableFields then
-          fieldIndexSetPool.withBorrowed { seenFields =>
-            decodeRecordFields(schema, read, slots, seenFields)
-          }
-        else decodeRecordFields(schema, read, slots, null)
+        fieldIndexSetPool.withBorrowed { seenFields =>
+          decodeRecordFields(schema, read, slots, seenFields)
+        }
       }
     }
 
@@ -447,14 +443,14 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
       schema: RawSchema.NamedTuple[?],
       read: RawSchema.NamedTupleRead,
       slots: scalanotation.BuilderSlots | Null,
-      seenFields: Internal.FieldIndexSet | Null
+      seenFields: Internal.FieldIndexSet
   ): Result[Unit, DecodeError] =
     Result.task {
       val fields    = schema.fields
       val allowSkip = schema.allowSkippedNullableFields
-      if seenFields != null then seenFields.reset(fields.length)
+      seenFields.reset(fields.length)
       schema.isValidNamedTuple(namesPool).check
-      val plans             = schema.fieldPlans
+      val plainNames        = schema.plainFieldNames
       var state: read.State = read.init(fields.length, slots)
 
       if !tryReadPunctChar('(') then
@@ -484,7 +480,7 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
             var index   = fieldIndex
             var walking = true
             while walking do
-              if index < fields.length && plans(index) != RawSchema.FieldPlan.TokenName then
+              if index < fields.length && plainNames(index) then
                 if sliceNameMatches(fields(index).name) then
                   decodedIndex = index
                   walking = false
@@ -496,7 +492,7 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
               while fieldIndex < decodedIndex do
                 state = read.add(state, fieldIndex, None)
                 fieldIndex += 1
-              if seenFields != null && seenFields.contains(decodedIndex) then
+              if seenFields.contains(decodedIndex) then
                 raise(makeDuplicateKnownFieldError(fields(decodedIndex).name, nameOffset))
             else
               // a mismatch, a non-plain expected name, or the end of the schema: rescan the name
@@ -520,7 +516,7 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
                   fieldIndex += 1
 
                 if fieldIndex >= fields.length then
-                  duplicateDecodedFieldError(fields, seenFields, fieldIndex, nameOffset).check
+                  duplicateKnownFieldError(fields, seenFields, nameOffset, null).check
                   if expectedBeforeSkip == null then
                     raise(
                       currentFieldCountMismatchError(nameOffset, fields.length, decodedCount + 1)
@@ -530,19 +526,19 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
                   val expectedField = fields(fieldIndex)
                   if currentFieldNameMatches(expectedField.name) then fieldIndex
                   else
-                    duplicateDecodedFieldError(fields, seenFields, fieldIndex, nameOffset).check
+                    duplicateKnownFieldError(fields, seenFields, nameOffset, null).check
                     raise(currentFieldOrderMismatchError(nameOffset, expectedField.name))
               else if fieldIndex >= fields.length then
-                duplicateDecodedFieldError(fields, seenFields, fieldIndex, nameOffset).check
+                duplicateKnownFieldError(fields, seenFields, nameOffset, null).check
                 raise(currentFieldCountMismatchError(nameOffset, fields.length, decodedCount + 1))
               else
                 val expectedField = fields(fieldIndex)
                 if currentFieldNameMatches(expectedField.name) then fieldIndex
                 else
-                  duplicateDecodedFieldError(fields, seenFields, fieldIndex, nameOffset).check
+                  duplicateKnownFieldError(fields, seenFields, nameOffset, null).check
                   raise(currentFieldOrderMismatchError(nameOffset, expectedField.name))
             }
-            if seenFields != null && seenFields.contains(decodedIndex) then
+            if seenFields.contains(decodedIndex) then
               raise(makeDuplicateKnownFieldError(fields(decodedIndex).name, nameOffset))
             advance() // consume the field-name token
 
@@ -553,12 +549,12 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
 
           // --- value ---
           val expectedField = fields(decodedIndex)
-          decodePlannedValue(plans(decodedIndex), expectedField.schema) match
+          decodeBase(expectedField.schema) match
             case Result.Err(error) =>
               raise(error.atPath(s".${expectedField.name}").atToken(spanAt(nameOffset)))
             case _ =>
               state = addSlot(read)(state, decodedIndex)
-              if seenFields != null then seenFields.mark(decodedIndex)
+              seenFields.mark(decodedIndex)
               fieldIndex = decodedIndex + 1
               decodedCount += 1
               lastFieldName = expectedField.name
@@ -603,22 +599,6 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
       else pushRef(read.finish(state))
     }
 
-  /** Dispatches a value decode through its precomputed [[RawSchema.FieldPlan]] code: direct
-    * primitive decoders for direct primitive schemas, the general dispatcher for everything else.
-    * Semantically identical to [[decodeBase]] — this only skips re-deriving the dispatch from the
-    * schema on every value.
-    */
-  private def decodePlannedValue(plan: Byte, schema: RawSchema[?]): Result[Unit, DecodeError] =
-    (plan: @scala.annotation.switch) match
-      case RawSchema.FieldPlan.IntV     => decodeInt()
-      case RawSchema.FieldPlan.LongV    => decodeLong()
-      case RawSchema.FieldPlan.DoubleV  => decodeDouble()
-      case RawSchema.FieldPlan.FloatV   => decodeFloat()
-      case RawSchema.FieldPlan.BooleanV => decodeBoolean()
-      case RawSchema.FieldPlan.StringV  => decodeString()
-      case RawSchema.FieldPlan.CharV    => decodeChar()
-      case _                            => decodeBase(schema)
-
   /** offset of the `)` consumed by the most recent successful [[tryConsumeRParen]] */
   private var consumedRParenOffset = 0
 
@@ -649,27 +629,6 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
       nameOffset: Int
   ): DecodeError =
     DecodeError.DuplicateField(name).atPath(s".${name}").atToken(spanAt(nameOffset))
-
-  /** [[duplicateKnownFieldError]] for the record loop: without a bitset (ordered mode) the decoded
-    * set is exactly the contiguous prefix `fields(0 until seenCount)`.
-    */
-  private def duplicateDecodedFieldError(
-      fields: IArray[Field],
-      seenFields: Internal.FieldIndexSet | Null,
-      seenCount: Int,
-      nameOffset: Int
-  ): Result[Unit, DecodeError] =
-    if seenFields != null then duplicateKnownFieldError(fields, seenFields, nameOffset, null)
-    else
-      Result.task {
-        var index = 0
-        val limit = math.min(seenCount, fields.length)
-        while index < limit do
-          val name = fields(index).name
-          if currentFieldNameMatches(name) then
-            raise(makeDuplicateKnownFieldError(name, nameOffset))
-          index += 1
-      }
 
   private def duplicateKnownFieldError(
       fields: IArray[Field],
@@ -1053,11 +1012,8 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
       else
         var indexInVector = 0
         var done          = false
-        val elementPlan   = RawSchema.valuePlanOf(schema.element)
         while !done do
-          checkOrRaise(decodePlannedValue(elementPlan, schema.element))(
-            _.atPath(s"[$indexInVector]")
-          )
+          checkOrRaise(decodeBase(schema.element))(_.atPath(s"[$indexInVector]"))
           values = addSlot(read)(values)
           indexInVector += 1
 
@@ -1677,9 +1633,7 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
     /** decodes a string (with `+` concatenation), pushing the value into [[stringSlot]] */
   protected final def decodeString(): Result[Unit, DecodeError] =
     Result.task {
-      if currentKind() != TokenKind.StringLit then raise(expectedTypeAtCurrent(RawSchema.String))
-      pushString(currentStringValue())
-      advance()
+      decodeStringAtom().check
       // '+' concatenation is probed at the char level so the common single-literal case leaves the
       // stream between tokens instead of scanning whatever follows the string
       if (if betweenTokens then probePlusChar() else currentKind() == TokenKind.Plus) then
