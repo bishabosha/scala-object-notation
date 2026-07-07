@@ -474,37 +474,31 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
       else
         var done = false
         while !done do
-          // --- field name (+ '='): fused char-level header against the expected field, else the
-          // cold resolver over the same characters ---
+          // --- field name: char-level slice against the expected field, else the cold resolver ---
           var decodedIndex = -1
           var nameOffset   = 0
-          val headerProbe =
-            if fieldIndex < fields.length && plans(fieldIndex) != RawSchema.FieldPlan.TokenName
-            then tryReadFieldHeader(fields(fieldIndex).name)
-            else if tryReadNameSlice() then 0
-            else -1
-          if headerProbe == 1 then
-            decodedIndex = fieldIndex // name and '=' both consumed
+          if tryReadNameSlice() then
             nameOffset = sliceNameOffset()
-          else
-            if headerProbe == 0 then
-              nameOffset = sliceNameOffset()
+            if fieldIndex < fields.length && plans(fieldIndex) != RawSchema.FieldPlan.TokenName
+              && sliceNameMatches(fields(fieldIndex).name)
+            then decodedIndex = fieldIndex
+            else
               decodedIndex =
                 resolveRecordFieldSlow(fields, plans, seenFields, allowSkip, fieldIndex, true).ok
-            else
-              nameOffset = currentOffset()
-              decodedIndex =
-                resolveRecordFieldSlow(fields, plans, seenFields, allowSkip, fieldIndex, false).ok
+          else
+            nameOffset = currentOffset()
+            decodedIndex =
+              resolveRecordFieldSlow(fields, plans, seenFields, allowSkip, fieldIndex, false).ok
 
-            if decodedIndex > fieldIndex then
-              // None-fill the skipped range — the resolver validated that every schema in it is a
-              // skippable nullable
-              while fieldIndex < decodedIndex do
-                state = read.add(state, fieldIndex, None)
-                fieldIndex += 1
+          if decodedIndex > fieldIndex then
+            // None-fill the skipped range — the resolver validated that every schema in it is a
+            // skippable nullable
+            while fieldIndex < decodedIndex do
+              state = read.add(state, fieldIndex, None)
+              fieldIndex += 1
 
-            // --- '=' ---
-            if !tryReadEqualsChar() then consumeEqualsToken().check
+          // --- '=' ---
+          if !tryReadEqualsChar() then consumeEqualsToken().check
 
           // --- value ---
           val expectedField = fields(decodedIndex)
@@ -1809,19 +1803,15 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
 
   protected final def decodeBoolean(): Result[Unit, DecodeError] =
     Result.task:
-      tryReadBooleanChar() match
-        case 1 => pushBoolean(true)
-        case 0 => pushBoolean(false)
+      currentKind() match
+        case TokenKind.TrueKw =>
+          advance()
+          pushBoolean(true)
+        case TokenKind.FalseKw =>
+          advance()
+          pushBoolean(false)
         case _ =>
-          currentKind() match
-            case TokenKind.TrueKw =>
-              advance()
-              pushBoolean(true)
-            case TokenKind.FalseKw =>
-              advance()
-              pushBoolean(false)
-            case _ =>
-              raise(expectedTypeAtCurrent(RawSchema.Boolean))
+          raise(expectedTypeAtCurrent(RawSchema.Boolean))
 
   protected final def decodeNull(): Result[Unit, DecodeError] = Result.task:
     if currentKind() == TokenKind.NullKw then
