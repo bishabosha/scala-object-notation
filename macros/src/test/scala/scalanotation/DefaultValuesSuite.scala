@@ -134,6 +134,42 @@ class DefaultValuesSuite extends munit.FunSuite:
       Result.Ok(Config(Some(Db("h", 5432)), Vector(Worker(1, 3), Worker(2, 3))))
     )
 
+  test("each steps any Seq-represented field via the VectorRepr witness"):
+    case class Worker(id: Int, retries: Int)
+    case class Config(workers: List[Worker])
+
+    given Reader[Worker]        = Reader.derived
+    given DefaultValues[Config] = DefaultValues.of[Config] { c =>
+      Seq(c.workers.each.retries := 3)
+    }
+    given Configured[Config] = Configured.default.withDefaultValues
+    given Reader[Config]     = Reader.configured.derived
+
+    assertReads[Config]("""(workers = Vector((id = 1), (id = 2)))""")(
+      Result.Ok(Config(List(Worker(1, 3), Worker(2, 3))))
+    )
+
+  test("a custom witness makes an Option-represented type steppable"):
+    case class Db(host: String, port: Int)
+    // decodes through an Option schema (bare value or null), mapped to the custom wrapper
+    case class Cached[A](value: Option[A])
+    given [A: Reader]: Reader[Cached[A]] =
+      summon[Reader[Option[A]]].map(Cached(_))
+    given [A]: (DefaultValues.OptionRepr[Cached[A]] { type Inner = A }) =
+      new DefaultValues.OptionRepr[Cached[A]] { type Inner = A }
+
+    case class Config(db: Cached[Db])
+    given Reader[Db]            = Reader.derived
+    given DefaultValues[Config] = DefaultValues.of[Config] { c =>
+      Seq(c.db.some.port := 5432)
+    }
+    given Configured[Config] = Configured.default.withDefaultValues
+    given Reader[Config]     = Reader.configured.derived
+
+    assertReads[Config]("""(db = (host = "h"))""")(
+      Result.Ok(Config(Cached(Some(Db("h", 5432)))))
+    )
+
   test("a binding path naming a missing field is rejected at configuration time"):
     case class Config(name: String)
 
