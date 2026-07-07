@@ -31,21 +31,6 @@ object Readers:
       using BatchContext.garbageCollected.holder
     )
 
-  /** Reads a value from UTF-8 encoded bytes. Equivalent to decoding the bytes to a String first,
-    * without materializing one: ASCII input widens straight into the scanner's buffer, and only
-    * string values (never identifiers) allocate.
-    */
-  def readAs[T: Reader as reader](
-      input: Array[Byte],
-      debugTokens: Boolean
-  ): Result[T, DecodeError] =
-    TokenDecoder.decodeExpressionBytes(input, debugTokens, reader)(
-      using BatchContext.garbageCollected.holder
-    )
-
-  def readAs[T: Reader as reader](input: Array[Byte]): Result[T, DecodeError] =
-    readAs[T](input, debugTokens = false)
-
   def readDeclsAs[T: Reader as reader](
       input: String,
       debugTokens: Boolean = false,
@@ -129,19 +114,6 @@ object Readers:
     )(using reader: Reader[T], ctx: BatchContext): Result[T, DecodeError] =
       given TokenDecoder.PoolHolder = ctx.holder
       TokenDecoder.decodeExpression(input, debugTokens, reader)
-
-    /** [[Readers.readAs]] over UTF-8 bytes with pooled decoder machinery. */
-    def readAs[T](
-        input: Array[Byte],
-        debugTokens: Boolean
-    )(using reader: Reader[T], ctx: BatchContext): Result[T, DecodeError] =
-      given TokenDecoder.PoolHolder = ctx.holder
-      TokenDecoder.decodeExpressionBytes(input, debugTokens, reader)
-
-    def readAs[T](
-        input: Array[Byte]
-    )(using reader: Reader[T], ctx: BatchContext): Result[T, DecodeError] =
-      readAs[T](input, debugTokens = false)
 
     def readDeclsAs[T](
         input: String,
