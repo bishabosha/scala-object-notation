@@ -9,7 +9,8 @@ import scalanotation.schema.RawSchema
 final class Configured[T] private (
     val discriminatorField: Option[String],
     val skippable: Boolean,
-    private[scalanotation] val typedFactories: Configured.TypedFactories | Null
+    private[scalanotation] val typedFactories: Configured.TypedFactories | Null,
+    private[scalanotation] val defaultValues: DefaultValues[?] | Null
 )
 
 object Configured:
@@ -45,18 +46,38 @@ object Configured:
   extension [T](config: Configured[T])
     /** a copy of this configuration with the contextual [[TypedFactory]] evidence attached */
     def withTypedFactories(using factory: TypedFactory[T]): Configured[T] =
-      factory match
-        case product: TypedFactory.OfProduct[?] =>
-          createTyped(config.discriminatorField, config.skippable, product, Map.empty)
-        case sum: TypedFactory.OfSum[?] =>
-          createTyped(config.discriminatorField, config.skippable, null, sum.caseFactories)
+      val typedFactories = factory match
+        case product: TypedFactory.OfProduct[?] => TypedFactories(product, Map.empty)
+        case sum: TypedFactory.OfSum[?]         => TypedFactories(null, sum.caseFactories)
+      new Configured[T](
+        config.discriminatorField,
+        config.skippable,
+        typedFactories,
+        config.defaultValues
+      )
+
+    /** A copy of this configuration with the contextual [[DefaultValues]] evidence attached: fields
+      * omitted from the input decode to their default values. A mode switch with skippable options
+      * — a configuration is either defaults-filling or skippable, never both.
+      */
+    def withDefaultValues(using defaults: DefaultValues[T]): Configured[T] =
+      require(
+        !config.skippable,
+        "default values and skippable options are mutually exclusive decode modes"
+      )
+      new Configured[T](
+        config.discriminatorField,
+        skippable = false,
+        config.typedFactories,
+        defaults
+      )
 
   @publicInBinary
   private[scalanotation] def create[T](
       discriminatorField: Option[String],
       skippable: Boolean
   ): Configured[T] =
-    new Configured[T](discriminatorField, skippable, null)
+    new Configured[T](discriminatorField, skippable, null, null)
 
   @publicInBinary
   private[scalanotation] def createTyped[T](
@@ -65,7 +86,12 @@ object Configured:
       selfFactory: TypedFactory.OfProduct[?] | Null,
       caseFactories: Map[String, TypedFactory.OfProduct[?]]
   ): Configured[T] =
-    new Configured[T](discriminatorField, skippable, TypedFactories(selfFactory, caseFactories))
+    new Configured[T](
+      discriminatorField,
+      skippable,
+      TypedFactories(selfFactory, caseFactories),
+      null
+    )
 
   private[scalanotation] def applyToSchema[T](
       schema: RawSchema[T],
@@ -89,9 +115,69 @@ object Configured:
             )
           case other => other
       case None => baseSchema
-    config.typedFactories match
+    val typed = config.typedFactories match
       case null      => discriminated
       case factories => attachTypedFactories(discriminated, factories)
+    // defaults install LAST: every attachment above copies record nodes, and the installed
+    // property must live on the node the reader keeps
+    config.defaultValues match
+      case null     => typed
+      case defaults => installDefaults(typed, defaults)
+
+  /** Installs the gathered default values onto fresh copies of the schema's record nodes — the
+    * decode loop fills omitted fields from them. Structure mirrors [[makeSkippable]]; the two modes
+    * are mutually exclusive (enforced by `withDefaultValues`).
+    */
+  private def installDefaults[T](
+      schema: RawSchema[T],
+      defaults: DefaultValues[?]
+  ): RawSchema[T] =
+    schema match
+      case RawSchema.NamedTuple(fields, read, write, allowSkipped) =>
+        installFieldDefaults(schema, defaults.selfDefaults)
+      case RawSchema.Sum(cases, write) =>
+        RawSchema.Sum(cases.map(installCaseDefaults(defaults, _)), write)
+      case RawSchema.DiscriminatorSum(cases, write, discriminatorField) =>
+        RawSchema.DiscriminatorSum(
+          cases.map(installCaseDefaults(defaults, _)),
+          write,
+          discriminatorField
+        )
+      case RawSchema.Mapped(base, mapping) =>
+        RawSchema.Mapped(installDefaults(base, defaults), mapping)
+      case other => other
+
+  private def installCaseDefaults(
+      defaults: DefaultValues[?],
+      sumCase: RawSchema.SumCase
+  ): RawSchema.SumCase =
+    defaults.caseDefaults.get(sumCase.name) match
+      case Some(fieldDefaults) =>
+        sumCase.copy(schema = installFieldDefaults(sumCase.schema, fieldDefaults))
+      case None => sumCase
+
+  private def installFieldDefaults[T](
+      schema: RawSchema[T],
+      fieldDefaults: Map[String, AnyRef]
+  ): RawSchema[T] =
+    schema match
+      case RawSchema.NamedTuple(fields, read, write, allowSkipped) =>
+        if fieldDefaults.isEmpty then schema
+        else
+          require(
+            !allowSkipped,
+            "default values and skippable options are mutually exclusive decode modes"
+          )
+          val defaultsByIndex: IArray[AnyRef | Null] =
+            IArray.from(fields.map(field => fieldDefaults.getOrElse(field.name, null)))
+          val copy = RawSchema.NamedTuple[T](fields, read, write, allowSkipped)
+          copy.installFieldDefaults(defaultsByIndex)
+          copy
+      case RawSchema.PartialNamedTuple(base, alreadySeenField) =>
+        RawSchema.PartialNamedTuple(installFieldDefaults(base, fieldDefaults), alreadySeenField)
+      case RawSchema.Mapped(base, mapping) =>
+        RawSchema.Mapped(installFieldDefaults(base, fieldDefaults), mapping)
+      case other => other
 
   private def attachTypedFactories[T](
       schema: RawSchema[T],
