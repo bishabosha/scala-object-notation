@@ -880,80 +880,49 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
     if lastFieldName != null then err = err.atPath(s".${lastFieldName}")
     err.atToken(spanAt(parsed.closingOffset))
 
-  /** Decodes one sum value `(CaseName = <case value>)` with the record loop's structure: the case
-    * name is matched as a char slice against the plan-cached case names (no String materializes to
-    * inspect it), `=` is consumed at the char level, and the case value dispatches through its plan
-    * code. Non-plain names fall back to the token path; only an unknown case (the error path)
-    * materializes the arriving name.
-    */
   protected final def decodeSum(schema: RawSchema.Sum[?]): Result[Unit, DecodeError] =
     Result.task:
-      if !tryReadPunctChar('(') then consumeRecordLParenToken(schema).check
-      if tryConsumeRParen() then
-        raise(DecodeError.UnitValueNotAllowed().atToken(spanAt(consumedRParenOffset)))
+      if currentKind() == TokenKind.LParen then advance()
+      else
+        raise(
+          DecodeError.ExpectedType(schema.describeSelf, describeCurrent()).atToken(currentSpan())
+        )
 
-      val cases      = schema.cases
-      val plans      = schema.fieldPlans
-      var caseIndex  = -1
-      var nameOffset = 0
-      if tryReadNameSlice() then
-        nameOffset = sliceNameOffset()
-        var index = 0
-        while caseIndex < 0 && index < cases.length do
-          if plans.kinds(index) != RawSchema.FieldPlan.TokenName
-            && sliceNameEquals(plans.nameChars(index))
-          then caseIndex = index
-          else index += 1
-        if caseIndex >= 0 then
-          if !tryReadEqualsChar() then consumeEqualsToken().check
-        else
-          // a non-plain or unknown name: rescan and classify through the token path below
-          rescanNameSliceAsToken()
+      if currentKind() == TokenKind.RParen then
+        raise(DecodeError.UnitValueNotAllowed().atToken(currentSpan()))
 
-      if caseIndex < 0 then
-        nameOffset = currentOffset()
-        if !isFieldNameStart(currentKind()) then
-          raise(DecodeError.ExpectedFieldName(describeCurrent()).atToken(currentSpan()))
-        var index = 0
-        while caseIndex < 0 && index < cases.length do
-          if currentFieldNameMatches(cases(index).name) then caseIndex = index
-          else index += 1
-        // like the previous token path, '=' is consumed before an unknown case is reported
-        val unknownName = if caseIndex < 0 then currentFieldName() else null
-        advance() // consume the case-name token
-        if !tryReadEqualsChar() then consumeEqualsToken().check
-        if caseIndex < 0 then
-          raise(
-            DecodeError
-              .UnexpectedField(unknownName.nn)
-              .atPath(s".${unknownName.nn}")
-              .atToken(spanAt(nameOffset))
-          )
-
-      val sumCase = cases(caseIndex)
-      checkOrRaise(decodePlannedSlotValue(plans.kinds(caseIndex), sumCase.schema))(
-        _.atPath(s".${sumCase.name}")
-      )
+      val nameOffset = currentOffset()
+      parseNamedFieldStart().check
+      val actualName = pullStringStrict()
+      decodeSumField(schema, actualName, nameOffset, fieldIndex = 0).check
       finishSumTuple().check
       // the decoded case value remains in the live slot
 
-  /** Dispatches a planned value into the live slot: direct primitive decoders and nested
-    * record/vector/option dispatch for planned schemas, the general dispatcher otherwise —
-    * semantically identical to [[decodeBase]].
-    */
-  private def decodePlannedSlotValue(plan: Byte, schema: RawSchema[?]): Result[Unit, DecodeError] =
-    (plan: @scala.annotation.switch) match
-      case RawSchema.FieldPlan.IntV     => decodeInt()
-      case RawSchema.FieldPlan.LongV    => decodeLong()
-      case RawSchema.FieldPlan.DoubleV  => decodeDouble()
-      case RawSchema.FieldPlan.FloatV   => decodeFloat()
-      case RawSchema.FieldPlan.BooleanV => decodeBoolean()
-      case RawSchema.FieldPlan.StringV  => decodeString()
-      case RawSchema.FieldPlan.CharV    => decodeChar()
-      case RawSchema.FieldPlan.RecordV  => decodeNestedRecord(schema)
-      case RawSchema.FieldPlan.VectorV  => decodeNestedVector(schema)
-      case RawSchema.FieldPlan.OptionV  => decodeNestedOption(schema)
-      case _                            => decodeBase(schema)
+  private def decodeSumField(
+      schema: RawSchema.Sum[?],
+      actualName: String,
+      nameOffset: Int,
+      fieldIndex: Int
+  ): Result[Unit, DecodeError] =
+    Result.task:
+      if fieldIndex >= 1 then
+        raise(
+          DecodeError
+            .FieldCountMismatch(1, fieldIndex + 1)
+            .atPath(s".${actualName}")
+            .atToken(spanAt(nameOffset))
+        )
+      else
+        val sumCase = RawSchema.findCase(schema, actualName) match
+          case null =>
+            raise(
+              DecodeError
+                .UnexpectedField(actualName)
+                .atPath(s".${actualName}")
+                .atToken(spanAt(nameOffset))
+            )
+          case c => c
+        checkOrRaise(decodeBase(sumCase.schema))(_.atPath(s".${actualName}"))
 
   private def finishSumTuple(): Result[Unit, DecodeError] =
     Result.task:
