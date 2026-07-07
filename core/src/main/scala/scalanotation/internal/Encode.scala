@@ -145,14 +145,14 @@ private[scalanotation] object Encode:
         val field = fields(index)
         IdentifierSyntax.appendIdentifier(field.name, out)
         out.appendToken('=')
-        renderFieldText(field.schema, write, value, index, out, depth + 1)
+        renderText(field.schema, write.fieldValue(value, index), out, depth + 1)
       }
     case tuple: RawSchema.Tuple[?] =>
       val write = tuple.write
       if write == null then missingWriteCapability(schema)
       val slots = tuple.slots
       ExprRenderer.renderTuple(out, depth, write.size(value)) { index =>
-        renderTupleSlotText(slots(index), write, value, index, out, depth + 1)
+        renderTupleElement(slots(index), write.elementValue(value, index), out, depth + 1)
       }
     case RawSchema.PartialNamedTuple(base, _) =>
       renderText(base, value, out, depth)
@@ -171,29 +171,17 @@ private[scalanotation] object Encode:
     case vector: RawSchema.Vector[?, ?] =>
       val write = vector.write
       if write == null then missingWriteCapability(schema)
-      write match
-        case indexed: RawSchema.IndexedVectorWrite =>
-          ExprRenderer.renderVector(out, depth, indexed.size(value)) { index =>
-            renderElementText(vector.element, indexed, value, index, out, depth + 1)
-          }
-        case _ =>
-          val values = write.iterator(value)
-          ExprRenderer.renderVector(out, depth, write.size(value)) { _ =>
-            renderText(vector.element, values.next(), out, depth + 1)
-          }
+      val values = write.iterator(value)
+      ExprRenderer.renderVector(out, depth, write.size(value)) { _ =>
+        renderText(vector.element, values.next(), out, depth + 1)
+      }
     case tupleOf: RawSchema.TupleOf[?, ?] =>
       val write = tupleOf.write
       if write == null then missingWriteCapability(schema)
-      write match
-        case indexed: RawSchema.IndexedVectorWrite =>
-          ExprRenderer.renderTuple(out, depth, indexed.size(value)) { index =>
-            renderElementText(tupleOf.element, indexed, value, index, out, depth + 1)
-          }
-        case _ =>
-          val values = write.iterator(value)
-          ExprRenderer.renderTuple(out, depth, write.size(value)) { _ =>
-            renderTupleElement(tupleOf.element, values.next(), out, depth + 1)
-          }
+      val values = write.iterator(value)
+      ExprRenderer.renderTuple(out, depth, write.size(value)) { _ =>
+        renderTupleElement(tupleOf.element, values.next(), out, depth + 1)
+      }
     case pairSeq: RawSchema.PairSeq[?, ?, ?] =>
       val write = pairSeq.write
       if write == null then missingWriteCapability(schema)
@@ -221,16 +209,15 @@ private[scalanotation] object Encode:
     case RawSchema.Char =>
       ExprRenderer.renderCharLiteral(value.asInstanceOf[Char], out)
     case RawSchema.Int =>
-      out.append(value.asInstanceOf[Int])
+      out.append(value.asInstanceOf[Int].toString)
     case RawSchema.Long =>
-      out.append(value.asInstanceOf[Long])
-      out.append('L')
+      out.append(s"${value.asInstanceOf[Long]}L")
     case RawSchema.Float =>
       ExprRenderer.renderFloatLiteral(value.asInstanceOf[Float], out)
     case RawSchema.Double =>
       ExprRenderer.renderDoubleLiteral(value.asInstanceOf[Double], out)
     case RawSchema.Boolean =>
-      out.append(value.asInstanceOf[Boolean])
+      out.append(value.asInstanceOf[Boolean].toString)
     case RawSchema.Null =>
       out.append("null")
 
@@ -269,93 +256,6 @@ private[scalanotation] object Encode:
       depth: Int
   )(using format: TextFormat): Unit =
     renderText(schema, value, out, depth)
-
-  /** Renders field `index` of `value`, pulling it through the write's typed accessor when the field
-    * schema pins it to a primitive — no box is allocated for the transfer. Non-primitive fields go
-    * through the boxed accessor and the general renderer.
-    */
-  private def renderFieldText(
-      schema: RawSchema[?],
-      write: RawSchema.NamedTupleWrite,
-      value: Any,
-      index: Int,
-      out: ExprRenderer.Output,
-      depth: Int
-  )(using format: TextFormat): Unit =
-    schema match
-      case RawSchema.Int =>
-        out.append(write.intFieldValue(value, index))
-      case RawSchema.String =>
-        ExprRenderer.renderStringLiteral(write.stringFieldValue(value, index), out)
-      case RawSchema.Boolean =>
-        out.append(write.booleanFieldValue(value, index))
-      case RawSchema.Long =>
-        out.append(write.longFieldValue(value, index))
-        out.append('L')
-      case RawSchema.Double =>
-        ExprRenderer.renderDoubleLiteral(write.doubleFieldValue(value, index), out)
-      case RawSchema.Float =>
-        ExprRenderer.renderFloatLiteral(write.floatFieldValue(value, index), out)
-      case RawSchema.Char =>
-        ExprRenderer.renderCharLiteral(write.charFieldValue(value, index), out)
-      case other =>
-        renderText(other, write.fieldValue(value, index), out, depth)
-
-  /** renders tuple slot `index` of `value` — see [[renderFieldText]] */
-  private def renderTupleSlotText(
-      schema: RawSchema[?],
-      write: RawSchema.TupleWrite,
-      value: Any,
-      index: Int,
-      out: ExprRenderer.Output,
-      depth: Int
-  )(using format: TextFormat): Unit =
-    schema match
-      case RawSchema.Int =>
-        out.append(write.intElementValue(value, index))
-      case RawSchema.String =>
-        ExprRenderer.renderStringLiteral(write.stringElementValue(value, index), out)
-      case RawSchema.Boolean =>
-        out.append(write.booleanElementValue(value, index))
-      case RawSchema.Long =>
-        out.append(write.longElementValue(value, index))
-        out.append('L')
-      case RawSchema.Double =>
-        ExprRenderer.renderDoubleLiteral(write.doubleElementValue(value, index), out)
-      case RawSchema.Float =>
-        ExprRenderer.renderFloatLiteral(write.floatElementValue(value, index), out)
-      case RawSchema.Char =>
-        ExprRenderer.renderCharLiteral(write.charElementValue(value, index), out)
-      case other =>
-        renderText(other, write.elementValue(value, index), out, depth)
-
-  /** renders element `index` of an indexed vector `value` — see [[renderFieldText]] */
-  private def renderElementText(
-      schema: RawSchema[?],
-      write: RawSchema.IndexedVectorWrite,
-      value: Any,
-      index: Int,
-      out: ExprRenderer.Output,
-      depth: Int
-  )(using format: TextFormat): Unit =
-    schema match
-      case RawSchema.Int =>
-        out.append(write.intElementValue(value, index))
-      case RawSchema.String =>
-        ExprRenderer.renderStringLiteral(write.stringElementValue(value, index), out)
-      case RawSchema.Boolean =>
-        out.append(write.booleanElementValue(value, index))
-      case RawSchema.Long =>
-        out.append(write.longElementValue(value, index))
-        out.append('L')
-      case RawSchema.Double =>
-        ExprRenderer.renderDoubleLiteral(write.doubleElementValue(value, index), out)
-      case RawSchema.Float =>
-        ExprRenderer.renderFloatLiteral(write.floatElementValue(value, index), out)
-      case RawSchema.Char =>
-        ExprRenderer.renderCharLiteral(write.charElementValue(value, index), out)
-      case other =>
-        renderText(other, write.elementValue(value, index), out, depth)
 
   private def renderPair(
       schema: RawSchema.PairSeq[?, ?, ?],
