@@ -161,18 +161,6 @@ private[scalanotation] abstract class PushSlots extends Internal.PoolHolder:
     assert(lastSlotKind == SlotKind.Char, "pullCharValue called when lastSlotKind != Char")
     charSlot
 
-  /** Control-flow channel for cold decode helpers that must hand an index or a small code back
-    * through a [[steps.result.Result.task]] boundary without boxing a Result value. A dedicated
-    * slot — separate from the value slots and from [[lastSlotKind]] — so it can be live at the same
-    * time as a decoded value.
-    */
-  private var controlSlot: Int = 0
-
-  protected final def pushControl(value: Int): Unit =
-    controlSlot = value
-
-  protected final def pullControl(): Int = controlSlot
-
   /** pulls the most recent push as a single value, boxing the live typed slot if necessary */
   protected final def pullAny(): Any =
     (lastSlotKind: @switch) match

@@ -6,6 +6,7 @@ import scalanotation.RouterSchema
 import scalanotation.schema.RawSchema.Field
 import steps.result.Result
 import steps.result.Result.eval.check
+import steps.result.Result.eval.ok
 import steps.result.Result.eval.raise
 import scalanotation.schema.RawSchema
 import scalanotation.internal.Internal.breakErr
@@ -486,26 +487,24 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
           else
             if headerProbe == 0 then
               nameOffset = sliceNameOffset()
-              resolveRecordFieldSlow(
+              decodedIndex = resolveRecordFieldSlow(
                 fields,
                 fieldPlans,
                 seenFields,
                 allowSkip,
                 fieldIndex,
                 true
-              ).check
-              decodedIndex = pullControl()
+              ).ok
             else
               nameOffset = currentOffset()
-              resolveRecordFieldSlow(
+              decodedIndex = resolveRecordFieldSlow(
                 fields,
                 fieldPlans,
                 seenFields,
                 allowSkip,
                 fieldIndex,
                 false
-              ).check
-              decodedIndex = pullControl()
+              ).ok
 
             if decodedIndex > fieldIndex then
               // None-fill the skipped range — the resolver validated that every schema in it is a
@@ -547,7 +546,7 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
               closingOffset = charScanOffset()
               done = true
             case _ =>
-              if { recordSeparatorToken().check; pullControl() == 1 } then
+              if recordSeparatorToken().ok == 1 then
                 closingOffset = consumedRParenOffset
                 done = true
               else headerProbe = probeRecordHeader(fields, plans, nameChars, fieldIndex)
@@ -584,10 +583,10 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
 
   /** Cold path of the record loop's name step. Resolves the arriving field name to its schema index
     * — walking skippable nullable fields, classifying duplicates, order and count mismatches — with
-    * the token path's exact decisions. On success the name is consumed and the resolved index is
-    * left in the control slot; the caller None-fills up to it (the walk here only passes skippable
-    * nullables). `sliceRead` says a plain name slice was already consumed at the char level; any
-    * deviation rewinds it and rescans generically.
+    * the token path's exact decisions. On success the name is consumed and the caller None-fills up
+    * to the returned index (the walk here only passes skippable nullables). `sliceRead` says a
+    * plain name slice was already consumed at the char level; any deviation rewinds it and rescans
+    * generically.
     */
   private def resolveRecordFieldSlow(
       fields: IArray[Field],
@@ -596,7 +595,7 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
       allowSkip: Boolean,
       fieldIndexStart: Int,
       sliceRead: Boolean
-  ): Result[Unit, DecodeError] = Result.task {
+  ): Result[Int, DecodeError] = Result.eval {
     val plans    = fieldPlans.kinds
     val nullable = fieldPlans.nullable
     var resolved = -1
@@ -651,7 +650,7 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
       if seenFields != null && seenFields.contains(resolved) then
         raise(makeDuplicateKnownFieldError(fields(resolved).name, nameOffset))
       advance() // consume the field-name token
-    pushControl(resolved)
+    resolved
   }
 
   /** cold `(` fallback for the record entry: a pending token or a non-record shape */
@@ -673,19 +672,19 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
   /** Cold separator fallback on the token path: 0 = comma consumed (another field follows), 1 =
     * record closed (offset left in [[consumedRParenOffset]]).
     */
-  private def recordSeparatorToken(): Result[Unit, DecodeError] = Result.task {
+  private def recordSeparatorToken(): Result[Int, DecodeError] = Result.eval {
     currentKind() match
       case TokenKind.Comma =>
         advance()
         if currentKind() == TokenKind.RParen then
           consumedRParenOffset = currentOffset()
           advance()
-          pushControl(1)
-        else pushControl(0)
+          1
+        else 0
       case TokenKind.RParen =>
         consumedRParenOffset = currentOffset()
         advance()
-        pushControl(1)
+        1
       case _ => raise(DecodeError.ExpectedRParen(describeCurrent()).atToken(currentSpan()))
   }
 
