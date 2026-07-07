@@ -176,13 +176,10 @@ trait BenchModule extends Cross.Module[String], ScalaObjectNotationModule, JmhMo
     if crossValue == "HEAD" then Seq(core, macros) else Seq.empty
   override def mvnDeps = super.mvnDeps() ++ (
     if crossValue == "HEAD" then
-      // comparison baselines for the HEAD benchmarks: JSON decoding via jsoniter-scala,
-      // uPickle, and zio-blocks
+      // comparison baseline for the HEAD benchmarks: JSON decoding via jsoniter-scala
       Seq(
         mvn"com.github.plokhotnyuk.jsoniter-scala::jsoniter-scala-core::2.35.3",
-        mvn"com.github.plokhotnyuk.jsoniter-scala::jsoniter-scala-macros::2.35.3",
-        mvn"com.lihaoyi::upickle::4.4.3",
-        mvn"dev.zio::zio-blocks-schema::0.017"
+        mvn"com.github.plokhotnyuk.jsoniter-scala::jsoniter-scala-macros::2.35.3"
       )
     else
       val macroDep = {

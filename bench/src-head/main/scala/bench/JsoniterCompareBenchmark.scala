@@ -7,9 +7,6 @@ import java.nio.charset.StandardCharsets
 import com.github.plokhotnyuk.jsoniter_scala.core.*
 import com.github.plokhotnyuk.jsoniter_scala.macros.*
 
-import zio.blocks.schema.Schema
-import zio.blocks.schema.json.JsonFormat
-
 import scalanotation.BatchContext
 import scalanotation.Configured
 import scalanotation.Reader
@@ -29,11 +26,10 @@ object OrderBatch:
   given Configured[OrderBatch]   = Configured.typed
   given Reader[OrderBatch]       = Reader.configured.derived
 
-/** Cross-library comparison: SON typed batched decoding against jsoniter-scala, uPickle, and
-  * zio-blocks decoding the equivalent JSON. SON reads a String; the JSON libraries are measured
-  * both from a String (input parity) and — where supported — from a byte array (their fastest
-  * entry point). Codecs, schemas, and readers are built once per fork so every side measures
-  * decoding only.
+/** Cross-library comparison: SON typed batched decoding against jsoniter-scala decoding the
+  * equivalent JSON. SON reads a String; jsoniter is measured both from a String (input parity) and
+  * from a byte array (its fastest entry point). Codecs and readers are built once per fork so both
+  * sides measure decoding only.
   */
 @State(Scope.Thread)
 @BenchmarkMode(Array(Mode.AverageTime))
@@ -41,7 +37,7 @@ object OrderBatch:
 @Warmup(iterations = 5, time = 1, timeUnit = TimeUnit.SECONDS)
 @Measurement(iterations = 10, time = 1, timeUnit = TimeUnit.SECONDS)
 @Fork(1)
-class CrossLibraryDecodeBenchmark:
+class JsoniterCompareBenchmark:
   // --- flat record: 3 fields, ints outside the Integer cache ---
   private val sonFlatInput  = """(x = 1234, y = -56789, label = "hello")"""
   private val jsonFlatInput = """{"x":1234,"y":-56789,"label":"hello"}"""
@@ -66,21 +62,10 @@ class CrossLibraryDecodeBenchmark:
     s"""{"orders":[${(1 to 100).map(jsonOrder).mkString(",")}]}"""
   private val jsonOrdersBytes = jsonOrdersInput.getBytes(StandardCharsets.UTF_8)
 
-  // codecs, schemas, and readers derived once — every side measures pure decoding
+  // codecs and readers derived once — both sides measure pure decoding
   private given JsonValueCodec[TypedFlatClass]        = JsonCodecMaker.make
   private given JsonValueCodec[TypedPrimitive10Class] = JsonCodecMaker.make
   private given JsonValueCodec[OrderBatch]            = JsonCodecMaker.make
-
-  private given upickle.default.ReadWriter[TypedFlatClass]        = upickle.default.macroRW
-  private given upickle.default.ReadWriter[TypedPrimitive10Class] = upickle.default.macroRW
-  private given upickle.default.ReadWriter[OrderRecord]           = upickle.default.macroRW
-  private given upickle.default.ReadWriter[OrderBatch]            = upickle.default.macroRW
-
-  private given Schema[OrderRecord] = Schema.derived
-
-  private val zioFlatCodec        = Schema.derived[TypedFlatClass].derive(JsonFormat)
-  private val zioPrimitive10Codec = Schema.derived[TypedPrimitive10Class].derive(JsonFormat)
-  private val zioOrdersCodec      = Schema.derived[OrderBatch].derive(JsonFormat)
 
   // benchmarks are single-threaded per State(Scope.Thread), so the local context is safe
   private given ctx: BatchContext = BatchContext.local()
@@ -91,12 +76,6 @@ class CrossLibraryDecodeBenchmark:
     readFromString[TypedFlatClass](jsonFlatInput)
   @Benchmark def jsoniterFlatBytes: Any =
     readFromArray[TypedFlatClass](jsonFlatBytes)
-  @Benchmark def upickleFlatString: Any =
-    upickle.default.read[TypedFlatClass](jsonFlatInput)
-  @Benchmark def zioBlocksFlatString: Any =
-    zioFlatCodec.decode(jsonFlatInput)
-  @Benchmark def zioBlocksFlatBytes: Any =
-    zioFlatCodec.decode(jsonFlatBytes)
 
   @Benchmark def sonPrimitive10: Any =
     Readers.batched.readAs[TypedPrimitive10Class](sonPrimitive10Input)
@@ -104,12 +83,6 @@ class CrossLibraryDecodeBenchmark:
     readFromString[TypedPrimitive10Class](jsonPrimitive10Input)
   @Benchmark def jsoniterPrimitive10Bytes: Any =
     readFromArray[TypedPrimitive10Class](jsonPrimitive10Bytes)
-  @Benchmark def upicklePrimitive10String: Any =
-    upickle.default.read[TypedPrimitive10Class](jsonPrimitive10Input)
-  @Benchmark def zioBlocksPrimitive10String: Any =
-    zioPrimitive10Codec.decode(jsonPrimitive10Input)
-  @Benchmark def zioBlocksPrimitive10Bytes: Any =
-    zioPrimitive10Codec.decode(jsonPrimitive10Bytes)
 
   @Benchmark def sonOrders100: Any =
     Readers.batched.readAs[OrderBatch](sonOrdersInput)
@@ -117,9 +90,3 @@ class CrossLibraryDecodeBenchmark:
     readFromString[OrderBatch](jsonOrdersInput)
   @Benchmark def jsoniterOrders100Bytes: Any =
     readFromArray[OrderBatch](jsonOrdersBytes)
-  @Benchmark def upickleOrders100String: Any =
-    upickle.default.read[OrderBatch](jsonOrdersInput)
-  @Benchmark def zioBlocksOrders100String: Any =
-    zioOrdersCodec.decode(jsonOrdersInput)
-  @Benchmark def zioBlocksOrders100Bytes: Any =
-    zioOrdersCodec.decode(jsonOrdersBytes)
