@@ -100,14 +100,12 @@ object Configured:
     schema match
       case RawSchema.NamedTuple(fields, read, write, allowSkipped) =>
         val factory = factories.selfFactory
-        if factory == null then schema
+        if factory == null || read == null then schema
         else
           RawSchema.NamedTuple(
             fields,
-            if read == null then read
-            else RawSchema.NamedTupleRead.withSlotsFactory(read, factory),
-            if write == null then write
-            else RawSchema.NamedTupleWrite.withTypedFieldValues(write, factory),
+            RawSchema.NamedTupleRead.withSlotsFactory(read, factory),
+            write,
             allowSkipped
           )
       case RawSchema.Sum(cases, write) =>
@@ -136,14 +134,12 @@ object Configured:
   ): RawSchema[T] =
     schema match
       case RawSchema.NamedTuple(fields, read, write, allowSkipped) =>
-        if read == null && write == null then schema
+        if read == null then schema
         else
           RawSchema.NamedTuple(
             fields,
-            if read == null then read
-            else RawSchema.NamedTupleRead.withSlotsFactory(read, factory),
-            if write == null then write
-            else RawSchema.NamedTupleWrite.withTypedFieldValues(write, factory),
+            RawSchema.NamedTupleRead.withSlotsFactory(read, factory),
+            write,
             allowSkipped
           )
       case RawSchema.PartialNamedTuple(base, alreadySeenField) =>
