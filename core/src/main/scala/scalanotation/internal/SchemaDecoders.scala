@@ -432,12 +432,29 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
         // the seen-field bitset only matters when fields can be skipped (out-of-schema-order
         // duplicates); in ordered mode the decoded set is always the contiguous prefix
         if schema.fieldPlans.fills != null then
-          fieldIndexSetPool.withBorrowed { seenFields =>
-            decodeRecordFields(schema, read, slots, seenFields, null, openParen = true)
-          }
+          decodeRecordFields(schema, read, slots, seenFieldSetForDepth(), null, openParen = true)
         else decodeRecordFields(schema, read, slots, null, null, openParen = true)
       }
     }
+
+  // Per-depth seen-field sets: a nesting level runs at most one record decode at a time, so a
+  // level's set is reusable directly — no pool borrow/release/clear per record. Sets are created
+  // lazily at first use per level. decodeRecordFields resets the set it receives, and marks never
+  // exceed the reset word count, so bits beyond it stay zero across reuses.
+  private var seenFieldSets = new Array[Internal.FieldIndexSet | Null](8)
+
+  private def seenFieldSetForDepth(): Internal.FieldIndexSet =
+    val depth = currentNestingDepth
+    var sets  = seenFieldSets
+    if depth >= sets.length then
+      sets = java.util.Arrays.copyOf(sets, math.max(sets.length * 2, depth + 1))
+      seenFieldSets = sets
+    val existing = sets(depth)
+    if existing != null then existing
+    else
+      val created = new Internal.FieldIndexSet
+      sets(depth) = created
+      created
 
   /** Decodes one named-tuple record with a single loop covering both ordered and
     * skipped-nullable-field schemas. The happy path reads structure at the char level — a
@@ -1206,11 +1223,17 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
   ): Result[Unit, DecodeError] =
     withRead(schema, _.read) { read =>
       withBorrowSlots(read.slotsFactory) { slots =>
-        // the opening paren and the already-seen field (e.g. a sum discriminator) were consumed by
-        // the caller; the bitset is always borrowed so re-sent seen fields classify as duplicates
-        fieldIndexSetPool.withBorrowed { seenFields =>
-          decodeRecordFields(schema, read, slots, seenFields, alreadySeenField, openParen = false)
-        }
+        // the opening paren and the already-seen field (e.g. a sum discriminator) were consumed
+        // by the caller; the bitset is always tracked so re-sent seen fields classify as
+        // duplicates
+        decodeRecordFields(
+          schema,
+          read,
+          slots,
+          seenFieldSetForDepth(),
+          alreadySeenField,
+          openParen = false
+        )
       }
     }
   private def indexOfField(fields: IArray[Field], name: String): Int =

@@ -48,6 +48,8 @@ private[scalanotation] abstract class PushSlots extends Internal.PoolHolder:
   protected final def exitNesting(): Unit =
     nestingDepth -= 1
 
+  protected final def currentNestingDepth: Int = nestingDepth
+
   protected final def nestingLimitError(): DecodeError =
     DecodeError.Custom(
       s"Nesting depth exceeds the supported maximum of ${PushSlots.MaxNestingDepth}"
