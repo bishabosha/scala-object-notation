@@ -480,14 +480,11 @@ private[scalanotation] final class Tokenizer private[internal] (
   private[internal] def scanBooleanValue(): Int =
     val ch0 = peek(index)
     if ch0 != 't' && ch0 != 'f' then skipTrivia()
-    val from = index
-    // dispatch on the first char: a false value must not pay a failed `true` attempt
-    if peek(from) == 't' then
-      val isTrue = keyword["true"](from)
-      if isTrue >= 0 then
-        index = isTrue
-        BooleanTrue
-      else BooleanNone
+    val from   = index
+    val isTrue = keyword["true"](from)
+    if isTrue >= 0 then
+      index = isTrue
+      BooleanTrue
     else scanFalseValue(from)
 
   /** the `false` half of [[scanBooleanValue]] — split so each half sits within the JIT's inlining
