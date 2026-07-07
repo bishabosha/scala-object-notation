@@ -44,17 +44,6 @@ class DerivationFailureSuite extends ScalanotationSuite:
         .contains("Reader[Option[Option[?]]] is not supported")
     )
 
-  test("no skippable case class reader is derived when every field is an Option"):
-    val errors = typeCheckErrors(
-      "final case class Data(x: Option[Int], y: Option[String])\ngiven scalanotation.Reader[Data] = scalanotation.Reader.skippable.derived"
-    )
-
-    assert(errors.nonEmpty)
-    assert(
-      clue(errors.head.message)
-        .contains("Reader derivation for a product with only Option fields is not supported")
-    )
-
   test("no read-writer is derived for nested Option"):
     val errors = typeCheckErrors(
       "type Data = (x: Option[Option[Int]])\nsummon[scalanotation.ReadWriter[Data]]"
@@ -65,17 +54,6 @@ class DerivationFailureSuite extends ScalanotationSuite:
     assert(
       clue(errors.head.message)
         .contains("ReadWriter[Option[Option[?]]] is not supported")
-    )
-
-  test("no skippable case class read-writer is derived when every field is an Option"):
-    val errors = typeCheckErrors(
-      "final case class Data(x: Option[Int], y: Option[String])\ngiven scalanotation.ReadWriter[Data] = scalanotation.ReadWriter.skippable.derived"
-    )
-
-    assert(errors.nonEmpty)
-    assert(
-      clue(errors.head.message)
-        .contains("ReadWriter derivation for a product with only Option fields is not supported")
     )
 
   test("compile-time derivation error includes nested field path"):

@@ -250,16 +250,20 @@ class ReadWriterConfigSuite extends ScalanotationSuite:
     assert(clue(errors).nonEmpty)
     assert(errors.exists(_.message.contains("Mirror.SumOf")))
 
-  test("configured skippable products still require one non-optional field"):
-    val errors = typeCheckErrors(
-      "final case class Data(x: Option[Int], y: Option[String])\nscalanotation.Configured.skippable[Data]"
-    )
+  test("configured skippable products may contain only Option fields"):
+    final case class Data(x: Option[Int], y: Option[String])
 
-    assert(errors.nonEmpty)
-    assert(
-      clue(errors.head.message)
-        .contains("Configured skippable derivation for a product with only Option fields")
-    )
+    given Configured[Data] = Configured.skippable
+    given Reader[Data]     = Reader.configured.derived
+
+    assertEquals(Readers.readAs[Data]("""(x = 1)"""), Result.Ok(Data(Some(1), None)))
+    // with every field skipped the record is empty, which is spelled NamedTuple.Empty — `()`
+    // stays the Unit literal
+    assertEquals(Readers.readAs[Data]("NamedTuple.Empty"), Result.Ok(Data(None, None)))
+    Readers.readAs[Data]("()") match
+      case Result.Err(error) =>
+        assert(error.rootCause.isInstanceOf[DecodeError.UnitValueNotAllowed], error.toString)
+      case Result.Ok(value) => fail(s"Expected a decode failure, got $value")
 
   test("case class read-writer derivation allows all optional fields by default"):
     final case class Data(x: Option[Int], y: Option[String]) derives ReadWriter
@@ -301,3 +305,13 @@ class ReadWriterConfigSuite extends ScalanotationSuite:
       Writers.write(expected),
       """(name = "Ada", refreshSeconds = null, debug = true, description = null)"""
     )
+
+  test("skippable derivation supports products with only Option fields"):
+    final case class Flags(verbose: Option[Boolean], level: Option[Int])
+
+    given ReadWriter[Flags] = ReadWriter.skippable.derived
+
+    assertEquals(Readers.readAs[Flags]("""(level = 3)"""), Result.Ok(Flags(None, Some(3))))
+    assertEquals(Readers.readAs[Flags]("NamedTuple.Empty"), Result.Ok(Flags(None, None)))
+    // the writer keeps explicit nulls, so all-None round-trips without the literal
+    assertEquals(Writers.write(Flags(None, None)), """(verbose = null, level = null)""")
