@@ -236,15 +236,6 @@ private[scalanotation] final class Tokenizer private[internal] (
       charScanStart = start
       true
 
-  /** Fused scan of a `<expected> =` field header: 1 with both consumed, 0 with only the
-    * identifier consumed as a slice (a mismatched name or a missing `=` — the caller resolves via
-    * the slice), -1 with nothing consumed (no plain identifier follows).
-    */
-  private[internal] def scanFieldHeader(expected: String): Int =
-    if !scanIdentSlice() then -1
-    else if sliceEquals(start, end, expected) && scanEqualsChar() then 1
-    else 0
-
   /** Consumes a single `=` that is a whole operator (rejecting `==`, `=>`, ...): false consumes
     * nothing.
     */
@@ -273,44 +264,6 @@ private[scalanotation] final class Tokenizer private[internal] (
         index += 1
         2
       else 0
-
-  /** Consumes a `-` sign directly followed by a digit. The token path scans the sign as its own
-    * Minus token and interprets the literal with the sign passed separately, so this only skips
-    * the sign's token round trip; any other shape (`- 5`, `-x`, `->`) is left for the token path.
-    */
-  private[internal] def scanSignChar(): Boolean =
-    skipTrivia()
-    if !isAtEnd && currentChar() == '-' && index + 1 < input.length
-      && { val ch = input.charAt(index + 1); ch >= '0' && ch <= '9' }
-    then
-      index += 1
-      true
-    else false
-
-  /** Fused scan of a `true`/`false` literal at a value position: 1/0 with it consumed, -1 with
-    * nothing consumed. The boundary check mirrors [[scanIdentifier]], so any other identifier
-    * shape (`trueish`, `true_`) is left for the token path, which classifies it identically.
-    */
-  private[internal] def scanBooleanValue(): Int =
-    skipTrivia()
-    val i      = index
-    val length = input.length
-    if i + 4 <= length
-      && input.charAt(i) == 't' && input.charAt(i + 1) == 'r'
-      && input.charAt(i + 2) == 'u' && input.charAt(i + 3) == 'e'
-      && (i + 4 >= length || !isIdentifierPart(input.charAt(i + 4)))
-    then
-      index = i + 4
-      1
-    else if i + 5 <= length
-      && input.charAt(i) == 'f' && input.charAt(i + 1) == 'a'
-      && input.charAt(i + 2) == 'l' && input.charAt(i + 3) == 's'
-      && input.charAt(i + 4) == 'e'
-      && (i + 5 >= length || !isIdentifierPart(input.charAt(i + 5)))
-    then
-      index = i + 5
-      0
-    else -1
 
   /** Whether the next char begins a `+` operator (string concatenation) — consumes only trivia. */
   private[internal] def peekPlusChar(): Boolean =
@@ -822,28 +775,9 @@ private[scalanotation] final class Tokenizer private[internal] (
       case other => fail(s"Unsupported escape sequence \\$other")
 
   private def skipTrivia(): Unit =
-    // Gaps between tokens are almost always zero or one ' ': both exits are reached with at most
-    // two char loads and no loop. Everything else diverts to the general walk.
-    val text   = input
-    val length = text.length
-    var i      = index
-    if i < length then
-      val ch0 = text.charAt(i)
-      if ch0 == ' ' then
-        i += 1
-        if i < length then
-          val ch1 = text.charAt(i)
-          if ch1 == ' ' || (ch1 >= '\t' && ch1 <= '\r') || ch1 == '/' || ch1 > 127
-            || (ch1 >= 28 && ch1 <= 31)
-          then
-            index = i
-            skipTriviaWalk()
-          else index = i
-        else index = i
-      else if (ch0 >= '\t' && ch0 <= '\r') || ch0 == '/' || ch0 > 127 || (ch0 >= 28 && ch0 <= 31)
-      then skipTriviaWalk()
-
-  private def skipTriviaWalk(): Unit =
+    // Locals-based hot loop: gaps between tokens are almost always zero or one ' ', so the common
+    // exit is reached with one or two char loads and a single stored index. Comments and unusual
+    // whitespace (unicode spaces, file separators) divert to the slow helper.
     val text   = input
     val length = text.length
     var i      = index
@@ -1236,13 +1170,6 @@ private[scalanotation] abstract class TokenStream private[internal] (
   /** true when no scanned, un-consumed token is pending */
   protected final def betweenTokens: Boolean = !hasToken
 
-  /** Fused char-level read of a `<expected> =` field header: 1 with both consumed, 0 with only
-    * the name consumed as a slice (readable via [[sliceNameMatches]]/[[sliceNameOffset]]), -1 with
-    * nothing consumed (a pending token or no plain identifier next).
-    */
-  protected final def tryReadFieldHeader(expected: String): Int =
-    if hasToken then -1 else scanner.scanFieldHeader(expected)
-
   /** Scans a plain-identifier field name as an offset slice — no token, no classification. On
     * success the slice is readable via [[sliceNameMatches]]/[[sliceNameOffset]] until the next
     * scan; [[rescanNameSliceAsToken]] rewinds and rescans it generically for mismatch handling.
@@ -1279,14 +1206,6 @@ private[scalanotation] abstract class TokenStream private[internal] (
     */
   protected final def probePlusChar(): Boolean =
     !hasToken && scanner.peekPlusChar()
-
-  /** Char-level read of a `-` sign directly before a digit: false consumes nothing. */
-  protected final def tryReadSignChar(): Boolean =
-    !hasToken && scanner.scanSignChar()
-
-  /** Char-level read of a `true`/`false` value: 1/0 consumed, -1 nothing consumed. */
-  protected final def tryReadBooleanChar(): Int =
-    if hasToken then -1 else scanner.scanBooleanValue()
 
   /** start offset of the last successful char-level read — for error spans */
   protected final def charScanOffset(): Int = scanner.charScanStart
