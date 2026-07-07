@@ -506,18 +506,13 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
             // --- '=' ---
             if !tryReadEqualsChar() then consumeEqualsToken().check
 
-          // --- value: decode and append in one plan dispatch ---
+          // --- value ---
           val expectedField = fields(decodedIndex)
-          decodeValueInto(read)(
-            state,
-            decodedIndex,
-            plans(decodedIndex),
-            expectedField.schema
-          ) match
-            case err: Result.Err[DecodeError] =>
-              raise(recordFieldValueError(err.error, expectedField, nameOffset))
-            case next =>
-              state = next.asInstanceOf[read.State]
+          decodePlannedValue(plans(decodedIndex), expectedField.schema) match
+            case Result.Err(error) =>
+              raise(recordFieldValueError(error, expectedField, nameOffset))
+            case _ =>
+              state = addSlot(read)(state, decodedIndex)
               if seenFields != null then seenFields.mark(decodedIndex)
               fieldIndex = decodedIndex + 1
               decodedCount += 1
@@ -681,71 +676,6 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
       case RawSchema.FieldPlan.StringV  => decodeString()
       case RawSchema.FieldPlan.CharV    => decodeChar()
       case _                            => decodeBase(schema)
-
-  /** Decodes a planned field value and appends it into the named-tuple builder state in a single
-    * plan dispatch: the plan already names the live typed slot, so the [[addSlot]] kind switch and
-    * the [[PushSlots]] round trip collapse into a direct typed `add`. Returns the error instead of
-    * the new state when the value fails to decode.
-    */
-  private def decodeValueInto(
-      read: RawSchema.NamedTupleRead
-  )(
-      state: read.State,
-      index: Int,
-      plan: Byte,
-      schema: RawSchema[?]
-  ): read.State | Result.Err[DecodeError] =
-    inline def added[E](inline decoded: Result[Unit, E])(inline add: => read.State) =
-      decoded match
-        case err: Result.Err[?] => err.asInstanceOf[Result.Err[DecodeError]]
-        case _                  => add
-    (plan: @scala.annotation.switch) match
-      case RawSchema.FieldPlan.IntV =>
-        added(decodeInt())(read.addInt(state, index, pullIntValue()))
-      case RawSchema.FieldPlan.LongV =>
-        added(decodeLong())(read.addLong(state, index, pullLongValue()))
-      case RawSchema.FieldPlan.DoubleV =>
-        added(decodeDouble())(read.addDouble(state, index, pullDoubleValue()))
-      case RawSchema.FieldPlan.FloatV =>
-        added(decodeFloat())(read.addFloat(state, index, pullFloatValue()))
-      case RawSchema.FieldPlan.BooleanV =>
-        added(decodeBoolean())(read.addBoolean(state, index, pullBooleanValue()))
-      case RawSchema.FieldPlan.StringV =>
-        added(decodeString())(read.addString(state, index, pullStringStrict()))
-      case RawSchema.FieldPlan.CharV =>
-        added(decodeChar())(read.addChar(state, index, pullCharValue()))
-      case _ =>
-        added(decodeBase(schema))(addSlot(read)(state, index))
-
-  /** [[decodeValueInto]] for vector elements — same single dispatch onto the vector builder */
-  private def decodeElementInto[Elem, Repr, A](
-      read: Reader.VectorBuilder[Elem, Repr, A]
-  )(
-      values: Repr,
-      plan: Byte,
-      schema: RawSchema[?]
-  ): Repr | Result.Err[DecodeError] =
-    inline def added[E](inline decoded: Result[Unit, E])(inline add: => Repr) =
-      decoded match
-        case err: Result.Err[?] => err.asInstanceOf[Result.Err[DecodeError]]
-        case _                  => add
-    (plan: @scala.annotation.switch) match
-      case RawSchema.FieldPlan.IntV =>
-        added(decodeInt())(read.addInt(values, pullIntValue()))
-      case RawSchema.FieldPlan.LongV =>
-        added(decodeLong())(read.addLong(values, pullLongValue()))
-      case RawSchema.FieldPlan.DoubleV =>
-        added(decodeDouble())(read.addDouble(values, pullDoubleValue()))
-      case RawSchema.FieldPlan.FloatV =>
-        added(decodeFloat())(read.addFloat(values, pullFloatValue()))
-      case RawSchema.FieldPlan.BooleanV =>
-        added(decodeBoolean())(read.addBoolean(values, pullBooleanValue()))
-      case RawSchema.FieldPlan.StringV =>
-        added(decodeString())(read.addString(values, pullStringStrict()))
-      case RawSchema.FieldPlan.CharV =>
-        added(decodeChar())(read.addChar(values, pullCharValue()))
-      case _ =>
-        added(decodeBase(schema))(addSlot(read)(values))
 
   /** offset of the `)` consumed by the most recent successful [[tryConsumeRParen]] */
   private var consumedRParenOffset = 0
@@ -1183,11 +1113,10 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
         var done          = false
         val elementPlan   = RawSchema.valuePlanOf(schema.element)
         while !done do
-          decodeElementInto(read)(values, elementPlan, schema.element) match
-            case err: Result.Err[DecodeError] =>
-              raise(err.error.atPath(s"[$indexInVector]"))
-            case next =>
-              values = next.asInstanceOf[Repr]
+          checkOrRaise(decodePlannedValue(elementPlan, schema.element))(
+            _.atPath(s"[$indexInVector]")
+          )
+          values = addSlot(read)(values)
           indexInVector += 1
 
           tryReadSeparatorChar(closingChar) match
