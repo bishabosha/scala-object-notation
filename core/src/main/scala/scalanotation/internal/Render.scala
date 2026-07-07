@@ -82,8 +82,6 @@ private[scalanotation] object ExprRenderer:
       depth: Int
   )(using format: TextFormat): Unit =
     expr match
-      case Expr.NamedTupleExpr(elements) if elements.isEmpty =>
-        out.append("NamedTuple.Empty")
       case Expr.NamedTupleExpr(elements) =>
         renderNamedTuple(out, depth, elements.length) { index =>
           val (name, value) = elements(index)
@@ -124,7 +122,9 @@ private[scalanotation] object ExprRenderer:
   )(
       renderField: Int => Unit
   )(using format: TextFormat): Unit =
-    renderComposite(out, depth, size, open = "(", close = ")")(renderField)
+    // `()` is the Unit literal — the empty record is spelled the way Scala spells it
+    if size == 0 then out.append("NamedTuple.Empty")
+    else renderComposite(out, depth, size, open = "(", close = ")")(renderField)
 
   private[scalanotation] def renderTuple(
       out: Output,

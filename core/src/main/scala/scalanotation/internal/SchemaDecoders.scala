@@ -166,6 +166,9 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
             numberConstruct(RouterConstruct.Double, numberMode)
           case _ =>
             RouterConstruct.RawNumber
+      case TokenKind.Identifier if currentNameMatches("NamedTuple") =>
+        // `NamedTuple.Empty`, the empty record; the record case validates the full literal
+        RouterConstruct.Record
       case _ => null
 
   private def decodeRouterCase(
@@ -967,7 +970,11 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
     */
   protected final def decodeSum(schema: RawSchema.Sum[?]): Result[Unit, DecodeError] =
     Result.task:
-      if !tryReadPunctChar('(') then consumeRecordLParenToken(schema).check
+      if !tryReadPunctChar('(') then
+        consumeRecordLParenToken(schema).check
+        // a sum value carries exactly one case field, which `NamedTuple.Empty` cannot provide
+        if pullControl() == RecordEmptyLiteral then
+          raise(DecodeError.FieldCountMismatch(1, 0).atToken(spanAt(consumedRParenOffset)))
       if tryConsumeRParen() then
         raise(DecodeError.UnitValueNotAllowed().atToken(spanAt(consumedRParenOffset)))
 
@@ -1792,36 +1799,39 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
       seenNames: SeenNames
   )(using PublicInternal.NameSet[SeenNames]): Result[Unit, DecodeError] =
     Result.task:
+      var emptyLiteral = false
       if currentKind() == TokenKind.LParen then advance()
       else
-        raise(
-          DecodeError.ExpectedType(schema.describeSelf, describeCurrent()).atToken(currentSpan())
-        )
+        // `NamedTuple.Empty` is the only other record shape; mismatches keep the schema-typed error
+        consumeRecordLParenToken(schema).check
+        emptyLiteral = pullControl() == RecordEmptyLiteral
 
-      if currentKind() == TokenKind.RParen then
-        raise(DecodeError.UnitValueNotAllowed().atToken(currentSpan()))
+      if emptyLiteral then pushRef(read.finish(read.init()))
+      else
+        if currentKind() == TokenKind.RParen then
+          raise(DecodeError.UnitValueNotAllowed().atToken(currentSpan()))
 
-      var state = read.init()
-      var done  = false
-      while !done do
-        val nameOffset = currentOffset()
-        parseNamedFieldStart().check
-        val name       = pullStringStrict()
-        val fieldError = decodeDictFieldValue(schema, seenNames, name, nameOffset)
-        if fieldError != null then raise(fieldError)
-        state = addSlot(read)(state, name)
+        var state = read.init()
+        var done  = false
+        while !done do
+          val nameOffset = currentOffset()
+          parseNamedFieldStart().check
+          val name       = pullStringStrict()
+          val fieldError = decodeDictFieldValue(schema, seenNames, name, nameOffset)
+          if fieldError != null then raise(fieldError)
+          state = addSlot(read)(state, name)
 
-        currentKind() match
-          case TokenKind.Comma =>
-            advance()
-            if currentKind() == TokenKind.RParen then done = true
-          case TokenKind.RParen =>
-            done = true
-          case _ =>
-            raise(DecodeError.ExpectedRParen(describeCurrent()).atToken(currentSpan()))
+          currentKind() match
+            case TokenKind.Comma =>
+              advance()
+              if currentKind() == TokenKind.RParen then done = true
+            case TokenKind.RParen =>
+              done = true
+            case _ =>
+              raise(DecodeError.ExpectedRParen(describeCurrent()).atToken(currentSpan()))
 
-      advance()
-      pushRef(read.finish(state))
+        advance()
+        pushRef(read.finish(state))
 
   private def decodeDictFieldValue[SeenNames](
       schema: RawSchema.Dict[?, ?],

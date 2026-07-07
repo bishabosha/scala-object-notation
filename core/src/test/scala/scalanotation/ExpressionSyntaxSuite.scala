@@ -154,3 +154,9 @@ class ExpressionSyntaxSuite extends ScalanotationSuite:
     val obtained = Readers.readAs[Expr]("EmptyTuple")
 
     assertEquals(obtained, Result.Ok(Expr.TupleExpr(IndexedSeq.empty)))
+
+  test("read NamedTuple.Empty as an expression"):
+    val obtained = Readers.readAs[Expr]("NamedTuple.Empty")
+
+    assertEquals(obtained, Result.Ok(Expr.NamedTupleExpr(IndexedSeq.empty)))
+    assertEquals(obtained.map(Writers.write(_)), Result.Ok("NamedTuple.Empty"))
