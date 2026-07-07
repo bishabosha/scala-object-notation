@@ -9,6 +9,7 @@ import steps.result.Result.eval.check
 import steps.result.Result.eval.raise
 import scalanotation.schema.RawSchema
 import scalanotation.internal.Internal.breakErr
+import scala.util.boundary
 
 private[scalanotation] trait SchemaDecoders extends BaseDecoders:
   self: TokenStream =>
@@ -700,21 +701,27 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
       decoded match
         case err: Result.Err[?] => err.asInstanceOf[Result.Err[DecodeError]]
         case _                  => add
+    // the decoded value register-passes straight into the builder — no slot hop and no per-value
+    // boundary (whose Label would allocate); a failed decode parks its error, checked here
+    inline def checked[T](inline decoded: T)(inline add: T => read.State) =
+      val value = decoded
+      if pendingValueError != null then (Result.Err(takeValueError()): Result.Err[DecodeError])
+      else add(value)
     (plan: @scala.annotation.switch) match
       case RawSchema.FieldPlan.IntV =>
-        added(decodeInt())(read.addInt(state, index, pullIntValue()))
+        checked(decodeIntValue())(v => read.addInt(state, index, v))
       case RawSchema.FieldPlan.LongV =>
-        added(decodeLong())(read.addLong(state, index, pullLongValue()))
+        checked(decodeLongValue())(v => read.addLong(state, index, v))
       case RawSchema.FieldPlan.DoubleV =>
-        added(decodeDouble())(read.addDouble(state, index, pullDoubleValue()))
+        checked(decodeDoubleValue())(v => read.addDouble(state, index, v))
       case RawSchema.FieldPlan.FloatV =>
-        added(decodeFloat())(read.addFloat(state, index, pullFloatValue()))
+        checked(decodeFloatValue())(v => read.addFloat(state, index, v))
       case RawSchema.FieldPlan.BooleanV =>
-        added(decodeBoolean())(read.addBoolean(state, index, pullBooleanValue()))
+        checked(decodeBooleanValue())(v => read.addBoolean(state, index, v))
       case RawSchema.FieldPlan.StringV =>
-        added(decodeString())(read.addString(state, index, pullStringStrict()))
+        checked(decodeStringValue())(v => read.addString(state, index, v))
       case RawSchema.FieldPlan.CharV =>
-        added(decodeChar())(read.addChar(state, index, pullCharValue()))
+        checked(decodeCharValue())(v => read.addChar(state, index, v))
       case RawSchema.FieldPlan.RecordV =>
         added(decodeNestedRecord(schema))(addSlot(read)(state, index))
       case RawSchema.FieldPlan.VectorV =>
@@ -759,21 +766,25 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
       decoded match
         case err: Result.Err[?] => err.asInstanceOf[Result.Err[DecodeError]]
         case _                  => add
+    inline def checked[T](inline decoded: T)(inline add: T => Repr) =
+      val value = decoded
+      if pendingValueError != null then (Result.Err(takeValueError()): Result.Err[DecodeError])
+      else add(value)
     (plan: @scala.annotation.switch) match
       case RawSchema.FieldPlan.IntV =>
-        added(decodeInt())(read.addInt(values, pullIntValue()))
+        checked(decodeIntValue())(v => read.addInt(values, v))
       case RawSchema.FieldPlan.LongV =>
-        added(decodeLong())(read.addLong(values, pullLongValue()))
+        checked(decodeLongValue())(v => read.addLong(values, v))
       case RawSchema.FieldPlan.DoubleV =>
-        added(decodeDouble())(read.addDouble(values, pullDoubleValue()))
+        checked(decodeDoubleValue())(v => read.addDouble(values, v))
       case RawSchema.FieldPlan.FloatV =>
-        added(decodeFloat())(read.addFloat(values, pullFloatValue()))
+        checked(decodeFloatValue())(v => read.addFloat(values, v))
       case RawSchema.FieldPlan.BooleanV =>
-        added(decodeBoolean())(read.addBoolean(values, pullBooleanValue()))
+        checked(decodeBooleanValue())(v => read.addBoolean(values, v))
       case RawSchema.FieldPlan.StringV =>
-        added(decodeString())(read.addString(values, pullStringStrict()))
+        checked(decodeStringValue())(v => read.addString(values, v))
       case RawSchema.FieldPlan.CharV =>
-        added(decodeChar())(read.addChar(values, pullCharValue()))
+        checked(decodeCharValue())(v => read.addChar(values, v))
       case RawSchema.FieldPlan.RecordV =>
         added(decodeNestedRecord(schema))(addSlot(read)(values))
       case RawSchema.FieldPlan.VectorV =>
@@ -1776,144 +1787,172 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
     }
 
     /** decodes a string (with `+` concatenation), pushing the value into [[stringSlot]] */
-  protected final def decodeString(): Result[Unit, DecodeError] =
-    Result.task {
-      if tryScanStringDirect() then pushString(scannedStringValue())
-      else if currentKind() == TokenKind.StringLit then
-        pushString(currentStringValue())
+  // Value-returning atomic decoders: each hands its decoded value straight back to the caller —
+  // register-passed into whatever builder is live. A failed decode parks its error in
+  // [[pendingValueError]] and returns a zero value; the caller checks-and-consumes in the same
+  // frame. No boundary is entered per value and no slot is written. The Result-returning wrappers
+  // below adapt them for callers that still consume through the typed slots (the outermost root,
+  // and generic dispatch pending conversion).
+
+  protected final def decodeStringValue(): String =
+    var value: String = null
+    if tryScanStringDirect() then value = scannedStringValue()
+    else if currentKind() == TokenKind.StringLit then
+      value = currentStringValue()
+      advance()
+    else return failValue(expectedTypeAtCurrent(RawSchema.String), "")
+    // '+' concatenation is probed at the char level so the common single-literal case leaves the
+    // stream between tokens instead of scanning whatever follows the string
+    if (if betweenTokens then probePlusChar() else currentKind() == TokenKind.Plus) then
+      val builder = StringBuilder() ++= value
+      while currentKind() == TokenKind.Plus do
         advance()
-      else raise(expectedTypeAtCurrent(RawSchema.String))
-      // '+' concatenation is probed at the char level so the common single-literal case leaves the
-      // stream between tokens instead of scanning whatever follows the string
-      if (if betweenTokens then probePlusChar() else currentKind() == TokenKind.Plus) then
-        val builder = StringBuilder() ++= pullStringStrict()
-        while currentKind() == TokenKind.Plus do
-          advance()
-          decodeStringAtom().check
-          builder ++= pullStringStrict()
-        pushString(builder.result())
-    }
+        val atom = decodeStringAtomValue()
+        if pendingValueError != null then return ""
+        builder ++= atom
+      builder.result()
+    else value.nn
 
-  protected final def decodeStringAtom(): Result[Unit, DecodeError] = Result.task:
+  protected final def decodeStringAtomValue(): String =
     if currentKind() == TokenKind.StringLit then
-      pushString(currentStringValue())
+      val value = currentStringValue()
       advance()
-    else raise(expectedTypeAtCurrent(RawSchema.String))
+      value
+    else failValue(expectedTypeAtCurrent(RawSchema.String), "")
 
-  protected final def decodeChar(): Result[Unit, DecodeError] = Result.task:
+  protected final def decodeCharValue(): Char =
     if currentKind() == TokenKind.CharLit then
-      pushChar(currentCharValue())
+      val value = currentCharValue()
       advance()
-    else raise(expectedTypeAtCurrent(RawSchema.Char))
+      value
+    else failValue(expectedTypeAtCurrent(RawSchema.Char), '\u0000')
 
-  protected final def decodeInt(): Result[Unit, DecodeError] = Result.task:
+  protected final def decodeIntValue(): Int =
     val signedScan = tryScanSignedNumberDirect()
     if signedScan != Tokenizer.NumberNone then
       val negative = signedScan == Tokenizer.NumberNegated
-      if scannedKind() == TokenKind.IntLit then pushInt(currentIntValue(negative))
+      if scannedKind() == TokenKind.IntLit then currentIntValue(negative)
       else
         adoptScannedToken()
-        raise(expectedTypeAtCurrent(RawSchema.Int))
+        failValue(expectedTypeAtCurrent(RawSchema.Int), 0)
     else
-      decodeSigned[Int](
-        literal = negative =>
-          currentKind() match
-            case TokenKind.IntLit => currentIntValue(negative)
-            case _                => raise(expectedTypeAtCurrent(RawSchema.Int)),
-        store = v => pushInt(v)
+      decodeSigned[Int](negative =>
+        currentKind() match
+          case TokenKind.IntLit => currentIntValue(negative)
+          case _                => failValue(expectedTypeAtCurrent(RawSchema.Int), 0)
       )
 
-  protected final def decodeLong(): Result[Unit, DecodeError] = Result.task:
+  protected final def decodeLongValue(): Long =
     val signedScan = tryScanSignedNumberDirect()
     if signedScan != Tokenizer.NumberNone then
       val negative = signedScan == Tokenizer.NumberNegated
       scannedKind() match
-        case TokenKind.LongLit => pushLong(currentLongValue(negative))
-        case TokenKind.IntLit  => pushLong(currentIntValue(negative).toLong)
+        case TokenKind.LongLit => currentLongValue(negative)
+        case TokenKind.IntLit  => currentIntValue(negative).toLong
         case _                 =>
           adoptScannedToken()
-          raise(expectedTypeAtCurrent(RawSchema.Long))
+          failValue(expectedTypeAtCurrent(RawSchema.Long), 0L)
     else
-      decodeSigned[Long](
-        literal = negative =>
-          currentKind() match
-            case TokenKind.LongLit => currentLongValue(negative)
-            case TokenKind.IntLit  => currentIntValue(negative).toLong
-            case _                 => raise(expectedTypeAtCurrent(RawSchema.Long)),
-        store = v => pushLong(v)
+      decodeSigned[Long](negative =>
+        currentKind() match
+          case TokenKind.LongLit => currentLongValue(negative)
+          case TokenKind.IntLit  => currentIntValue(negative).toLong
+          case _                 => failValue(expectedTypeAtCurrent(RawSchema.Long), 0L)
       )
 
-  protected final def decodeFloat(): Result[Unit, DecodeError] = Result.task:
+  protected final def decodeFloatValue(): Float =
     val signedScan = tryScanSignedNumberDirect()
     if signedScan != Tokenizer.NumberNone then
       val negative = signedScan == Tokenizer.NumberNegated
       scannedKind() match
         case TokenKind.FloatLit =>
           val magnitude = currentFloatValue()
-          pushFloat(if negative then -magnitude else magnitude)
+          if negative then -magnitude else magnitude
         case TokenKind.IntLit =>
           val value = currentIntValue(negative)
-          if NumericPromotions.isExactFloat(value) then pushFloat(value.toFloat)
+          if NumericPromotions.isExactFloat(value) then value.toFloat
           else
             adoptScannedToken()
-            raise(expectedTypeAtCurrent(RawSchema.Float))
+            failValue(expectedTypeAtCurrent(RawSchema.Float), 0.0f)
         case _ =>
           adoptScannedToken()
-          raise(expectedTypeAtCurrent(RawSchema.Float))
+          failValue(expectedTypeAtCurrent(RawSchema.Float), 0.0f)
     else
-      decodeSigned[Float](
-        literal = negative =>
-          currentKind() match
-            case TokenKind.FloatLit =>
-              val magnitude = currentFloatValue()
-              if negative then -magnitude else magnitude
-            case TokenKind.IntLit =>
-              val value = currentIntValue(negative)
-              if NumericPromotions.isExactFloat(value) then value.toFloat
-              else raise(expectedTypeAtCurrent(RawSchema.Float))
-            case _ => raise(expectedTypeAtCurrent(RawSchema.Float)),
-        store = v => pushFloat(v)
+      decodeSigned[Float](negative =>
+        currentKind() match
+          case TokenKind.FloatLit =>
+            val magnitude = currentFloatValue()
+            if negative then -magnitude else magnitude
+          case TokenKind.IntLit =>
+            val value = currentIntValue(negative)
+            if NumericPromotions.isExactFloat(value) then value.toFloat
+            else failValue(expectedTypeAtCurrent(RawSchema.Float), 0.0f)
+          case _ => failValue(expectedTypeAtCurrent(RawSchema.Float), 0.0f)
       )
 
-  protected final def decodeDouble(): Result[Unit, DecodeError] = Result.task:
+  protected final def decodeDoubleValue(): Double =
     val signedScan = tryScanSignedNumberDirect()
     if signedScan != Tokenizer.NumberNone then
       val negative = signedScan == Tokenizer.NumberNegated
       scannedKind() match
         case TokenKind.DoubleLit =>
           val magnitude = currentDoubleValue()
-          pushDouble(if negative then -magnitude else magnitude)
-        case TokenKind.IntLit => pushDouble(currentIntValue(negative).toDouble)
+          if negative then -magnitude else magnitude
+        case TokenKind.IntLit => currentIntValue(negative).toDouble
         case _                =>
           adoptScannedToken()
-          raise(expectedTypeAtCurrent(RawSchema.Double))
+          failValue(expectedTypeAtCurrent(RawSchema.Double), 0.0d)
     else
-      decodeSigned[Double](
-        literal = negative =>
-          currentKind() match
-            case TokenKind.DoubleLit =>
-              val magnitude = currentDoubleValue()
-              if negative then -magnitude else magnitude
-            case TokenKind.IntLit => currentIntValue(negative).toDouble
-            case _                => raise(expectedTypeAtCurrent(RawSchema.Double)),
-        store = v => pushDouble(v)
+      decodeSigned[Double](negative =>
+        currentKind() match
+          case TokenKind.DoubleLit =>
+            val magnitude = currentDoubleValue()
+            if negative then -magnitude else magnitude
+          case TokenKind.IntLit => currentIntValue(negative).toDouble
+          case _                => failValue(expectedTypeAtCurrent(RawSchema.Double), 0.0d)
       )
 
+  protected final def decodeBooleanValue(): Boolean =
+    tryReadBooleanChar() match
+      case Tokenizer.BooleanTrue  => true
+      case Tokenizer.BooleanFalse => false
+      case _                      =>
+        currentKind() match
+          case TokenKind.TrueKw =>
+            advance()
+            true
+          case TokenKind.FalseKw =>
+            advance()
+            false
+          case _ =>
+            failValue(expectedTypeAtCurrent(RawSchema.Boolean), false)
+
+  /** raises the pending value error, if any, through the enclosing task */
+  private inline def orRaise[T](inline decoded: T)(using Raise): T =
+    val value = decoded
+    if pendingValueError != null then raise(takeValueError())
+    else value
+
+  protected final def decodeString(): Result[Unit, DecodeError] =
+    Result.task(pushString(orRaise(decodeStringValue())))
+
+  protected final def decodeChar(): Result[Unit, DecodeError] =
+    Result.task(pushChar(orRaise(decodeCharValue())))
+
+  protected final def decodeInt(): Result[Unit, DecodeError] =
+    Result.task(pushInt(orRaise(decodeIntValue())))
+
+  protected final def decodeLong(): Result[Unit, DecodeError] =
+    Result.task(pushLong(orRaise(decodeLongValue())))
+
+  protected final def decodeFloat(): Result[Unit, DecodeError] =
+    Result.task(pushFloat(orRaise(decodeFloatValue())))
+
+  protected final def decodeDouble(): Result[Unit, DecodeError] =
+    Result.task(pushDouble(orRaise(decodeDoubleValue())))
+
   protected final def decodeBoolean(): Result[Unit, DecodeError] =
-    Result.task:
-      tryReadBooleanChar() match
-        case Tokenizer.BooleanTrue  => pushBoolean(true)
-        case Tokenizer.BooleanFalse => pushBoolean(false)
-        case _                      =>
-          currentKind() match
-            case TokenKind.TrueKw =>
-              advance()
-              pushBoolean(true)
-            case TokenKind.FalseKw =>
-              advance()
-              pushBoolean(false)
-            case _ =>
-              raise(expectedTypeAtCurrent(RawSchema.Boolean))
+    Result.task(pushBoolean(orRaise(decodeBooleanValue())))
 
   protected final def decodeNull(): Result[Unit, DecodeError] = Result.task:
     if currentKind() == TokenKind.NullKw then
