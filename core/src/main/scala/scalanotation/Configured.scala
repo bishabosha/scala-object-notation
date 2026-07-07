@@ -1,7 +1,6 @@
 package scalanotation
 
 import scala.annotation.publicInBinary
-import scala.compiletime
 import scala.deriving.Mirror
 
 import scalanotation.schema.RawSchema
@@ -26,7 +25,6 @@ object Configured:
     create(None, skippable = false)
 
   inline def skippable[T](using mirror: Mirror.Of[T]): Configured[T] =
-    validateSkippable[T]
     create(None, skippable = true)
 
   def discriminator[T](
@@ -337,20 +335,3 @@ object Configured:
       case RawSchema.PartialNamedTuple(base, alreadySeenField) =>
         RawSchema.PartialNamedTuple(makeSkippable(base), alreadySeenField)
       case other => other
-
-  private inline def validateSkippable[T](using mirror: Mirror.Of[T]): Unit =
-    inline mirror match
-      case m: Mirror.ProductOf[T] =>
-        validateHasNonOptionalField[m.MirroredElemTypes]
-      case _ => ()
-
-  private inline def validateHasNonOptionalField[Values <: Tuple]: Unit =
-    inline compiletime.erasedValue[Values] match
-      case _: EmptyTuple =>
-        compiletime.error(
-          "Configured skippable derivation for a product with only Option fields is not supported."
-        )
-      case _: (Option[?] *: tail) =>
-        validateHasNonOptionalField[tail]
-      case _: (_ *: _) =>
-        ()

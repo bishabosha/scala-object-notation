@@ -39,6 +39,10 @@ private[scalanotation] trait CommonTypeClassCompanion[TC[_]]:
           s"Expected pair tuple schema for map entries, got ${other.describeSelf}"
         )
 
+  /** `RejectAllOptionalProducts` is vestigial: the all-Option restriction on skippable derivation
+    * was lifted (`NamedTuple.Empty` spells the all-skipped record), but the parameter stays so
+    * pre-lift inline expansions retype against the same arity.
+    */
   trait CommonDerivationBuilders[
       RejectAllOptionalProducts <: Boolean,
       TypeClassName <: "Reader" | "Writer" | "ReadWriter"
@@ -82,7 +86,6 @@ private[scalanotation] trait CommonTypeClassCompanion[TC[_]]:
         using atPath: ProductFieldsAtPath["", mirror.MirroredElemLabels, mirror.MirroredElemTypes],
         hasFields: NotGiven[mirror.MirroredElemTypes =:= EmptyTuple]
     ): TC[T] =
-      validateProductFields[RejectAllOptionalProducts, "", mirror.MirroredElemTypes]
       productTypeClass[T](ProductFieldsAtPath.fields(atPath))
 
     final def ofCases[T](using mirror: Mirror.SumOf[T])(
@@ -123,15 +126,6 @@ private[scalanotation] trait CommonTypeClassCompanion[TC[_]]:
     private[scalanotation] def sumTypeClass[T](cases: List[SumCaseRepr[T]])(
         using mirror: Mirror.SumOf[T]
     ): TC[T]
-
-    private inline def validateProductFields[
-        RejectAllOptional <: Boolean,
-        Path <: String,
-        Values <: Tuple
-    ]: Unit =
-      inline compiletime.erasedValue[RejectAllOptional] match
-        case _: true  => HasNonOptionalField.validate[Path, Values]
-        case _: false => ()
 
     inline def formatPath[Path <: String]: String = ("'" + compiletime.constValue[Path] + "'")
 
@@ -188,18 +182,12 @@ private[scalanotation] trait CommonTypeClassCompanion[TC[_]]:
         => ProductFieldsAtPath[Path, Label *: Labels, Option[T] *: Values] =
         makeField(valueOf.value, typeclass) :: productFields(rest)
 
+    @deprecated(
+      "the all-Option restriction on skippable derivation was lifted: NamedTuple.Empty spells the all-skipped record",
+      "0.5.0"
+    )
     object HasNonOptionalField:
-      inline def validate[Path <: String, Values <: Tuple]: Unit =
-        inline compiletime.erasedValue[Values] match
-          case _: EmptyTuple =>
-            compiletime.error(
-              "at path " + formatPath[Path] + ": " + compiletime.constValue[TypeClassName] +
-                " derivation for a product with only Option fields is not supported."
-            )
-          case _: (Option[?] *: tail) =>
-            validate[Path, tail]
-          case _: (_ *: _) =>
-            ()
+      inline def validate[Path <: String, Values <: Tuple]: Unit = ()
 
     opaque type SumCasesAtPath[Path <: String, A, Labels <: Tuple, Cases <: Tuple] =
       List[SumCaseRepr[A]]
