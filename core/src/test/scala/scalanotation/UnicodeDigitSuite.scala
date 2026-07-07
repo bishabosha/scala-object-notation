@@ -1,8 +1,8 @@
 package scalanotation
 
 /** Number literals accept unicode digit characters (the scanner's digit class is
-  * `Character.isDigit`); their values must interpret through `Character.digit`, never through ASCII
-  * arithmetic.
+  * `Character.isDigit`); their values must interpret through `Character.digit`, never through
+  * ASCII arithmetic.
   */
 class UnicodeDigitSuite extends munit.FunSuite:
   test("unicode digits interpret correctly in Int literals"):
