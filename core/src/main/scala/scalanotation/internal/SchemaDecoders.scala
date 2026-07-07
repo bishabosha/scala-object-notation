@@ -1764,13 +1764,15 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
     else raise(expectedTypeAtCurrent(RawSchema.Char))
 
   protected final def decodeInt(): Result[Unit, DecodeError] = Result.task:
-    val signedScan = tryScanSignedNumberDirect()
-    if signedScan != 0 then
-      val negative = signedScan == 2
+    val negative = tryReadSignChar()
+    if tryScanNumberDirect() then
       if scannedKind() == TokenKind.IntLit then pushInt(currentIntValue(negative))
       else
         adoptScannedToken()
         raise(expectedTypeAtCurrent(RawSchema.Int))
+    else if negative then
+      // the sign probe saw a digit, so the direct scan cannot have failed
+      raise(expectedTypeAtCurrent(RawSchema.Int))
     else
       decodeSigned[Int](
         literal = negative =>
@@ -1781,15 +1783,15 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
       )
 
   protected final def decodeLong(): Result[Unit, DecodeError] = Result.task:
-    val signedScan = tryScanSignedNumberDirect()
-    if signedScan != 0 then
-      val negative = signedScan == 2
+    val negative = tryReadSignChar()
+    if tryScanNumberDirect() then
       scannedKind() match
         case TokenKind.LongLit => pushLong(currentLongValue(negative))
         case TokenKind.IntLit  => pushLong(currentIntValue(negative).toLong)
         case _                 =>
           adoptScannedToken()
           raise(expectedTypeAtCurrent(RawSchema.Long))
+    else if negative then raise(expectedTypeAtCurrent(RawSchema.Long))
     else
       decodeSigned[Long](
         literal = negative =>
@@ -1801,9 +1803,8 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
       )
 
   protected final def decodeFloat(): Result[Unit, DecodeError] = Result.task:
-    val signedScan = tryScanSignedNumberDirect()
-    if signedScan != 0 then
-      val negative = signedScan == 2
+    val negative = tryReadSignChar()
+    if tryScanNumberDirect() then
       scannedKind() match
         case TokenKind.FloatLit =>
           val magnitude = currentFloatValue()
@@ -1817,6 +1818,7 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
         case _ =>
           adoptScannedToken()
           raise(expectedTypeAtCurrent(RawSchema.Float))
+    else if negative then raise(expectedTypeAtCurrent(RawSchema.Float))
     else
       decodeSigned[Float](
         literal = negative =>
@@ -1833,9 +1835,8 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
       )
 
   protected final def decodeDouble(): Result[Unit, DecodeError] = Result.task:
-    val signedScan = tryScanSignedNumberDirect()
-    if signedScan != 0 then
-      val negative = signedScan == 2
+    val negative = tryReadSignChar()
+    if tryScanNumberDirect() then
       scannedKind() match
         case TokenKind.DoubleLit =>
           val magnitude = currentDoubleValue()
@@ -1844,6 +1845,7 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
         case _                =>
           adoptScannedToken()
           raise(expectedTypeAtCurrent(RawSchema.Double))
+    else if negative then raise(expectedTypeAtCurrent(RawSchema.Double))
     else
       decodeSigned[Double](
         literal = negative =>
