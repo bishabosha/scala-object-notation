@@ -147,27 +147,13 @@ enum RawSchema[A]:
             index += 1
           RawSchema.FieldPlans(kinds, nameChars, nullable)
         case sum: RawSchema.DiscriminatorSum[?] =>
-          // entry 0 is the discriminator header (its value is always a string); entries 1..n
-          // carry the case names' chars so the header decode slice-matches the discriminator
-          // value without materializing it (their kind/nullable slots are unused: the payload
-          // dispatches through decodeBase)
+          // a single entry: the discriminator header (its value is always a string)
           val name             = sum.discriminatorField
           val kind: scala.Byte =
             if scalanotation.internal.Tokenizer.isPlainFieldName(name) then
               RawSchema.FieldPlan.StringV
             else RawSchema.FieldPlan.TokenName
-          val cases     = sum.cases
-          val kinds     = new Array[scala.Byte](cases.length + 1)
-          val nameChars = new Array[Array[scala.Char]](cases.length + 1)
-          val nullable  = new Array[scala.Boolean](cases.length + 1)
-          kinds(0) = kind
-          nameChars(0) = name.toCharArray
-          var index = 0
-          while index < cases.length do
-            kinds(index + 1) = RawSchema.FieldPlan.Other
-            nameChars(index + 1) = cases(index).name.toCharArray
-            index += 1
-          RawSchema.FieldPlans(kinds, nameChars, nullable)
+          RawSchema.FieldPlans(Array(kind), Array(name.toCharArray), Array(false))
         case _ => RawSchema.FieldPlans.Empty
       fieldPlansCache = computed
       computed
