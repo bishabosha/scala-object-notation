@@ -118,7 +118,7 @@ class DefaultValuesSuite extends munit.FunSuite:
 
     // every level omits fields at once: Cluster.name, Endpoint.port/probe, Probe.timeout
     assertReads[Cluster](
-      """(endpoints = Vector((host = "a"), (host = "b", port = 9), (host = "c", probe = (path = "/p"))), arbiter = (host = "z", probe = ()))"""
+      """(endpoints = Vector((host = "a"), (host = "b", port = 9), (host = "c", probe = (path = "/p"))), arbiter = (host = "z", probe = (timeout = 5)))"""
     )(
       Result.Ok(
         Cluster(
@@ -128,16 +128,14 @@ class DefaultValuesSuite extends munit.FunSuite:
             Endpoint("b", 9),
             Endpoint("c", probe = Some(Probe("/p")))
           ),
-          Some(Endpoint("z", probe = Some(Probe())))
+          Some(Endpoint("z", probe = Some(Probe(timeout = 5))))
         )
       )
     )
-    // defaults at the root alone
-    assertReads[Cluster]("""()""")(Result.Ok(Cluster()))
-    // an empty record still fails precisely when some field has no default
-    Readers.readAs[Endpoint]("""()""") match
+    // `()` is the Unit literal, never a record — even with every field defaulted
+    Readers.readAs[Cluster]("""()""") match
       case Result.Err(error) =>
-        assert(error.rootCause.isInstanceOf[DecodeError.FieldCountMismatch], error.toString)
+        assert(error.rootCause.isInstanceOf[DecodeError.UnitValueNotAllowed], error.toString)
       case Result.Ok(value) => fail(s"Expected a decode failure, got $value")
 
   test("manual bindings install defaults at nested paths"):
