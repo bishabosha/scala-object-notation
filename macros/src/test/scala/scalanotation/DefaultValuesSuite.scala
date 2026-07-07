@@ -95,6 +95,57 @@ class DefaultValuesSuite extends munit.FunSuite:
       Result.Ok(Server("a"))
     )
 
+  test("manual bindings install defaults at nested paths"):
+    case class Db(host: String, port: Int)
+    case class Config(name: String, db: Db)
+
+    given Reader[Db]            = Reader.derived
+    given DefaultValues[Config] = DefaultValues.of[Config] { c =>
+      Seq(
+        c.name    := "app",
+        c.db.port := 5432
+      )
+    }
+    given Configured[Config] = Configured.default.withDefaultValues
+    given Reader[Config]     = Reader.configured.derived
+
+    assertReads[Config]("""(db = (host = "h"))""")(Result.Ok(Config("app", Db("h", 5432))))
+    assertReads[Config]("""(name = "x", db = (host = "h", port = 1))""")(
+      Result.Ok(Config("x", Db("h", 1)))
+    )
+
+  test("manual bindings step through Option and Vector fields"):
+    case class Worker(id: Int, retries: Int)
+    case class Db(host: String, port: Int)
+    case class Config(db: Option[Db], workers: Vector[Worker])
+
+    given Reader[Db]            = Reader.derived
+    given Reader[Worker]        = Reader.derived
+    given DefaultValues[Config] = DefaultValues.of[Config] { c =>
+      Seq(
+        c.db.some.port         := 5432,
+        c.workers.each.retries := 3
+      )
+    }
+    given Configured[Config] = Configured.default.withDefaultValues
+    given Reader[Config]     = Reader.configured.derived
+
+    assertReads[Config]("""(db = (host = "h"), workers = Vector((id = 1), (id = 2)))""")(
+      Result.Ok(Config(Some(Db("h", 5432)), Vector(Worker(1, 3), Worker(2, 3))))
+    )
+
+  test("a binding path naming a missing field is rejected at configuration time"):
+    case class Config(name: String)
+
+    given DefaultValues[Config] =
+      DefaultValues.of[Config] { c =>
+        Seq(c.selectDynamic("nope").asInstanceOf[DefaultValues.Path[Int]] := 1)
+      }
+    given Configured[Config] = Configured.default.withDefaultValues
+    intercept[IllegalArgumentException] {
+      Reader.configured.derived[Config].schema
+    }
+
   test("defaults and skippable options are mutually exclusive"):
     case class Data(x: Option[Int], y: Int = 1)
 
