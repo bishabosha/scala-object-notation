@@ -245,39 +245,23 @@ private[scalanotation] final class Tokenizer private[internal] (
     * boundary check below is exactly the identifier end the generic scanner would find.
     */
   private[internal] def scanFieldHeader(expected: String): Int =
-    // Fully locals-based: trivia, the name match, trivia and '=' run over register-resident
-    // text/index with a single write-back, since this is the hottest scan in record decoding.
-    // Unusual whitespace (comments, unicode spaces) diverts to the general reader path.
+    skipTrivia()
     val text   = input
     val length = text.length
-    var i      = index
-    while i < length && { val ch = text.charAt(i); ch == ' ' || (ch >= '\t' && ch <= '\r') } do
-      i += 1
-    val from = i
-    val len  = expected.length
-    var j    = 0
+    val from   = index
+    val len    = expected.length
+    var i      = from
+    var j      = 0
     while j < len && i < length && text.charAt(i) == expected.charAt(j) do
       i += 1
       j += 1
     if j == len && (i >= length || !isIdentifierPart(text.charAt(i))) then
       out.start = from
       out.end = i
-      while i < length && { val ch = text.charAt(i); ch == ' ' || (ch >= '\t' && ch <= '\r') } do
-        i += 1
-      if i < length && text.charAt(i) == '='
-        && (i + 1 >= length || !isOperatorPart(text.charAt(i + 1)))
-      then
-        charScanStart = i
-        index = i + 1
-        1
-      else
-        index = i
-        // '=' not found directly: comments or unusual whitespace may hide it — the general
-        // char reader retries before the caller falls back to the token path
-        if scanEqualsChar() then 1 else 0
+      index = i
+      if scanEqualsChar() then 1 else 0
     else
-      // a different (or non-plain) name, or unusual leading trivia: rescan generically as a
-      // slice for the caller's resolution
+      // a different (or non-plain) name: scan it as a slice for the caller's resolution
       index = from
       if scanIdentSlice() then 0 else -1
 
