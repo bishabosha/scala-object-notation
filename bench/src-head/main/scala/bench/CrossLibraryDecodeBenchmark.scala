@@ -33,15 +33,15 @@ object OrderBatch:
 // omit them exercise the record loop's slow name resolver on every following field
 case class SparseRecord(
     id: Long,
-    note: Option[String] = None,
-    factor: Option[Double] = None,
-    sku: String = "",
-    retries: Option[Int] = None,
-    qty: Int = 0,
-    flag: Option[Boolean] = None,
-    price: Double = 0.0,
-    alias: Option[String] = None,
-    active: Boolean = false
+    note: Option[String],
+    factor: Option[Double],
+    sku: String,
+    retries: Option[Int],
+    qty: Int,
+    flag: Option[Boolean],
+    price: Double,
+    alias: Option[String],
+    active: Boolean
 )
 object SparseRecord:
   given TypedFactory[SparseRecord] = TypedFactories.derived
@@ -129,10 +129,6 @@ class CrossLibraryDecodeBenchmark:
     s"""(id = ${i * 1000L}, sku = "sku-$i", qty = ${i % 10 + 1}, price = ${i * 100}.99, active = ${i % 2 == 0})"""
   private val sonSparseInput =
     s"(records = Vector(${(1 to 100).map(sparseRecord).mkString(", ")}))"
-  private def jsonSparse(i: Int): String =
-    s"""{"id":${i * 1000L},"sku":"sku-$i","qty":${i % 10 + 1},"price":${i * 100}.99,"active":${i % 2 == 0}}"""
-  private val jsonSparseInput =
-    s"""{"records":[${(1 to 100).map(jsonSparse).mkString(",")}]}"""
 
   // --- batch of 100 mixed enum cases; each library decodes its own default sum encoding ---
   private val shapeBatch = ShapeBatch(
@@ -162,8 +158,6 @@ class CrossLibraryDecodeBenchmark:
   private given upickle.default.ReadWriter[TypedPrimitive10Class] = upickle.default.macroRW
   private given upickle.default.ReadWriter[OrderRecord]           = upickle.default.macroRW
   private given upickle.default.ReadWriter[OrderBatch]            = upickle.default.macroRW
-  private given upickle.default.ReadWriter[SparseRecord]          = upickle.default.macroRW
-  private given upickle.default.ReadWriter[SparseBatch]           = upickle.default.macroRW
 
   private given Schema[OrderRecord] = Schema.derived
   private given Schema[Shape]       = Schema.derived
@@ -186,9 +180,6 @@ class CrossLibraryDecodeBenchmark:
   private val zioFlatCodec        = Schema.derived[TypedFlatClass].derive(JsonFormat)
   private val zioPrimitive10Codec = Schema.derived[TypedPrimitive10Class].derive(JsonFormat)
   private val zioOrdersCodec      = Schema.derived[OrderBatch].derive(JsonFormat)
-  private given Schema[SparseRecord] = Schema.derived
-  private val zioSparseCodec         = Schema.derived[SparseBatch].derive(JsonFormat)
-  private given JsonValueCodec[SparseBatch] = JsonCodecMaker.make
 
   // benchmarks are single-threaded per State(Scope.Thread), so the local context is safe
   private given ctx: BatchContext = BatchContext.local()
@@ -226,12 +217,6 @@ class CrossLibraryDecodeBenchmark:
     val result = scalanotation.Readers.readAs[SparseBatch](sonSparseInput)
     if result.isErr then sys.error(s"sonSparse100 failed: $result")
     result
-  @Benchmark def jsoniterSparse100String: Any =
-    readFromString[SparseBatch](jsonSparseInput)
-  @Benchmark def upickleSparse100String: Any =
-    upickle.default.read[SparseBatch](jsonSparseInput)
-  @Benchmark def zioBlocksSparse100String: Any =
-    zioSparseCodec.decode(jsonSparseInput)
 
   private def compactSon(son: String): String =
     son.replace(" = ", "=").replace(", ", ",").replace("=-", "= -")
