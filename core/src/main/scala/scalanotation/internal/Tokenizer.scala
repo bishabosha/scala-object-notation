@@ -432,17 +432,11 @@ private[scalanotation] final class Tokenizer private[internal] (
       while i < length && { ch = text(i); ch != '"' && ch != '\\' } do i += 1
       if i >= length || ch == '\\' then false
       else
-        // a `+` after the closing quote means concatenation — only the general decode handles
-        // it. The probe walks plain trivia only, so anything that could HIDE a `+` (a comment,
-        // unicode whitespace, separator controls — skipTrivia's divert set) also bails.
+        // a `+` after the closing quote means concatenation — only the general decode handles it
         var j = i + 1
         while j < length && { val c = text(j); c == ' ' || (c >= '\t' && c <= '\r') } do j += 1
-        if j < length && {
-            val c = text(j)
-            (c == '+' && (j + 1 >= length || !isOperatorPart(text(j + 1))))
-            || c == '/' || c > IdentifierSyntax.MaxAscii
-            || (c >= MinSeparatorControl && c <= MaxSeparatorControl)
-          }
+        if j < length && text(j) == '+'
+          && (j + 1 >= length || !isOperatorPart(text(j + 1)))
         then false
         else
           out.start = literal + 1
