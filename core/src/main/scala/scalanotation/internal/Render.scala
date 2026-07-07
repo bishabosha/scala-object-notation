@@ -227,9 +227,8 @@ private[scalanotation] object ExprRenderer:
       throw IllegalArgumentException(s"Cannot render non-finite Double value $value")
     out.append(value)
 
-  /** The char following the backslash for chars that must be escaped, or '\u0000' for "render
-    * as-is". Returning the escape code instead of a String keeps the escape decision
-    * allocation-free.
+  /** The char following the backslash for chars that must be escaped, or '\u0000' for "render as-is".
+    * Returning the escape code instead of a String keeps the escape decision allocation-free.
     */
   private def escapeCode(ch: Char, inString: Boolean): Char =
     ch match
