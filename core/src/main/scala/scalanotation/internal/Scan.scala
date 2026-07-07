@@ -83,44 +83,6 @@ private[internal] trait Scan:
       else Failed
     else at + constValue[Length[S]]
 
-  /** Walks chars satisfying `pred` — never fails; inspect the stop char via [[peek]]. The predicate
-    * is an inline function literal that beta-reduces into the loop.
-    */
-  protected inline def takeWhile(p: Int)(inline pred: Char => Boolean): Int =
-    val text  = chars
-    val limit = inputLength
-    var i     = p
-    while i < limit && pred(text(i)) do i += 1
-    i
-
-  /** Walks one run of the decimal-number grammar: ASCII digits call `onDigit`, and the dirty shapes
-    * — a `_` separator or a unicode digit — call `onDirty` with whether it was a separator. Returns
-    * the cursor at the first char that continues neither; never fails. The callbacks are inline
-    * function literals that beta-reduce into the loop, so accumulation stays at the call site
-    * (mutating its locals) while the run's grammar lives here.
-    */
-  protected inline def digitRun(p: Int)(inline onDigit: Char => Unit)(
-      inline onDirty: Boolean => Unit
-  ): Int =
-    val text    = chars
-    val limit   = inputLength
-    var i       = p
-    var walking = true
-    while walking && i < limit do
-      val ch = text(i)
-      if ch >= '0' && ch <= '9' then
-        onDigit(ch)
-        i += 1
-      else if ch == '_' then
-        onDirty(true)
-        i += 1
-      // '\u007f' == IdentifierSyntax.MaxAscii (inline vals cannot fold in this inline body)
-      else if ch > '\u007f' && Character.isDigit(ch) then
-        onDirty(false)
-        i += 1
-      else walking = false
-    i
-
   /** the char under the cursor, or `' '` at the end of input — never consumes */
   protected inline def peek(p: Int): Char =
     if p >= 0 && p < inputLength then chars(p) else ' '
