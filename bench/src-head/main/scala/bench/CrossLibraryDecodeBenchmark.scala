@@ -12,9 +12,11 @@ import zio.blocks.schema.json.JsonFormat
 
 import scalanotation.BatchContext
 import scalanotation.Configured
+import scalanotation.DefaultValues
 import scalanotation.Reader
 import scalanotation.Readers
 import scalanotation.TypedFactory
+import scalanotation.macros.Defaults
 import scalanotation.macros.TypedFactories
 
 case class OrderRecord(id: Long, sku: String, qty: Int, price: Double, active: Boolean)
@@ -53,6 +55,34 @@ object SparseBatch:
   given TypedFactory[SparseBatch] = TypedFactories.derived
   given Configured[SparseBatch]   = Configured.typed
   given Reader[SparseBatch]       = Reader.configured.derived
+
+// The sparse shape with default arguments instead of Options — the SAME input payload decodes
+// through defaults fills rather than None fills. Every library gathers the constructor defaults
+// natively (SON Defaults.derived, jsoniter codec maker, uPickle macroRW, zio-blocks Schema
+// derivation), so all sides fill the five omitted fields per record.
+case class DefaultedRecord(
+    id: Long,
+    note: String = "n/a",
+    factor: Double = 1.5,
+    sku: String = "",
+    retries: Int = 3,
+    qty: Int = 0,
+    flag: Boolean = true,
+    price: Double = 0.0,
+    alias: String = "anon",
+    active: Boolean = false
+)
+object DefaultedRecord:
+  given TypedFactory[DefaultedRecord]  = TypedFactories.derived
+  given DefaultValues[DefaultedRecord] = Defaults.derived
+  given Configured[DefaultedRecord]    = Configured.typed.withDefaultValues
+  given Reader[DefaultedRecord]        = Reader.configured.derived
+
+case class DefaultedBatch(records: Vector[DefaultedRecord])
+object DefaultedBatch:
+  given TypedFactory[DefaultedBatch] = TypedFactories.derived
+  given Configured[DefaultedBatch]   = Configured.typed
+  given Reader[DefaultedBatch]       = Reader.configured.derived
 
 // mixed-case enum batch — each library decodes its own default sum encoding, with SON in its
 // typed-factory configuration (like OrderRecord)
@@ -125,12 +155,34 @@ class CrossLibraryDecodeBenchmark:
     s"""{"orders":[${(1 to 100).map(jsonOrder).mkString(",")}]}"""
   private val jsonOrdersBytes = jsonOrdersInput.getBytes(StandardCharsets.UTF_8)
 
+  // Each record carries its own seeded-random subset of the five optional/defaulted extras —
+  // real sparse data omits fields at random, so no two records share a skip pattern. Every extra
+  // draws independently AND with its own frequency (near-always, common, occasional, rare), so
+  // the arriving-field patterns span many modes rather than one uniform coin. The extras sit at
+  // their schema positions (what a writer would emit), and the same values serve the
+  // Option-based sparse schema (bare values decode as Some) and the defaults schema alike.
+  private def sparseFieldValues(i: Int): List[(String, String)] =
+    val random          = new scala.util.Random(i * 7919)
+    def keep(p: Double) = random.nextDouble() < p
+    List(
+      Some("id" -> s"${i * 1000L}"),
+      Option.when(keep(0.8))("note" -> s""""note-$i""""),
+      Option.when(keep(0.15))("factor" -> s"${i % 7}.25"),
+      Some("sku" -> s""""sku-$i""""),
+      Option.when(keep(0.5))("retries" -> s"${i % 5}"),
+      Some("qty" -> s"${i % 10 + 1}"),
+      Option.when(keep(0.3))("flag" -> s"${i % 3 == 0}"),
+      Some("price" -> s"${i * 100}.99"),
+      Option.when(keep(0.65))("alias" -> s""""alias-$i""""),
+      Some("active" -> s"${i % 2 == 0}")
+    ).flatten
+
   private def sparseRecord(i: Int): String =
-    s"""(id = ${i * 1000L}, sku = "sku-$i", qty = ${i % 10 + 1}, price = ${i * 100}.99, active = ${i % 2 == 0})"""
+    sparseFieldValues(i).map((name, value) => s"$name = $value").mkString("(", ", ", ")")
   private val sonSparseInput =
     s"(records = Vector(${(1 to 100).map(sparseRecord).mkString(", ")}))"
   private def jsonSparse(i: Int): String =
-    s"""{"id":${i * 1000L},"sku":"sku-$i","qty":${i % 10 + 1},"price":${i * 100}.99,"active":${i % 2 == 0}}"""
+    sparseFieldValues(i).map((name, value) => s"\"$name\":$value").mkString("{", ",", "}")
   private val jsonSparseInput =
     s"""{"records":[${(1 to 100).map(jsonSparse).mkString(",")}]}"""
 
@@ -190,6 +242,12 @@ class CrossLibraryDecodeBenchmark:
   private val zioSparseCodec         = Schema.derived[SparseBatch].derive(JsonFormat)
   private given JsonValueCodec[SparseBatch] = JsonCodecMaker.make
 
+  private given Schema[DefaultedRecord] = Schema.derived
+  private val zioDefaultedCodec         = Schema.derived[DefaultedBatch].derive(JsonFormat)
+  private given JsonValueCodec[DefaultedBatch]            = JsonCodecMaker.make
+  private given upickle.default.ReadWriter[DefaultedRecord] = upickle.default.macroRW
+  private given upickle.default.ReadWriter[DefaultedBatch]  = upickle.default.macroRW
+
   // benchmarks are single-threaded per State(Scope.Thread), so the local context is safe
   private given ctx: BatchContext = BatchContext.local()
 
@@ -222,16 +280,27 @@ class CrossLibraryDecodeBenchmark:
   // Compact SON rendering (minimal whitespace), comparable in density to the compact JSON
   // inputs. `=` directly followed by `-` would scan as one operator token (Scala tokenization),
   // so a single space stays in front of negative literals — the most compact valid form.
+  // batched like every other SON benchmark — the one-shot reader allocates a fresh scanner per
+  // call, which once masqueraded as a decode-loop allocation gap
   @Benchmark def sonSparse100: Any =
-    val result = scalanotation.Readers.readAs[SparseBatch](sonSparseInput)
-    if result.isErr then sys.error(s"sonSparse100 failed: $result")
-    result
+    Readers.batched.readAs[SparseBatch](sonSparseInput)
   @Benchmark def jsoniterSparse100String: Any =
     readFromString[SparseBatch](jsonSparseInput)
   @Benchmark def upickleSparse100String: Any =
     upickle.default.read[SparseBatch](jsonSparseInput)
   @Benchmark def zioBlocksSparse100String: Any =
     zioSparseCodec.decode(jsonSparseInput)
+
+  // the same payload as the sparse benchmarks, decoded through the defaults-filling schemas —
+  // every record fills note/factor/retries/flag/alias from its constructor defaults
+  @Benchmark def sonDefaulted100: Any =
+    Readers.batched.readAs[DefaultedBatch](sonSparseInput)
+  @Benchmark def jsoniterDefaulted100String: Any =
+    readFromString[DefaultedBatch](jsonSparseInput)
+  @Benchmark def upickleDefaulted100String: Any =
+    upickle.default.read[DefaultedBatch](jsonSparseInput)
+  @Benchmark def zioBlocksDefaulted100String: Any =
+    zioDefaultedCodec.decode(jsonSparseInput)
 
   private def compactSon(son: String): String =
     son.replace(" = ", "=").replace(", ", ",").replace("=-", "= -")
@@ -277,6 +346,24 @@ class CrossLibraryDecodeBenchmark:
     requireOk("sonShapes100Bytes", Readers.batched.readAs[ShapeBatch](sonShapesBytesInput))
     requireOk("sonShapesDisc100", Readers.batched.readAs[ShapeKBatch](sonShapesKInput))
     requireOk("sonShapesDisc100Bytes", Readers.batched.readAs[ShapeKBatch](sonShapesKBytesInput))
+
+    requireOk("sonSparse100", Readers.batched.readAs[SparseBatch](sonSparseInput))
+    requireOk("sonDefaulted100", Readers.batched.readAs[DefaultedBatch](sonSparseInput))
+
+    // the defaults decode must fill omitted fields with the constructor defaults and keep the
+    // provided ones — a guard on values, not just Ok, since a wrong fill would still "decode"
+    val expectedDefaulted =
+      DefaultedRecord(id = 5L, retries = 9, price = 1.5, active = true)
+    Readers.batched.readAs[DefaultedBatch](
+      "(records = Vector((id = 5, retries = 9, price = 1.5, active = true)))"
+    ) match
+      case steps.result.Result.Ok(batch) =>
+        if batch.records.head != expectedDefaulted then
+          throw new IllegalStateException(
+            s"sonDefaulted100 decodes wrong values: ${batch.records.head}"
+          )
+      case err =>
+        throw new IllegalStateException(s"sonDefaulted100 does not decode: $err")
   }
 
   @Benchmark def sonFlatCompact: Any =
