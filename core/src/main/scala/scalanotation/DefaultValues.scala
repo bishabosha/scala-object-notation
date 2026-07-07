@@ -70,53 +70,13 @@ object DefaultValues:
       )
       Binding(path.reversedSegments.reverse, value.asInstanceOf[AnyRef])
 
-  extension [T](path: Path[T])
-    /** steps inside a field represented by an Option schema, so defaults can bind to the inner
-      * value's fields
-      */
-    def some(using repr: OptionRepr[T]): Path[repr.Inner] =
-      new Path(Segment.InOption :: path.reversedSegments)
+  extension [E](path: Path[Option[E]])
+    /** steps inside an `Option` field, so defaults can bind to the element's fields */
+    def some: Path[E] = new Path(Segment.InOption :: path.reversedSegments)
 
-    /** steps inside a field represented by a Vector schema, so defaults can bind to the elements'
-      * fields
-      */
-    def each(using repr: VectorRepr[T]): Path[repr.Elem] =
-      new Path(Segment.InVector :: path.reversedSegments)
-
-  /** Witnesses that `T` is represented by an Option schema, with inner values of type `Inner`.
-    * Instances mirroring the library's readers are provided; supply one for a custom
-    * Option-represented type to make it steppable with [[some]].
-    */
-  trait OptionRepr[T]:
-    type Inner
-
-  object OptionRepr:
-    private val witness: OptionRepr[Any] = new OptionRepr[Any] {}
-
-    given option: [E] => (OptionRepr[Option[E]] { type Inner = E }) =
-      witness.asInstanceOf[OptionRepr[Option[E]] { type Inner = E }]
-
-  /** Witnesses that `T` is represented by a Vector schema, with elements of type `Elem`. Instances
-    * mirror the library's readers — `Vector`, any `scala.collection.Seq` subtype, `IArray` and
-    * `Array`; supply one for a custom Vector-represented type to make it steppable with [[each]].
-    */
-  trait VectorRepr[T]:
-    type Elem
-
-  object VectorRepr:
-    private val witness: VectorRepr[Any] = new VectorRepr[Any] {}
-
-    given vector: [E] => (VectorRepr[Vector[E]] { type Elem = E }) =
-      witness.asInstanceOf[VectorRepr[Vector[E]] { type Elem = E }]
-
-    given seq: [E, Col[X] <: scala.collection.Seq[X]] => (VectorRepr[Col[E]] { type Elem = E }) =
-      witness.asInstanceOf[VectorRepr[Col[E]] { type Elem = E }]
-
-    given iarray: [E] => (VectorRepr[IArray[E]] { type Elem = E }) =
-      witness.asInstanceOf[VectorRepr[IArray[E]] { type Elem = E }]
-
-    given array: [E] => (VectorRepr[Array[E]] { type Elem = E }) =
-      witness.asInstanceOf[VectorRepr[Array[E]] { type Elem = E }]
+  extension [E](path: Path[Vector[E]])
+    /** steps inside a `Vector` field, so defaults can bind to the element's fields */
+    def each: Path[E] = new Path(Segment.InVector :: path.reversedSegments)
 
   /** a bound default: the path to a field, and the value it fills with when omitted */
   final class Binding private[DefaultValues] (
