@@ -311,37 +311,16 @@ private[scalanotation] final class Tokenizer private[internal] (
     // The hottest scan in record decoding — the combinator chain inlines to one pass over
     // register-resident text/index with a single write-back. Unusual whitespace (comments,
     // unicode spaces) diverts to the general reader path.
-    val text  = chars
-    val limit = inputLength
-    var i     = index
-    // probe-first name match: the name's first char is never a trivia char, so a direct hit
-    // needs no whitespace walk; only a miss walks the gap
-    if !(i < limit && text(i) == expected(0)) then i = plainGap(i)
-    val len = expected.length
-    var j   = 0
-    while j < len && i < limit && text(i) == expected(j) do
-      i += 1
-      j += 1
-    if j == len then
-      // the identifier boundary is IMPLIED by what follows the name: `=` directly (compact) or
-      // one space then `=` (spaced) both end it and complete the header in the same pass;
-      // anything else routes to the boundary check and the retry/mismatch arms
-      var eq = i
-      if eq < limit && text(eq) == ' ' then eq += 1
-      if eq < limit && text(eq) == '='
-        && (eq + 1 >= limit || !operatorPart(text(eq + 1)))
-      then
-        val slots = out
-        slots.start = i - len
-        slots.end = i
-        index = eq + 1
+    val name = wordAfterTrivia(index, expected)
+    if name >= 0 then
+      val slots = out
+      slots.start = name - expected.length
+      slots.end = name
+      val eq = operatorAfterTrivia(name, '=')
+      if eq >= 0 then
+        index = eq
         HeaderMatched
-      else if i >= limit || identifierEndsAt(text(i)) then
-        val slots = out
-        slots.start = i - len
-        slots.end = i
-        headerEqualsRetry(i)    // wider gaps or comments before '='
-      else headerNameMismatch() // the identifier continues: a longer name
+      else headerEqualsRetry(name)
     else headerNameMismatch()
 
   /** '=' not found directly after a matched name: comments or unusual whitespace may hide it — the
