@@ -259,6 +259,121 @@ private[scalanotation] trait BaseDecoders extends SharedHelpers:
       if currentKind() == TokenKind.Equals then advance()
       else raise(DecodeError.ExpectedEquals(describeCurrent()).atToken(currentSpan()))
 
+  protected inline def parseNamedTupleStructure(
+      schema: RawSchema[?],
+      allowEmpty: Boolean
+  )(
+      inline consumeFieldValue: Resulting[(String, Int, Int) => Unit, DecodeError]
+  ): Resulting[NamedTupleParseResult, DecodeError] = { lbl ?=>
+    if currentKind() == TokenKind.LParen then advance()
+    else
+      raise(DecodeError.ExpectedType(schema.describeSelf, describeCurrent()).atToken(currentSpan()))
+
+    val parsed: NamedTupleParseResult =
+      parsePartialNamedTupleStructureInner(schema)(consumeFieldValue) match
+        case parsed: NamedTupleParseResult => parsed
+        case err: Result.Err[DecodeError]  =>
+          scala.util.boundary.break(err) // TODO: replace with Result.breakErr
+
+    if !allowEmpty && parsed.fieldCount == 0 then
+      raise(DecodeError.UnitValueNotAllowed().atToken(spanAt(parsed.closingOffset)))
+    parsed
+  }
+
+  protected inline def parsePartialNamedTupleStructure(
+      schema: RawSchema[?]
+  )(
+      inline consumeFieldValue: Resulting[(String, Int, Int) => Unit, DecodeError]
+  ): Resulting[NamedTupleParseResult, DecodeError] = {
+    parsePartialNamedTupleStructureInner(schema)(consumeFieldValue) match
+      case parsed: NamedTupleParseResult => parsed
+      case err: Result.Err[DecodeError]  =>
+        scala.util.boundary.break(err) // TODO: replace with Result.breakErr
+  }
+
+  protected inline def parsePartialKnownNamedTupleStructure(
+      schema: RawSchema[?]
+  )(
+      inline consumeFieldValue: (Int, Int) => Result[Unit, DecodeError]
+  ): NamedTupleParseResult | Result.Err[DecodeError] =
+    currentKind() match
+      case TokenKind.RParen =>
+        val closingOffset = currentOffset()
+        advance()
+        namedTupleParseResult.push(0, null, closingOffset)
+      case _ =>
+        var fieldIndex: Int    = 0
+        var closingOffset: Int = 0
+        val err                = loop.task {
+          val nameOffset = currentOffset()
+          currentKind() match
+            case TokenKind.Identifier | TokenKind.VectorId | TokenKind.EmptyTupleId |
+                TokenKind.TupleId | TokenKind.Plus | TokenKind.Minus =>
+              consumeFieldValue(nameOffset, fieldIndex).check
+              fieldIndex += 1
+              currentKind() match
+                case TokenKind.Comma =>
+                  advance()
+                  if currentKind() == TokenKind.RParen then
+                    closingOffset = currentOffset()
+                    loop.done()
+                case TokenKind.RParen =>
+                  closingOffset = currentOffset()
+                  loop.done()
+                case _ =>
+                  raise(
+                    DecodeError.ExpectedRParen(describeCurrent()).atToken(currentSpan())
+                  )
+            case _ =>
+              raise(DecodeError.ExpectedFieldName(describeCurrent()).atToken(currentSpan()))
+        }
+        err match
+          case err: Result.Err[DecodeError] => err
+          case _                            =>
+            advance()
+            namedTupleParseResult.push(fieldIndex, null, closingOffset)
+
+  protected inline def parsePartialNamedTupleStructureInner(
+      schema: RawSchema[?]
+  )(
+      inline consumeFieldValue: Resulting[(String, Int, Int) => Unit, DecodeError]
+  ): NamedTupleParseResult | Result.Err[DecodeError] =
+    // to share the logic without breaking the label optimisation, we need to cache the result and
+    // then redispatch the break at the call-site. i.e. nested inline calls dont seem to compose
+    // well enough to pass along the label. i would like to investigate why.
+    {
+      scala.util.boundary {
+        currentKind() match {
+          case TokenKind.RParen =>
+            val closingOffset = currentOffset()
+            advance()
+            namedTupleParseResult.push(0, null, closingOffset)
+          case _ =>
+            var fieldIndex: Int              = 0
+            var lastFieldName: String | Null = null
+            val closingOffset: Int           = loop {
+              val nameOffset = currentOffset()
+              parseNamedFieldStart().check
+              val actualName = pullStringStrict()
+              consumeFieldValue(actualName, nameOffset, fieldIndex)
+              lastFieldName = actualName
+              fieldIndex += 1
+
+              currentKind() match
+                case TokenKind.Comma =>
+                  advance()
+                  if currentKind() == TokenKind.RParen then loop.break(currentOffset())
+                case TokenKind.RParen =>
+                  loop.break(currentOffset())
+                case _ =>
+                  raise(DecodeError.ExpectedRParen(describeCurrent()).atToken(currentSpan()))
+            }
+            advance()
+            namedTupleParseResult.push(fieldIndex, lastFieldName, closingOffset)
+        }
+      }
+    }
+
   protected inline def parseVectorStructure(schema: RawSchema[?])(
       inline consumeElementValue: Resulting[Int => Unit, DecodeError]
   ): Resulting[Unit, DecodeError] = {
