@@ -993,38 +993,24 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
     val startError = consumeDiscriminatorSumStart(schema)
     if startError != null then return Result.Err(startError)
 
+    val nameOffset = currentOffset()
+    parseNamedFieldStart() match
+      case Result.Err(error) => return Result.Err(error)
+      case _                 =>
+
+    val actualName         = pullStringStrict()
     val discriminatorField = schema.discriminatorField
-    val plans              = schema.fieldPlans
-    // the discriminator header reads like a record field: fused name + '=' against the
-    // plan-cached chars, with the token path (and the name materialized only for its error)
-    // covering non-plain or mismatched names
-    val headerProbe =
-      if plans.kinds(0) != RawSchema.FieldPlan.TokenName then expectFieldHeader(plans.nameChars(0))
-      else Tokenizer.HeaderNone
-    var headerOffset = 0
-    if headerProbe == Tokenizer.HeaderMatched then headerOffset = sliceNameOffset()
-    else
-      if headerProbe == Tokenizer.HeaderNameSlice then rescanNameSliceAsToken()
-      headerOffset = currentOffset()
-      parseNamedFieldStart() match
-        case Result.Err(error) => return Result.Err(error)
-        case _                 =>
-      val actualName = pullStringStrict()
-      if actualName != discriminatorField then
-        return Result.Err(
-          discriminatorFieldOrderError(discriminatorField, actualName, headerOffset)
-        )
+    if actualName != discriminatorField then
+      return Result.Err(discriminatorFieldOrderError(discriminatorField, actualName, nameOffset))
 
     decodeString() match
-      case Result.Err(error) => return Result.Err(error.atPath(s".$discriminatorField"))
+      case Result.Err(error) => return Result.Err(error.atPath(s".$actualName"))
       case _                 =>
 
     val caseName = pullStringStrict()
     val sumCase  = RawSchema.findCase(schema, caseName)
     if sumCase == null then
-      return Result.Err(
-        unexpectedDiscriminatorCaseError(caseName, discriminatorField, headerOffset)
-      )
+      return Result.Err(unexpectedDiscriminatorCaseError(caseName, actualName, nameOffset))
 
     val endError = consumeDiscriminatorPayloadStart()
     if endError != null then Result.Err(endError)
