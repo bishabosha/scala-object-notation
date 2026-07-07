@@ -293,7 +293,10 @@ private[scalanotation] class ExprDecoder() extends PushSlots with SharedHelpers:
             val fills  = schema.fieldPlans.fills
             var state  = read.init(fields.length, slots = null)
             if fills != null then
-              if fieldExprs.isEmpty && fields.nonEmpty then raise(DecodeError.UnitValueNotAllowed())
+              // in defaults mode an empty record fills every field; the count check below
+              // reports precisely when some field has no default
+              if fieldExprs.isEmpty && fields.nonEmpty && schema.allowSkippedNullableFields then
+                raise(DecodeError.UnitValueNotAllowed())
               var fieldExprIndex = 0
               var fieldIndex     = 0
               while fieldExprIndex < fieldExprs.length do

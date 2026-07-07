@@ -477,9 +477,11 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
 
       if tryConsumeRParen() then
         closingOffset = consumedRParenOffset
-        // partial records close legitimately with no further fields: the count check below
-        // classifies a shortfall, matching the token path's decisions
-        if openParen && fields.nonEmpty then
+        // Partial records close legitimately with no further fields, and in defaults mode `()`
+        // legitimately fills every field (the count check below reports precisely when some
+        // field has no default); the skippable mode keeps rejecting unit values.
+        val defaultsMode = allowSkip && !schema.allowSkippedNullableFields
+        if openParen && fields.nonEmpty && !defaultsMode then
           raise(DecodeError.UnitValueNotAllowed().atToken(spanAt(closingOffset)))
       else
         var done        = false
