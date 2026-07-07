@@ -98,6 +98,19 @@ enum RawSchema[A]:
   ): T =
     properties.computeIfAbsent(key, _ => compute).asInstanceOf[T]
 
+  /** Installs decode-time default values, parallel to this [[RawSchema.NamedTuple]]'s fields (null =
+    * the field has no default). [[Configured]] calls this on a freshly copied node, so shared
+    * schema instances are never mutated; the defaults must be installed before the first decode and
+    * are mutually exclusive with `allowSkippedNullableFields`.
+    */
+  private[scalanotation] def installFieldDefaults(defaults: IArray[AnyRef | Null]): Unit =
+    properties.put(RawSchema.FieldDefaults, defaults.asInstanceOf[AnyRef])
+
+  private[scalanotation] def installedFieldDefaults: IArray[AnyRef | Null] | Null =
+    properties.get(RawSchema.FieldDefaults) match
+      case null  => null
+      case value => value.asInstanceOf[IArray[AnyRef | Null]]
+
   // Cached named-tuple validation: checked once per decoded record, so it must be a plain volatile
   // read rather than a properties-map lookup. Validation is idempotent — a racing recompute stores
   // the same value.
@@ -129,7 +142,13 @@ enum RawSchema[A]:
             nameChars(index) = field.name.toCharArray
             nullable(index) = scalanotation.internal.TokenDecoder.isNullable(field.schema)
             index += 1
-          RawSchema.FieldPlans(kinds, nameChars, nullable)
+          val defaults                           = installedFieldDefaults
+          val fills: Array[AnyRef | Null] | Null =
+            if defaults != null then Array.tabulate[AnyRef | Null](fields.length)(defaults.nn.apply)
+            else if namedTuple.allowSkippedNullableFields then
+              Array.tabulate[AnyRef | Null](fields.length)(i => if nullable(i) then None else null)
+            else null
+          RawSchema.FieldPlans(kinds, nameChars, nullable, fills)
         case sum: RawSchema.Sum[?] =>
           val cases     = sum.cases
           val kinds     = new Array[scala.Byte](cases.length)
@@ -145,7 +164,7 @@ enum RawSchema[A]:
             nameChars(index) = sumCase.name.toCharArray
             nullable(index) = scalanotation.internal.TokenDecoder.isNullable(sumCase.schema)
             index += 1
-          RawSchema.FieldPlans(kinds, nameChars, nullable)
+          RawSchema.FieldPlans(kinds, nameChars, nullable, null)
         case sum: RawSchema.DiscriminatorSum[?] =>
           // entry 0 is the discriminator header (its value is always a string); entries 1..n
           // carry the case names' chars so the header decode slice-matches the discriminator
@@ -167,7 +186,7 @@ enum RawSchema[A]:
             kinds(index + 1) = RawSchema.FieldPlan.Other
             nameChars(index + 1) = cases(index).name.toCharArray
             index += 1
-          RawSchema.FieldPlans(kinds, nameChars, nullable)
+          RawSchema.FieldPlans(kinds, nameChars, nullable, null)
         case _ => RawSchema.FieldPlans.Empty
       fieldPlansCache = computed
       computed
@@ -266,11 +285,17 @@ object RawSchema:
   private[scalanotation] final class FieldPlans(
       val kinds: Array[scala.Byte],
       val nameChars: Array[Array[scala.Char]],
-      val nullable: Array[scala.Boolean]
+      val nullable: Array[scala.Boolean],
+      /** Per-field decode-time fill values, or null when fields may not be omitted. In skippable
+        * mode every nullable field fills with `None`; in defaults mode a field fills with its
+        * installed default. One array serves the whole record loop, so the two modes share every
+        * walk and fill site.
+        */
+      val fills: Array[AnyRef | Null] | Null
   )
 
   private[scalanotation] object FieldPlans:
-    val Empty: FieldPlans = FieldPlans(Array.emptyByteArray, Array.empty, Array.empty)
+    val Empty: FieldPlans = FieldPlans(Array.emptyByteArray, Array.empty, Array.empty, null)
 
   /** entry values of [[fieldPlans]]: how a field's name is matched and its value dispatched */
   private[scalanotation] object FieldPlan:
@@ -310,6 +335,9 @@ object RawSchema:
 
   final class Key[T]()
   private val SumCaseLookup: Key[Map[String, SumCase]] = Key()
+
+  /** property carrying a [[NamedTuple]]'s decode-time field defaults — see installFieldDefaults */
+  private val FieldDefaults: Key[AnyRef] = Key()
 
   final case class Field(name: String, schema: RawSchema[?])
   final case class SumCase(name: String, schema: RawSchema[?])
