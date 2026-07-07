@@ -313,11 +313,11 @@ private[scalanotation] final class Tokenizer private[internal] (
     // unicode spaces) diverts to the general reader path.
     val name = wordAfterTrivia(index, expected)
     if name >= 0 then
-      val slots = out
-      slots.start = name - expected.length
-      slots.end = name
+      out.start = name - expected.length
+      out.end = name
       val eq = operatorAfterTrivia(name, '=')
       if eq >= 0 then
+        charScanStart = eq - 1
         index = eq
         HeaderMatched
       else headerEqualsRetry(name)
