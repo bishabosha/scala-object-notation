@@ -5,57 +5,36 @@ import scalanotation.TextFormat
 
 private[scalanotation] object ExprRenderer:
   final class Output:
-    // the underlying java builder's typed append overloads format primitives in place, so no
-    // intermediate String is allocated for numeric and boolean literals
-    private val builder = new java.lang.StringBuilder
+    private val builder = new StringBuilder
 
     def append(ch: Char): Unit =
-      builder.append(ch)
+      builder += ch
 
     def append(str: String): Unit =
-      builder.append(str)
-
-    def append(value: Int): Unit =
-      builder.append(value)
-
-    def append(value: Long): Unit =
-      builder.append(value)
-
-    def append(value: Float): Unit =
-      builder.append(value)
-
-    def append(value: Double): Unit =
-      builder.append(value)
-
-    def append(value: Boolean): Unit =
-      builder.append(value)
-
-    /** appends `str.substring(from, until)` without allocating the substring */
-    def appendSlice(str: String, from: Int, until: Int): Unit =
-      builder.append(str, from, until)
+      builder ++= str
 
     def tokenSpacing()(using format: TextFormat): Unit =
       var i = 0
       while i < format.spacing do
-        builder.append(' ')
+        builder += ' '
         i += 1
 
     def appendToken(ch: Char)(using format: TextFormat): Unit =
       tokenSpacing()
-      builder.append(ch)
+      builder += ch
       tokenSpacing()
 
     def newlineAndIndent(depth: Int)(using format: TextFormat): Unit =
       if format.pretty then
-        builder.append('\n')
+        builder += '\n'
         var i = 0
         val n = depth * format.indent
         while i < n do
-          builder.append(' ')
+          builder += ' '
           i += 1
 
     def result(): String =
-      builder.toString
+      builder.result()
 
   def renderDecl(name: String, expr: Expr): String =
     renderDecl(name, expr, TextFormat.compact())
@@ -102,16 +81,15 @@ private[scalanotation] object ExprRenderer:
       case Expr.CharConstant(value) =>
         renderCharLiteral(value, out)
       case Expr.IntConstant(value) =>
-        out.append(value)
+        out.append(value.toString)
       case Expr.LongConstant(value) =>
-        out.append(value)
-        out.append('L')
+        out.append(s"${value}L")
       case Expr.FloatConstant(value) =>
         renderFloatLiteral(value, out)
       case Expr.DoubleConstant(value) =>
         renderDoubleLiteral(value, out)
       case Expr.BooleanConstant(value) =>
-        out.append(value)
+        out.append(value.toString)
       case Expr.NullConstant =>
         out.append("null")
 
@@ -187,21 +165,7 @@ private[scalanotation] object ExprRenderer:
       out: Output
   ): Unit =
     out.append('"')
-    // escape-free runs (the common case: the whole string) are bulk-appended straight from the
-    // input; nothing is allocated per character
-    val length = value.length
-    var start  = 0
-    var i      = 0
-    while i < length do
-      val escaped = escapeCode(value.charAt(i), inString = true)
-      if escaped != '\u0000' then
-        if i > start then out.appendSlice(value, start, i)
-        out.append('\\')
-        out.append(escaped)
-        start = i + 1
-      i += 1
-    if start == 0 then out.append(value)
-    else if length > start then out.appendSlice(value, start, length)
+    value.iterator.foreach(ch => out.append(escapeChar(ch, inString = true)))
     out.append('"')
 
   private[scalanotation] def renderCharLiteral(
@@ -209,35 +173,27 @@ private[scalanotation] object ExprRenderer:
       out: Output
   ): Unit =
     out.append('\'')
-    val escaped = escapeCode(value, inString = false)
-    if escaped != '\u0000' then
-      out.append('\\')
-      out.append(escaped)
-    else out.append(value)
+    out.append(escapeChar(value, inString = false))
     out.append('\'')
 
   private[scalanotation] def renderFloatLiteral(value: Float, out: Output): Unit =
     if !java.lang.Float.isFinite(value) then
       throw IllegalArgumentException(s"Cannot render non-finite Float value $value")
-    out.append(value)
-    out.append('f')
+    out.append(s"${java.lang.Float.toString(value)}f")
 
   private[scalanotation] def renderDoubleLiteral(value: Double, out: Output): Unit =
     if !java.lang.Double.isFinite(value) then
       throw IllegalArgumentException(s"Cannot render non-finite Double value $value")
-    out.append(value)
+    out.append(java.lang.Double.toString(value))
 
-  /** The char following the backslash for chars that must be escaped, or '\u0000' for "render as-is".
-    * Returning the escape code instead of a String keeps the escape decision allocation-free.
-    */
-  private def escapeCode(ch: Char, inString: Boolean): Char =
+  private def escapeChar(ch: Char, inString: Boolean): String =
     ch match
-      case '\n'              => 'n'
-      case '\r'              => 'r'
-      case '\t'              => 't'
-      case '\b'              => 'b'
-      case '\f'              => 'f'
-      case '\\'              => '\\'
-      case '"' if inString   => '"'
-      case '\'' if !inString => '\''
-      case _                 => '\u0000'
+      case '\n'              => "\\n"
+      case '\r'              => "\\r"
+      case '\t'              => "\\t"
+      case '\b'              => "\\b"
+      case '\f'              => "\\f"
+      case '\\'              => "\\\\"
+      case '"' if inString   => "\\\""
+      case '\'' if !inString => "\\'"
+      case other             => other.toString
