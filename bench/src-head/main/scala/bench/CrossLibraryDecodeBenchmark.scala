@@ -183,9 +183,9 @@ class CrossLibraryDecodeBenchmark:
   private val sonShapesKBytesInput = sonShapesKInput.getBytes(StandardCharsets.UTF_8)
   private val jsonShapesBytesInput = jsonShapesInput.getBytes(StandardCharsets.UTF_8)
 
-  private val zioFlatCodec        = Schema.derived[TypedFlatClass].derive(JsonFormat)
-  private val zioPrimitive10Codec = Schema.derived[TypedPrimitive10Class].derive(JsonFormat)
-  private val zioOrdersCodec      = Schema.derived[OrderBatch].derive(JsonFormat)
+  private val zioFlatCodec           = Schema.derived[TypedFlatClass].derive(JsonFormat)
+  private val zioPrimitive10Codec    = Schema.derived[TypedPrimitive10Class].derive(JsonFormat)
+  private val zioOrdersCodec         = Schema.derived[OrderBatch].derive(JsonFormat)
   private given Schema[SparseRecord] = Schema.derived
   private val zioSparseCodec         = Schema.derived[SparseBatch].derive(JsonFormat)
   private given JsonValueCodec[SparseBatch] = JsonCodecMaker.make
