@@ -428,7 +428,7 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
       withBorrowSlots(read.slotsFactory) { slots =>
         // the seen-field bitset only matters when fields can be skipped (out-of-schema-order
         // duplicates); in ordered mode the decoded set is always the contiguous prefix
-        if schema.fieldPlans.fills != null then
+        if schema.allowSkippedNullableFields then
           fieldIndexSetPool.withBorrowed { seenFields =>
             decodeRecordFields(schema, read, slots, seenFields, null, openParen = true)
           }
@@ -454,16 +454,15 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
       openParen: Boolean
   ): Result[Unit, DecodeError] =
     Result.task {
-      val fields     = schema.fields
-      val fieldPlans = schema.fieldPlans
-      val fills      = fieldPlans.fills
-      val allowSkip  = fills != null
+      val fields    = schema.fields
+      val allowSkip = schema.allowSkippedNullableFields
       if seenFields != null then
         seenFields.reset(fields.length)
         if alreadySeenField != null then
           val alreadySeenIndex = indexOfField(fields, alreadySeenField)
           if alreadySeenIndex >= 0 then seenFields.mark(alreadySeenIndex)
       schema.isValidNamedTuple(namesPool).check
+      val fieldPlans        = schema.fieldPlans
       val plans             = fieldPlans.kinds
       val nameChars         = fieldPlans.nameChars
       var state: read.State = read.init(fields.length, slots)
@@ -523,10 +522,10 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
               decodedIndex = pullControl()
 
             if decodedIndex > fieldIndex then
-              // fill the skipped range — the resolver validated every field in it is fillable
-              val fillValues = fills.nn
+              // None-fill the skipped range — the resolver validated that every schema in it is a
+              // skippable nullable
               while fieldIndex < decodedIndex do
-                state = read.add(state, fieldIndex, fillValues(fieldIndex))
+                state = read.add(state, fieldIndex, None)
                 fieldIndex += 1
 
             // --- '=' ---
@@ -563,7 +562,7 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
               else headerProbe = probeRecordHeader(fields, plans, nameChars, fieldIndex)
 
       if allowSkip then
-        state = fillTrailingSkippedFields(read)(fields, fills.nn, state, fieldIndex)
+        state = fillTrailingSkippedNullableFields(read)(fields, state, fieldIndex)
         fieldIndex = pullSkipFillIndex()
 
       val decodedFieldCount = if allowSkip then fieldIndex else decodedCount
@@ -617,13 +616,13 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
     if sliceRead then
       val kinds     = fieldPlans.kinds
       val nameChars = fieldPlans.nameChars
-      val fills     = if allowSkip then fieldPlans.fills.nn else null
+      val skippable = fieldPlans.nullable
       var index     = fieldIndexStart
       var blocked   = false
       while !blocked && resolved < 0 && index < fields.length do
         if kinds(index) != RawSchema.FieldPlan.TokenName && sliceNameEquals(nameChars(index))
         then resolved = index
-        else if fills != null && fills(index) != null then index += 1
+        else if allowSkip && skippable(index) then index += 1
         else blocked = true
       if resolved >= 0 then
         if seenFields != null && seenFields.contains(resolved) then
@@ -654,12 +653,12 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
     if !isFieldNameStart(currentKind()) then
       raise(DecodeError.ExpectedFieldName(describeCurrent()).atToken(currentSpan()))
 
-    val fills              = if allowSkip then fieldPlans.fills.nn else null
+    val nullable           = fieldPlans.nullable
     var index              = fieldIndexStart
     val expectedBeforeSkip = if index < fields.length then fields(index) else null
-    while fills != null && index < fields.length
+    while allowSkip && index < fields.length
       && !currentFieldNameMatches(fields(index).name)
-      && fills(index) != null
+      && nullable(index)
     do index += 1
 
     if index >= fields.length then
@@ -843,13 +842,12 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
       true
     else false
 
-  private def fillTrailingSkippedFields(read: RawSchema.NamedTupleRead)(
+  private def fillTrailingSkippedNullableFields(read: RawSchema.NamedTupleRead)(
       fields: IArray[Field],
-      fills: Array[AnyRef | Null],
       state: read.State,
       fieldIndex: Int
   ): read.State =
-    fillSkippedFields(read)(fields, fills, state, fieldIndex, "")
+    fillSkippedNullableFields(read)(fields, state, fieldIndex, "")
 
   private def makeDuplicateKnownFieldError(
       name: String,
