@@ -158,6 +158,42 @@ class DefaultValuesSuite extends munit.FunSuite:
     assertEquals(Expr.NamedTupleExpr(IndexedSeq.empty).decodeAs[Cluster], Result.Ok(Cluster()))
     assertEquals(Expr.NamedTupleExpr(IndexedSeq.empty).render, "NamedTuple.Empty")
 
+  test("batches of heterogeneous field orders decode correctly while the loop learns arrival"):
+    case class Rec(a: Int = 1, b: Int = 2, c: Int = 3, d: Int = 4)
+
+    given DefaultValues[Rec] = Defaults.derived
+    given Configured[Rec]    = Configured.default.withDefaultValues
+    given Reader[Rec]        = Reader.configured.derived
+
+    // each element arrives with a different subset/order, so the learned arrival prediction is
+    // wrong on most transitions and must fall back to the resolver without changing results
+    assertReads[Vector[Rec]](
+      """Vector((a = 10, c = 30), (a = 1, b = 2, c = 3, d = 4), (d = 40), (b = 20), (a = 10, c = 30))"""
+    )(
+      Result.Ok(
+        Vector(
+          Rec(a = 10, c = 30),
+          Rec(1, 2, 3, 4),
+          Rec(d = 40),
+          Rec(b = 20),
+          Rec(a = 10, c = 30)
+        )
+      )
+    )
+    // error parity must not depend on what earlier decodes learned: the same bad input fails
+    // identically before and after batches that train the prediction
+    def rootCauseOf(input: String): DecodeError =
+      Readers.readAs[Rec](input) match
+        case Result.Err(error) => error.rootCause
+        case Result.Ok(value)  => fail(s"Expected a decode failure for $input, got $value")
+    val duplicateBefore = rootCauseOf("""(a = 1, a = 2)""")
+    val reorderBefore   = rootCauseOf("""(c = 3, a = 1)""")
+    assertReads[Vector[Rec]]("""Vector((c = 30, d = 40), (b = 20, d = 40))""")(
+      Result.Ok(Vector(Rec(c = 30, d = 40), Rec(b = 20, d = 40)))
+    )
+    assertEquals(rootCauseOf("""(a = 1, a = 2)"""), duplicateBefore)
+    assertEquals(rootCauseOf("""(c = 3, a = 1)"""), reorderBefore)
+
   test("manual bindings install defaults at nested paths"):
     case class Db(host: String, port: Int)
     case class Config(name: String, db: Db)
