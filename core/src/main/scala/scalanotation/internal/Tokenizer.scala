@@ -236,34 +236,14 @@ private[scalanotation] final class Tokenizer private[internal] (
       charScanStart = start
       true
 
-  /** Fused scan of a `<expected> =` field header: 1 with both consumed, 0 with only the identifier
-    * consumed as a slice (a mismatched name or a missing `=` — the caller resolves via the slice),
-    * -1 with nothing consumed (no plain identifier follows).
-    *
-    * The expected name is matched directly against the input in one pass; `expected` must be
-    * plan-eligible ([[Tokenizer.isPlainFieldName]]), which also rules out '_'-ending names, so the
-    * boundary check below is exactly the identifier end the generic scanner would find.
+  /** Fused scan of a `<expected> =` field header: 1 with both consumed, 0 with only the
+    * identifier consumed as a slice (a mismatched name or a missing `=` — the caller resolves via
+    * the slice), -1 with nothing consumed (no plain identifier follows).
     */
   private[internal] def scanFieldHeader(expected: String): Int =
-    skipTrivia()
-    val text   = input
-    val length = text.length
-    val from   = index
-    val len    = expected.length
-    var i      = from
-    var j      = 0
-    while j < len && i < length && text.charAt(i) == expected.charAt(j) do
-      i += 1
-      j += 1
-    if j == len && (i >= length || !isIdentifierPart(text.charAt(i))) then
-      out.start = from
-      out.end = i
-      index = i
-      if scanEqualsChar() then 1 else 0
-    else
-      // a different (or non-plain) name: scan it as a slice for the caller's resolution
-      index = from
-      if scanIdentSlice() then 0 else -1
+    if !scanIdentSlice() then -1
+    else if sliceEquals(start, end, expected) && scanEqualsChar() then 1
+    else 0
 
   /** Consumes a single `=` that is a whole operator (rejecting `==`, `=>`, ...): false consumes
     * nothing.
@@ -294,39 +274,9 @@ private[scalanotation] final class Tokenizer private[internal] (
         2
       else 0
 
-  /** Scanner-direct scan of a numeric literal at a value position: runs the exact number-token
-    * grammar into the slots, skipping the token-stream bookkeeping. False consumes nothing (not an
-    * ASCII digit next — signs, unicode digits and everything else stay on the token path).
-    */
-  private[internal] def scanNumberValue(): Boolean =
-    skipTrivia()
-    if isAtEnd then false
-    else
-      val ch = currentChar()
-      if ch >= '0' && ch <= '9' then
-        start = index
-        str = null
-        scanNumber()
-        end = index
-        true
-      else false
-
-  /** Scanner-direct scan of a string literal at a value position — see [[scanNumberValue]].
-    * Dedented multi-quote strings stay on the token path.
-    */
-  private[internal] def scanStringValue(): Boolean =
-    skipTrivia()
-    if isAtEnd || currentChar() != '"' then false
-    else
-      start = index
-      str = null
-      scanString()
-      end = index
-      true
-
   /** Consumes a `-` sign directly followed by a digit. The token path scans the sign as its own
-    * Minus token and interprets the literal with the sign passed separately, so this only skips the
-    * sign's token round trip; any other shape (`- 5`, `-x`, `->`) is left for the token path.
+    * Minus token and interprets the literal with the sign passed separately, so this only skips
+    * the sign's token round trip; any other shape (`- 5`, `-x`, `->`) is left for the token path.
     */
   private[internal] def scanSignChar(): Boolean =
     skipTrivia()
@@ -338,8 +288,8 @@ private[scalanotation] final class Tokenizer private[internal] (
     else false
 
   /** Fused scan of a `true`/`false` literal at a value position: 1/0 with it consumed, -1 with
-    * nothing consumed. The boundary check mirrors [[scanIdentifier]], so any other identifier shape
-    * (`trueish`, `true_`) is left for the token path, which classifies it identically.
+    * nothing consumed. The boundary check mirrors [[scanIdentifier]], so any other identifier
+    * shape (`trueish`, `true_`) is left for the token path, which classifies it identically.
     */
   private[internal] def scanBooleanValue(): Int =
     skipTrivia()
@@ -1285,8 +1235,8 @@ private[scalanotation] abstract class TokenStream private[internal] (
   /** true when no scanned, un-consumed token is pending */
   protected final def betweenTokens: Boolean = !hasToken
 
-  /** Fused char-level read of a `<expected> =` field header: 1 with both consumed, 0 with only the
-    * name consumed as a slice (readable via [[sliceNameMatches]]/[[sliceNameOffset]]), -1 with
+  /** Fused char-level read of a `<expected> =` field header: 1 with both consumed, 0 with only
+    * the name consumed as a slice (readable via [[sliceNameMatches]]/[[sliceNameOffset]]), -1 with
     * nothing consumed (a pending token or no plain identifier next).
     */
   protected final def tryReadFieldHeader(expected: String): Int =
@@ -1336,28 +1286,6 @@ private[scalanotation] abstract class TokenStream private[internal] (
   /** Char-level read of a `true`/`false` value: 1/0 consumed, -1 nothing consumed. */
   protected final def tryReadBooleanChar(): Int =
     if hasToken then -1 else scanner.scanBooleanValue()
-
-  // Scanner-direct value scans: on success the literal sits in the scanner slots (`cur` aims at
-  // them whenever the stream is between tokens) and is semantically consumed — no pending token.
-  // [[adoptScannedToken]] turns the scanned literal into the pending current token instead, for
-  // error paths that must report it exactly like the generic token path.
-
-  protected final def tryScanNumberDirect(): Boolean =
-    !hasToken && scanner.scanNumberValue()
-
-  protected final def tryScanStringDirect(): Boolean =
-    !hasToken && scanner.scanStringValue()
-
-  /** the kind of the literal scanned by the last successful direct scan */
-  protected final def scannedKind(): Int = scanner.out.kind
-
-  /** the string payload of the literal scanned by the last successful direct scan */
-  protected final def scannedStringValue(): String = scanner.out.str.nn
-
-  /** makes the directly scanned literal the pending current token (error reporting) */
-  protected final def adoptScannedToken(): Unit =
-    cur = scanner.out
-    hasToken = true
 
   /** start offset of the last successful char-level read — for error spans */
   protected final def charScanOffset(): Int = scanner.charScanStart
