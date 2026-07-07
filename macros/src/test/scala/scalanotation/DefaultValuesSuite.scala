@@ -82,6 +82,11 @@ class DefaultValuesSuite extends munit.FunSuite:
     assertReads[Job]("""(Retry = (name = "a"))""")(Result.Ok(Job.Retry("a")))
     assertReads[Job]("""(Retry = (name = "a", attempts = 5))""")(Result.Ok(Job.Retry("a", 5)))
     assertReads[Job]("""(Stop = (reason = "manual"))""")(Result.Ok(Job.Stop("manual")))
+    // a sum value carries exactly one case field, which `NamedTuple.Empty` cannot provide
+    Readers.readAs[Job]("NamedTuple.Empty") match
+      case Result.Err(error) =>
+        assertEquals(error.rootCause, DecodeError.FieldCountMismatch(1, 0))
+      case Result.Ok(value) => fail(s"Expected a decode failure, got $value")
 
   test("defaults decode from Expr trees identically"):
     case class Server(host: String, port: Int = 8080)

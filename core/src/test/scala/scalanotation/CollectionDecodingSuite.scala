@@ -477,6 +477,18 @@ class CollectionDecodingSuite extends ScalanotationSuite:
     assertEquals(rendered, "(x = 1, y = 2)")
     assertEquals(Readers.readAs[Data](rendered).map(_.toVector), Result.Ok(value.toVector))
 
+  test("empty dicts round-trip through NamedTuple.Empty"):
+    type Data = mutable.LinkedHashMap[String, Int]
+
+    val rendered = Writers.write(mutable.LinkedHashMap.empty[String, Int])
+    assertEquals(rendered, "NamedTuple.Empty")
+    assertEquals(Readers.readAs[Data](rendered).map(_.toVector), Result.Ok(Vector.empty))
+    // `()` is the Unit literal, never a record
+    Readers.readAs[Data]("()") match
+      case Result.Err(error) =>
+        assert(error.rootCause.isInstanceOf[DecodeError.UnitValueNotAllowed], error.toString)
+      case Result.Ok(value) => fail(s"Expected a decode failure, got $value")
+
   test("decode a dict with far more keys than the intern table holds"):
     // the intern table is only active in batched mode (one-shot decodes bypass it). With far more
     // distinct keys than table slots, keys collide and overwrite cached entries, so this fails if a
