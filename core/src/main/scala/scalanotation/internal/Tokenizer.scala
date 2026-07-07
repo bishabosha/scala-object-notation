@@ -434,6 +434,72 @@ private[scalanotation] final class Tokenizer private[internal] (
     !isAtEnd && currentChar() == '+'
     && (index + 1 >= input.length || !isOperatorPart(chars(index + 1)))
 
+  /** Fused scan of a field separator and the next expected header in one pass: 2 = `closing`
+    * consumed, 3 = trailing `,` and `closing` consumed, and after a consumed `,` the
+    * [[scanFieldHeader]] outcomes — 4 = `<expected> =` consumed, 5 = a name slice consumed
+    * (resolution needed), 1 = only the `,` consumed (no plain identifier next). 0 = nothing
+    * consumed. `expected == null` skips the header match and scans a slice directly.
+    */
+  private[internal] def scanSeparatorHeader(closing: Char, expected: Array[Char] | Null): Int =
+    // One fully locals-based pass over `, name =` (or the closing): trivia, separator, trivia,
+    // name match and '=' with no sub-scan calls on the happy path. Comments and unusual
+    // whitespace stop the plain-space loops and divert to the general routines (identical
+    // outcomes, just slower); the codes match the doc above.
+    val text   = chars
+    val length = input.length
+    var i      = index
+    while i < length && { val ch = text(i); ch == ' ' || (ch >= '\t' && ch <= '\r') } do i += 1
+    if i >= length then
+      index = i
+      0
+    else
+      val ch0 = text(i)
+      if ch0 == closing then
+        charScanStart = i
+        index = i + 1
+        2
+      else if ch0 != ',' then
+        index = i
+        0
+      else
+        charScanStart = i
+        i += 1
+        while i < length && { val ch = text(i); ch == ' ' || (ch >= '\t' && ch <= '\r') } do i += 1
+        if i >= length then
+          index = i
+          1
+        else if text(i) == closing then
+          charScanStart = i
+          index = i + 1
+          3
+        else if expected != null then
+          // inline header match — the body of scanFieldHeader over the already-skipped position
+          val from = i
+          val len  = expected.length
+          var j    = 0
+          while j < len && i < length && text(i) == expected(j) do
+            i += 1
+            j += 1
+          if j == len && (i >= length || !isIdentifierPart(text(i))) then
+            out.start = from
+            out.end = i
+            while i < length && { val ch = text(i); ch == ' ' || (ch >= '\t' && ch <= '\r') } do
+              i += 1
+            if i < length && text(i) == '=' && (i + 1 >= length || !isOperatorPart(text(i + 1)))
+            then
+              charScanStart = i
+              index = i + 1
+              4
+            else
+              index = i
+              if scanEqualsChar() then 4 else 5
+          else
+            index = from
+            if scanIdentSlice() then 5 else 1
+        else
+          index = i
+          if scanIdentSlice() then 5 else 1
+
   /** Consumes a single expected punctuation char: false consumes nothing. */
   private[internal] def scanPunctChar(expected: Char): Boolean =
     skipTrivia()
@@ -1478,18 +1544,25 @@ private[scalanotation] abstract class TokenStream private[internal] (
   protected final def betweenTokens: Boolean = !hasToken
 
   /** Fused char-level read of a `<expected> =` field header: 1 with both consumed, 0 with only the
-    * name consumed as a slice (readable via [[sliceNameOffset]]), -1 with nothing consumed (a
-    * pending token or no plain identifier next).
+    * name consumed as a slice (readable via [[sliceNameMatches]]/[[sliceNameOffset]]), -1 with
+    * nothing consumed (a pending token or no plain identifier next).
     */
   protected final def expectFieldHeader(expected: Array[Char]): Int =
     if hasToken then -1 else scanner.scanFieldHeader(expected)
 
+  /** fused separator + next-header read — see [[Tokenizer.scanSeparatorHeader]] for the codes */
+  protected final def tryReadSeparatorHeader(closing: Char, expected: Array[Char] | Null): Int =
+    if hasToken then 0 else scanner.scanSeparatorHeader(closing, expected)
+
   /** Scans a plain-identifier field name as an offset slice — no token, no classification. On
-    * success the slice offset is readable via [[sliceNameOffset]] until the next scan;
-    * [[rescanNameSliceAsToken]] rewinds and rescans it generically for mismatch handling.
+    * success the slice is readable via [[sliceNameMatches]]/[[sliceNameOffset]] until the next
+    * scan; [[rescanNameSliceAsToken]] rewinds and rescans it generically for mismatch handling.
     */
   protected final def tryReadNameSlice(): Boolean =
     !hasToken && scanner.scanIdentSlice()
+
+  protected final def sliceNameMatches(expected: String): Boolean =
+    sliceMatches(scanner.out, expected)
 
   protected final def sliceNameOffset(): Int = scanner.out.start
 
