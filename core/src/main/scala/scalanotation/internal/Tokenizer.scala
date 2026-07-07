@@ -203,76 +203,6 @@ private[scalanotation] final class Tokenizer private[internal] (
     else scanToken()
     end = index
 
-  // --- char-level scans for the schema-directed decode path -------------------------------------
-  // Each consumes exactly the asked-for shape or nothing (returning false/0 with the position
-  // untouched), so a fallback token scan over the same characters sees exactly what it would have
-  // seen without the attempt.
-
-  /** start offset of the last successful char-level scan below — for error spans */
-  private[internal] var charScanStart: Int = 0
-
-  /** Scans one plain identifier as an offset slice into `out.start`/`out.end`, without keyword
-    * classification and without touching `out.kind`. False when the next char cannot start a plain
-    * identifier (quoted names, operators, digits, EOF) — the caller falls back to a token scan. The
-    * consumed chars are exactly what [[scanIdentifier]] would consume, including the trailing
-    * '_'-then-operator continuation rule.
-    */
-  private[internal] def scanIdentSlice(): Boolean =
-    skipTrivia()
-    if isAtEnd || !isIdentifierStart(currentChar()) then false
-    else
-      start = index
-      while !isAtEnd && isIdentifierPart(currentChar()) do index += 1
-      if input.charAt(index - 1) == '_' then
-        while !isAtEnd && isOperatorPart(currentChar()) do index += 1
-      end = index
-      charScanStart = start
-      true
-
-  /** Consumes a single `=` that is a whole operator (rejecting `==`, `=>`, ...): false consumes
-    * nothing.
-    */
-  private[internal] def scanEqualsChar(): Boolean =
-    skipTrivia()
-    if !isAtEnd && currentChar() == '='
-      && (index + 1 >= input.length || !isOperatorPart(input.charAt(index + 1)))
-    then
-      charScanStart = index
-      index += 1
-      true
-    else false
-
-  /** Consumes a field separator: 1 for `,`, 2 for `)`, 0 (nothing consumed) otherwise. */
-  private[internal] def scanSeparatorChar(): Int =
-    skipTrivia()
-    if isAtEnd then 0
-    else
-      currentChar() match
-        case ',' =>
-          charScanStart = index
-          index += 1
-          1
-        case ')' =>
-          charScanStart = index
-          index += 1
-          2
-        case _ => 0
-
-  /** Consumes a single expected punctuation char: false consumes nothing. */
-  private[internal] def scanPunctChar(expected: Char): Boolean =
-    skipTrivia()
-    if !isAtEnd && currentChar() == expected then
-      charScanStart = index
-      index += 1
-      true
-    else false
-
-  /** Rewinds to `offset` so the token path can rescan a char-level attempt — only valid while the
-    * owning stream is between tokens.
-    */
-  private[internal] def rewindTo(offset: Int): Unit =
-    index = offset
-
   private def scanToken(): Unit =
     currentChar() match
       case '('                            => advance(); kind = TokenKind.LParen
@@ -937,26 +867,6 @@ private[scalanotation] object Tokenizer:
       i += 1
     result
 
-  /** Whether `name` scans as a single plain identifier-like token that the token path's field-name
-    * matcher accepts by slice comparison, so a char-level slice match on `name` is exactly
-    * equivalent to the token path. Decided by running the real scanner over the name once (cold:
-    * cached per schema). Keyword-classified names (`true`, `val`, ...), quoted names, operator
-    * names (`+`, `-`) and names ending in '_' (operator continuation) are excluded.
-    */
-  private[scalanotation] def isPlainFieldName(name: String): Boolean =
-    if name.isEmpty || name.charAt(name.length - 1) == '_' then false
-    else
-      try
-        val scanner = Tokenizer(name)
-        scanner.scanNext()
-        val kindOk = scanner.out.kind match
-          case TokenKind.Identifier =>
-            scanner.out.str == null // quoted identifiers materialize their name
-          case TokenKind.VectorId | TokenKind.EmptyTupleId | TokenKind.TupleId => true
-          case _                                                               => false
-        kindOk && scanner.out.start == 0 && scanner.out.end == name.length
-      catch case _: TokenizeException => false
-
   /** Materialize line/column information for an offset — error/debug path only. */
   def spanAt(input: String, offset: Int): DecodeError.Span =
     var line   = 1
@@ -1126,47 +1036,6 @@ private[scalanotation] abstract class TokenStream private[internal] (
     else
       cur = otherBuffer
       lookaheadCount = 1
-
-  // --- char-level readers for the schema decode layer -------------------------------------------
-  // Valid only between tokens (no pending current token — the stream's resting state under lazy
-  // scanning). Each either consumes exactly the asked-for shape or consumes nothing and returns
-  // false/0; the caller then falls back to the token path, which scans the same characters
-  // generically for identical semantics and errors.
-
-  /** true when no scanned, un-consumed token is pending */
-  protected final def betweenTokens: Boolean = !hasToken
-
-  /** Scans a plain-identifier field name as an offset slice — no token, no classification. On
-    * success the slice is readable via [[sliceNameMatches]]/[[sliceNameOffset]] until the next
-    * scan; [[rescanNameSliceAsToken]] rewinds and rescans it generically for mismatch handling.
-    */
-  protected final def tryReadNameSlice(): Boolean =
-    !hasToken && scanner.scanIdentSlice()
-
-  protected final def sliceNameMatches(expected: String): Boolean =
-    sliceMatches(scanner.out, expected)
-
-  protected final def sliceNameOffset(): Int = scanner.out.start
-
-  /** Rescans the last [[tryReadNameSlice]] result as a generic token, so the token path sees the
-    * identical characters (classification included) for error reporting and non-plain matching.
-    */
-  protected final def rescanNameSliceAsToken(): Unit =
-    scanner.rewindTo(scanner.out.start)
-    ensureToken()
-
-  protected final def tryReadEqualsChar(): Boolean =
-    !hasToken && scanner.scanEqualsChar()
-
-  /** 1 = `,` consumed, 2 = `)` consumed, 0 = nothing consumed (pending token or another shape). */
-  protected final def tryReadSeparatorChar(): Int =
-    if hasToken then 0 else scanner.scanSeparatorChar()
-
-  protected final def tryReadPunctChar(expected: Char): Boolean =
-    !hasToken && scanner.scanPunctChar(expected)
-
-  /** start offset of the last successful char-level read — for error spans */
-  protected final def charScanOffset(): Int = scanner.charScanStart
 
   // payload accessors — happy path, unboxed where primitive. Int and Long take the sign decoded
   // from the preceding token: the value is interpreted here, in place from the input slice, so
