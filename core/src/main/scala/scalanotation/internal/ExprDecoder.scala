@@ -290,8 +290,9 @@ private[scalanotation] class ExprDecoder() extends PushSlots with SharedHelpers:
         expr match
           case Expr.NamedTupleExpr(fieldExprs) =>
             val fields = schema.fields
+            val fills  = schema.fieldPlans.fills
             var state  = read.init(fields.length, slots = null)
-            if schema.allowSkippedNullableFields then
+            if fills != null then
               if fieldExprs.isEmpty && fields.nonEmpty then raise(DecodeError.UnitValueNotAllowed())
               var fieldExprIndex = 0
               var fieldIndex     = 0
@@ -300,7 +301,7 @@ private[scalanotation] class ExprDecoder() extends PushSlots with SharedHelpers:
                 val fieldName          = fieldExpr.name
                 val expectedBeforeSkip =
                   if fieldIndex < fields.length then fields(fieldIndex) else null
-                state = fillSkippedNullableFields(read)(fields, state, fieldIndex, fieldName)
+                state = fillSkippedFields(read)(fields, fills, state, fieldIndex, fieldName)
                 fieldIndex = pullSkipFillIndex()
 
                 if fieldIndex >= fields.length then
@@ -317,7 +318,7 @@ private[scalanotation] class ExprDecoder() extends PushSlots with SharedHelpers:
                 fieldIndex += 1
                 fieldExprIndex += 1
 
-              state = fillSkippedNullableFields(read)(fields, state, fieldIndex, "")
+              state = fillSkippedFields(read)(fields, fills, state, fieldIndex, "")
               fieldIndex = pullSkipFillIndex()
               if fieldIndex != fields.length then
                 raise(DecodeError.FieldCountMismatch(fields.length, fieldExprs.length))
@@ -455,6 +456,7 @@ private[scalanotation] class ExprDecoder() extends PushSlots with SharedHelpers:
           case Expr.NamedTupleExpr(fieldExprs) =>
             validatePartialNamedTupleStart(fieldExprs, alreadySeenField).check
             val fields     = schema.fields
+            val fills      = schema.fieldPlans.fills
             var state      = read.init(fields.length, slots = null)
             var fieldIndex = 0
             val offset     = 1
@@ -467,12 +469,13 @@ private[scalanotation] class ExprDecoder() extends PushSlots with SharedHelpers:
               val state0                                    = state
               val fieldIndex0                               = fieldIndex
               val expectedField: Field                      = {
-                if schema.allowSkippedNullableFields then
+                if fills != null then
                   val expectedBeforeSkip =
                     if fieldIndex0 < fields.length then fields(fieldIndex0)
                     else null
-                  val state1 = fillSkippedNullableFields(read)(
+                  val state1 = fillSkippedFields(read)(
                     fields,
+                    fills,
                     state0,
                     fieldIndex0,
                     actualName
@@ -519,13 +522,13 @@ private[scalanotation] class ExprDecoder() extends PushSlots with SharedHelpers:
               index += 1
             end while
 
-            if schema.allowSkippedNullableFields then
-              state = fillSkippedNullableFields(read)(fields, state, fieldIndex, "")
+            if fills != null then
+              state = fillSkippedFields(read)(fields, fills, state, fieldIndex, "")
               fieldIndex = pullSkipFillIndex()
 
             val payloadFieldCount = fieldExprs.length - offset
             val decodedFieldCount =
-              if schema.allowSkippedNullableFields then fieldIndex else payloadFieldCount
+              if fills != null then fieldIndex else payloadFieldCount
             if decodedFieldCount != fields.length then
               raise(DecodeError.FieldCountMismatch(fields.length, payloadFieldCount))
 
