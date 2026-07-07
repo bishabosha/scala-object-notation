@@ -51,12 +51,6 @@ private[internal] trait Scan:
 
   protected def identifierStart(ch: Char): Boolean = IdentifierSyntax.isIdentifierStart(ch)
 
-  /** The outlined form of [[plainTrivia]] for probe-first miss paths: it runs only when a gap
-    * actually exists, and keeping the walk out of the probing ops preserves their JIT inlining
-    * budgets.
-    */
-  protected final def plainGap(p: Int): Int = plainTrivia(p)
-
   /** Walks plain whitespace (`' '` and `'\t'..'\r'`) — never fails. Comments, unicode spaces and
     * separator controls stop the walk; combinators never enter the general trivia reader.
     */
@@ -169,9 +163,7 @@ private[internal] trait Scan:
     val text  = chars
     val limit = inputLength
     var i     = p
-    // probe-first: the word's first char is never a trivia char, so a direct hit at the cursor
-    // needs no whitespace walk; only a first-char miss walks plain whitespace
-    if !(i < limit && text(i) == expected(0)) then i = plainGap(i)
+    while i < limit && { val ch = text(i); ch == ' ' || (ch >= '\t' && ch <= '\r') } do i += 1
     val len = expected.length
     if i + len > limit then Failed
     else
@@ -187,7 +179,7 @@ private[internal] trait Scan:
     val text  = chars
     val limit = inputLength
     var i     = p
-    if !(i < limit && text(i) == expected) then i = plainGap(i)
+    while i < limit && { val ch = text(i); ch == ' ' || (ch >= '\t' && ch <= '\r') } do i += 1
     if i < limit && text(i) == expected
       && (i + 1 >= limit || !operatorPart(text(i + 1)))
     then i + 1
