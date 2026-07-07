@@ -1,11 +1,6 @@
 package scalanotation.internal
 
 private[scalanotation] object IdentifierSyntax:
-  /** chars above this need the character-data table lookups; at or below it the explicit ASCII
-    * ranges decide
-    */
-  private[internal] inline val MaxAscii = 127
-
   private val hardKeywords: Set[String] =
     Set(
       "abstract",
@@ -106,12 +101,12 @@ private[scalanotation] object IdentifierSyntax:
   private[internal] def isIdentifierStart(ch: Char): Boolean =
     // ASCII fast path first: Character.isLetter costs a character-data table lookup per char
     (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || ch == '_' || ch == '$'
-      || (ch > MaxAscii && Character.isLetter(ch))
+      || (ch > 127 && Character.isLetter(ch))
 
   private[internal] def isIdentifierPart(ch: Char): Boolean =
     (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9')
       || ch == '_' || ch == '$'
-      || (ch > MaxAscii && (Character.isLetter(ch) || Character.isDigit(ch)))
+      || (ch > 127 && (Character.isLetter(ch) || Character.isDigit(ch)))
 
   private[internal] def isOperatorPart(ch: Char): Boolean =
     ch match

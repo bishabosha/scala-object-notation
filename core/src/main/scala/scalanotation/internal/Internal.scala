@@ -17,7 +17,7 @@ private[internal] object Internal {
   final class LocalPool[T: Alloc as factory] extends PublicInternal.Pool[T]:
     // Non-atomic push/pop on a plain array stack: this is single-threaded code, and a borrow or
     // release happens once per decoded record, so it must stay a few loads and stores.
-    private var items = new Array[AnyRef](LocalPool.InitialCapacity)
+    private var items = new Array[AnyRef](8)
     private var size  = 0
 
     def borrow(): T =
@@ -32,10 +32,6 @@ private[internal] object Internal {
       if size == items.length then items = java.util.Arrays.copyOf(items, size * 2)
       items(size) = t.asInstanceOf[AnyRef]
       size += 1
-
-  object LocalPool:
-    /** deeper than any realistic decode nesting, so growth is effectively one-time */
-    private[Internal] inline val InitialCapacity = 8
 
   /** A lock-free, fixed-capacity pool that can be shared between threads — including virtual
     * threads, where a ThreadLocal cache would never be reused. Borrow and release probe the slot

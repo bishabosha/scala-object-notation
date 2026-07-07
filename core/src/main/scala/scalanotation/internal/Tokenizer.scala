@@ -104,11 +104,10 @@ private[internal] final class TokenSlots:
   var dbl: Double        = 0.0
 
   /** For IntLit/LongLit: digit count of the base-10 negated value accumulated into [[num]] during
-    * the scan, or [[Tokenizer.AccumulatorInvalid]] when the literal needs the slow interpretation
-    * (separators, prefixes, unicode digits, more than [[Tokenizer.MaxAccumulatedDigits]] digits).
-    * Meaningless for other kinds.
+    * the scan, or -1 when the literal needs the slow interpretation (separators, prefixes, > 18
+    * digits). Meaningless for other kinds.
     */
-  var accDigits: Int = Tokenizer.AccumulatorInvalid
+  var accDigits: Int = -1
 
   def copyFrom(other: TokenSlots): Unit =
     kind = other.kind
@@ -412,7 +411,7 @@ private[scalanotation] final class Tokenizer private[internal] (
     val isLong = !isAtEnd && (currentChar() == 'l' || currentChar() == 'L')
     if isLong then advance()
     kind = if isLong then TokenKind.LongLit else TokenKind.IntLit
-    out.accDigits = AccumulatorInvalid // prefixed literals always interpret via the slow path
+    out.accDigits = -1 // prefixed literals always interpret via the slow path
 
   private def scanDecimalNumber(): Unit =
     // Locals-based walks: each literal char costs one bounds check and one load, with `index`
@@ -441,27 +440,27 @@ private[scalanotation] final class Tokenizer private[internal] (
     while walking && i < length do
       val ch = text.charAt(i)
       if ch >= '0' && ch <= '9' then
-        if accDigits != AccumulatorInvalid && accDigits < MaxAccumulatedDigits then
+        if accDigits >= 0 && accDigits < 18 then
           acc = acc * 10 - (ch - '0')
           accDigits += 1
         else
-          accDigits = AccumulatorInvalid
+          accDigits = -1
           dblOk = false
         i += 1
       else if ch == '_' then
         sawSeparator = true
-        accDigits = AccumulatorInvalid
+        accDigits = -1
         dblOk = false
         i += 1
-      else if ch > IdentifierSyntax.MaxAscii && Character.isDigit(ch) then
-        accDigits = AccumulatorInvalid
+      else if ch > 127 && Character.isDigit(ch) then
+        accDigits = -1
         dblOk = false
         i += 1
       else walking = false
 
     if i + 1 < length && text.charAt(i) == '.' && {
         val d = text.charAt(i + 1)
-        (d >= '0' && d <= '9') || (d > IdentifierSyntax.MaxAscii && Character.isDigit(d))
+        (d >= '0' && d <= '9') || (d > 127 && Character.isDigit(d))
       }
     then
       hasDot = true
@@ -470,7 +469,7 @@ private[scalanotation] final class Tokenizer private[internal] (
       while walking && i < length do
         val ch = text.charAt(i)
         if ch >= '0' && ch <= '9' then
-          if accDigits != AccumulatorInvalid && accDigits < MaxAccumulatedDigits then
+          if accDigits >= 0 && accDigits < 18 then
             acc = acc * 10 - (ch - '0')
             accDigits += 1
             exp10 -= 1
@@ -480,7 +479,7 @@ private[scalanotation] final class Tokenizer private[internal] (
           sawSeparator = true
           dblOk = false
           i += 1
-        else if ch > IdentifierSyntax.MaxAscii && Character.isDigit(ch) then
+        else if ch > 127 && Character.isDigit(ch) then
           dblOk = false
           i += 1
         else walking = false
@@ -495,7 +494,7 @@ private[scalanotation] final class Tokenizer private[internal] (
       index = i
       if i >= length || ! {
           val ch = text.charAt(i)
-          (ch >= '0' && ch <= '9') || (ch > IdentifierSyntax.MaxAscii && Character.isDigit(ch))
+          (ch >= '0' && ch <= '9') || (ch > 127 && Character.isDigit(ch))
         }
       then fail("Exponent requires at least one digit")
       var explicitExp = 0
@@ -503,13 +502,13 @@ private[scalanotation] final class Tokenizer private[internal] (
       while walking && i < length do
         val ch = text.charAt(i)
         if ch >= '0' && ch <= '9' then
-          if explicitExp < ExponentSaturation then explicitExp = explicitExp * 10 + (ch - '0')
+          if explicitExp < 10000 then explicitExp = explicitExp * 10 + (ch - '0')
           i += 1
         else if ch == '_' then
           sawSeparator = true
           dblOk = false
           i += 1
-        else if ch > IdentifierSyntax.MaxAscii && Character.isDigit(ch) then
+        else if ch > 127 && Character.isDigit(ch) then
           dblOk = false
           i += 1
         else walking = false
@@ -519,8 +518,7 @@ private[scalanotation] final class Tokenizer private[internal] (
     val digitsEnd = index
     val mantissa  = -acc
     val dblExact  =
-      dblOk && accDigits >= 1 && mantissa <= ExactMantissaLimit
-        && exp10 >= -MaxExactPow10 && exp10 <= MaxExactPow10
+      dblOk && accDigits >= 1 && mantissa <= (1L << 53) && exp10 >= -22 && exp10 <= 22
     // '\u0000' marks "no suffix" — no Option[Char] is allocated per literal
     val suffix =
       if isAtEnd then '\u0000'
@@ -783,16 +781,14 @@ private[scalanotation] final class Tokenizer private[internal] (
         i += 1
         if i < length then
           val ch1 = text.charAt(i)
-          if ch1 == ' ' || (ch1 >= '\t' && ch1 <= '\r') || ch1 == '/'
-            || ch1 > IdentifierSyntax.MaxAscii
-            || (ch1 >= MinSeparatorControl && ch1 <= MaxSeparatorControl)
+          if ch1 == ' ' || (ch1 >= '\t' && ch1 <= '\r') || ch1 == '/' || ch1 > 127
+            || (ch1 >= 28 && ch1 <= 31)
           then
             index = i
             skipTriviaWalk()
           else index = i
         else index = i
-      else if (ch0 >= '\t' && ch0 <= '\r') || ch0 == '/' || ch0 > IdentifierSyntax.MaxAscii
-        || (ch0 >= MinSeparatorControl && ch0 <= MaxSeparatorControl)
+      else if (ch0 >= '\t' && ch0 <= '\r') || ch0 == '/' || ch0 > 127 || (ch0 >= 28 && ch0 <= 31)
       then skipTriviaWalk()
 
   private def skipTriviaWalk(): Unit =
@@ -802,9 +798,7 @@ private[scalanotation] final class Tokenizer private[internal] (
     while i < length do
       val ch = text.charAt(i)
       if ch == ' ' || (ch >= '\t' && ch <= '\r') then i += 1
-      else if ch == '/' || ch > IdentifierSyntax.MaxAscii
-        || (ch >= MinSeparatorControl && ch <= MaxSeparatorControl)
-      then
+      else if ch == '/' || ch > 127 || (ch >= 28 && ch <= 31) then
         index = i
         skipTriviaSlow()
         return
@@ -828,9 +822,7 @@ private[scalanotation] final class Tokenizer private[internal] (
     while !isAtEnd do
       val ch = currentChar()
       if ch == ' ' || (ch >= '\t' && ch <= '\r') then index += 1
-      else if ch > IdentifierSyntax.MaxAscii
-        || (ch >= MinSeparatorControl && ch <= MaxSeparatorControl)
-      then
+      else if ch > 127 || (ch >= 28 && ch <= 31) then
         if ch.isWhitespace then index += 1
         else return
       else return
@@ -920,41 +912,9 @@ private[scalanotation] final class Tokenizer private[internal] (
     throw TokenizeException(message, offset)
 
 private[scalanotation] object Tokenizer:
-  /** Base-10 digit counts up to this always fit a Long magnitude, so the scanner can accumulate
-    * literal values during shape validation without overflow checks.
-    */
-  private[internal] inline val MaxAccumulatedDigits = 18
-
-  /** [[TokenSlots.accDigits]] value marking the accumulator unusable (separators, prefixes, unicode
-    * digits, or more than [[MaxAccumulatedDigits]] digits) — consumers interpret the literal slice
-    * through the exact slow path instead.
-    */
-  private[internal] inline val AccumulatorInvalid = -1
-
-  /** an Int literal has at most this many base-10 digits (Int.MaxValue = 2147483647) */
-  private[internal] inline val MaxIntDigits = 10
-
-  /** Powers of ten up to this exponent are exactly representable as Doubles, so a mantissa within
-    * [[ExactMantissaLimit]] converts with a single correctly-rounded multiply or divide.
-    */
-  private[internal] inline val MaxExactPow10 = 22
-
-  /** doubles represent every integer exactly up to 2^53 */
-  private[internal] inline val ExactMantissaLimit = 1L << 53
-
-  /** Explicit exponents stop accumulating here: far beyond [[MaxExactPow10]] (so eligibility
-    * decisions are unaffected) and far below Int overflow when digits keep arriving.
-    */
-  private[internal] inline val ExponentSaturation = 10000
-
-  /** the FS/GS/RS/US separator controls — the only chars below ' ' that might still be whitespace
-    */
-  private[internal] inline val MinSeparatorControl = 28
-  private[internal] inline val MaxSeparatorControl = 31
-
-  /** 10^0 .. 10^[[MaxExactPow10]] — every entry is exactly representable as a Double */
+  /** 10^0 .. 10^22 — every entry is exactly representable as a Double */
   private[internal] val exactPow10: Array[Double] =
-    val table = new Array[Double](MaxExactPow10 + 1)
+    val table = new Array[Double](23)
     var i     = 0
     var value = 1.0
     while i < table.length do
@@ -1249,7 +1209,7 @@ private[scalanotation] abstract class TokenStream private[internal] (
 
   protected def currentIntValue(negative: Boolean): Int =
     val digits = cur.accDigits
-    if digits >= 1 && digits <= Tokenizer.MaxIntDigits then
+    if digits >= 1 && digits <= 10 then
       val negated = cur.num
       val limit   = if negative then Int.MinValue.toLong else -Int.MaxValue.toLong
       if negated >= limit then (if negative then negated else -negated).toInt
@@ -1258,9 +1218,8 @@ private[scalanotation] abstract class TokenStream private[internal] (
 
   protected def currentLongValue(negative: Boolean): Long =
     val digits = cur.accDigits
-    // within MaxAccumulatedDigits the negated magnitude cannot overflow: no range check needed
-    if digits >= 1 && digits <= Tokenizer.MaxAccumulatedDigits then
-      if negative then cur.num else -cur.num
+    // up to 18 digits the negated magnitude cannot overflow, so no range check is needed
+    if digits >= 1 && digits <= 18 then if negative then cur.num else -cur.num
     else Tokenizer.longValueAt(input, cur.start, cur.end, negative)
 
   // error-path materialization
