@@ -142,11 +142,8 @@ private[scalanotation] final class Tokenizer private[internal] (
   import Tokenizer.*
 
   /** The input as a char array: every scan reads plain array loads instead of paying
-    * String.charAt's coder dispatch per char (the String stays for substrings and error text).
-    * Inputs up to [[Tokenizer.MaxPooledInputChars]] refill a buffer pooled with the scanner — a
-    * copy but no allocation, with retention hard-bounded by the cap; larger inputs take a transient
-    * copy that the next pooled use discards. The buffer may therefore be longer than the input:
-    * every scan limit must come from `input.length`, never from `chars.length`.
+    * String.charAt's coder dispatch per char. Costs one copy of the input per decode; the String
+    * stays for substrings (values, error text).
     */
   private[internal] var chars: Array[Char] = input.toCharArray
 
@@ -156,14 +153,7 @@ private[scalanotation] final class Tokenizer private[internal] (
       newExperimentalFlags: Int = ExperimentalFlags.None
   ): Unit =
     input = newInput
-    val inputLength = newInput.length
-    if inputLength <= MaxPooledInputChars then
-      if chars.length < inputLength || chars.length > MaxPooledInputChars then
-        var capacity = 16
-        while capacity < inputLength do capacity *= 2
-        chars = new Array[Char](capacity)
-      newInput.getChars(0, inputLength, chars, 0)
-    else chars = newInput.toCharArray
+    chars = newInput.toCharArray
     index = 0
     experimentalFlags = newExperimentalFlags
     kind = TokenKind.Eof
@@ -266,7 +256,7 @@ private[scalanotation] final class Tokenizer private[internal] (
     // text/index with a single write-back, since this is the hottest scan in record decoding.
     // Unusual whitespace (comments, unicode spaces) diverts to the general reader path.
     val text   = chars
-    val length = input.length
+    val length = text.length
     var i      = index
     while i < length && { val ch = text(i); ch == ' ' || (ch >= '\t' && ch <= '\r') } do i += 1
     val from = i
@@ -446,7 +436,7 @@ private[scalanotation] final class Tokenizer private[internal] (
     // whitespace stop the plain-space loops and divert to the general routines (identical
     // outcomes, just slower); the codes match the doc above.
     val text   = chars
-    val length = input.length
+    val length = text.length
     var i      = index
     while i < length && { val ch = text(i); ch == ' ' || (ch >= '\t' && ch <= '\r') } do i += 1
     if i >= length then
@@ -464,7 +454,8 @@ private[scalanotation] final class Tokenizer private[internal] (
       else
         charScanStart = i
         i += 1
-        while i < length && { val ch = text(i); ch == ' ' || (ch >= '\t' && ch <= '\r') } do i += 1
+        while i < length && { val ch = text(i); ch == ' ' || (ch >= '\t' && ch <= '\r') } do
+          i += 1
         if i >= length then
           index = i
           1
@@ -725,7 +716,7 @@ private[scalanotation] final class Tokenizer private[internal] (
     // Separators, unicode digits (accepted by the shape, interpreted slowly), or more than 18
     // digits invalidate the accumulator.
     val text   = chars
-    val length = input.length
+    val length = text.length
     var i      = index
 
     var hasDot       = false
@@ -1078,7 +1069,7 @@ private[scalanotation] final class Tokenizer private[internal] (
     // Gaps between tokens are almost always zero or one ' ': both exits are reached with at most
     // two char loads and no loop. Everything else diverts to the general walk.
     val text   = chars
-    val length = input.length
+    val length = text.length
     var i      = index
     if i < length then
       val ch0 = text(i)
@@ -1100,7 +1091,7 @@ private[scalanotation] final class Tokenizer private[internal] (
 
   private def skipTriviaWalk(): Unit =
     val text   = chars
-    val length = input.length
+    val length = text.length
     var i      = index
     while i < length do
       val ch = text(i)
@@ -1252,12 +1243,6 @@ private[scalanotation] object Tokenizer:
 
   /** the FS/GS/RS/US separator controls — the only chars below ' ' that might still be whitespace
     */
-  /** Inputs up to this many chars refill the scanner-pooled char buffer (retention per pooled
-    * scanner is hard-bounded at two bytes per char of this cap); larger inputs copy transiently. A
-    * power of two, so the buffer's doubling growth never exceeds it.
-    */
-  private[internal] inline val MaxPooledInputChars = 8192
-
   private[internal] inline val MinSeparatorControl = 28
   private[internal] inline val MaxSeparatorControl = 31
 
