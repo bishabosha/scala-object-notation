@@ -20,38 +20,9 @@ import scalanotation.schema
   * [[Result.Ok]] carrying the final value is only allocated at the boundary where the result is
   * returned back to the user.
   */
-private[scalanotation] object PushSlots:
-  /** Upper bound on input-driven decode nesting (composite/collection levels). Bounds stack use on
-    * malicious deeply-nested input — e.g. ten thousand repetitions of `Vector(` — which would
-    * otherwise crash the decoding thread with a [[StackOverflowError]] instead of returning a
-    * [[DecodeError]]. Generous: real configuration data stays far below it.
-    */
-  inline val MaxNestingDepth = 512
-
 private[scalanotation] abstract class PushSlots extends Internal.PoolHolder:
   /** the most recently decoded reference value; written by the callee via [[pushRef]] */
   private var anySlot: Any = null
-
-  /** current input-driven nesting depth — see [[PushSlots.MaxNestingDepth]] */
-  private var nestingDepth: Int = 0
-
-  /** Enters one nesting level, or reports `false` when [[PushSlots.MaxNestingDepth]] is exhausted.
-    * Balanced by [[exitNesting]] on normal return paths; an exception aborting the whole decode
-    * leaves the count stale, which [[resetSlots]] clears on pooled reuse.
-    */
-  protected final def enterNesting(): Boolean =
-    if nestingDepth >= PushSlots.MaxNestingDepth then false
-    else
-      nestingDepth += 1
-      true
-
-  protected final def exitNesting(): Unit =
-    nestingDepth -= 1
-
-  protected final def nestingLimitError(): DecodeError =
-    DecodeError.Custom(
-      s"Nesting depth exceeds the supported maximum of ${PushSlots.MaxNestingDepth}"
-    )
 
   /** the field index where the most recent [[fillSkippedNullableFields]] stopped */
   private var skipFillIndex: Int = 0
@@ -151,7 +122,6 @@ private[scalanotation] abstract class PushSlots extends Internal.PoolHolder:
     anySlot = null
     stringSlot = ""
     lastSlotKind = SlotKind.Ref
-    nestingDepth = 0
 
   /** appends the live slot to a vector builder state, unboxed when a typed slot is live */
   protected final def addSlot[Elem, Repr, A](
