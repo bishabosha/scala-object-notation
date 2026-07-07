@@ -105,28 +105,25 @@ enum RawSchema[A]:
 
   // Which named-tuple fields are eligible for the fused header scan (plain, non-keyword,
   // unquoted identifiers) — computed once per schema by running the real scanner over each name.
-  @volatile private var fusedFieldPlanCache: RawSchema.FusedFieldPlan | Null = null
+  @volatile private var fusedFieldPlanCache: Array[scala.Byte] | Null = null
 
   /** Per-field plan for the decoder's fused header and value scans; cached per schema. The header
     * is fusable when the name is a plain unquoted non-keyword identifier (decided by running the
     * real scanner over it); the value additionally when the field schema is a direct primitive.
-    * Kind entries are the [[RawSchema.FusePlan]] constants; fusable fields also carry precompiled
-    * header patterns for the canonical spaced and compact renderings, matched in one pass.
+    * Entry values are the [[RawSchema.FusePlan]] constants.
     */
-  private[scalanotation] def fusedFieldPlan: RawSchema.FusedFieldPlan =
+  private[scalanotation] def fusedFieldPlan: Array[scala.Byte] =
     val cached = fusedFieldPlanCache
     if cached != null then cached
     else
       val computed = this match
         case namedTuple: RawSchema.NamedTuple[?] =>
-          val fields      = namedTuple.fields
-          val kinds       = new Array[scala.Byte](fields.length)
-          val headSpaced  = new Array[java.lang.String | Null](fields.length)
-          val headCompact = new Array[java.lang.String | Null](fields.length)
-          var index       = 0
+          val fields = namedTuple.fields
+          val plan   = new Array[scala.Byte](fields.length)
+          var index  = 0
           while index < fields.length do
             val field = fields(index)
-            kinds(index) =
+            plan(index) =
               if !scalanotation.internal.Tokenizer.scansAsPlainFieldName(field.name) then
                 RawSchema.FusePlan.None
               else
@@ -137,13 +134,9 @@ enum RawSchema[A]:
                   case RawSchema.Boolean => RawSchema.FusePlan.BooleanValue
                   case RawSchema.String  => RawSchema.FusePlan.StringValue
                   case _                 => RawSchema.FusePlan.HeaderOnly
-            if kinds(index) != RawSchema.FusePlan.None then
-              val prefix = if index == 0 then "" else " "
-              headSpaced(index) = prefix + field.name + " = "
-              headCompact(index) = field.name + "="
             index += 1
-          RawSchema.FusedFieldPlan(kinds, headSpaced, headCompact)
-        case _ => RawSchema.FusedFieldPlan.Empty
+          plan
+        case _ => Array.emptyByteArray
       fusedFieldPlanCache = computed
       computed
 
@@ -239,21 +232,6 @@ object RawSchema:
       case 0 => "EmptyTuple"
       case 1 => "Tuple(...)"
       case _ => Iterator.fill(size)("...").mkString("(", ", ", ")")
-
-  /** Precompiled fusion plan for a named tuple's fields — see [[fusedFieldPlan]]. `headSpaced(i)`
-    * is the field's header in the canonical spaced rendering (leading " " for fields after the
-    * first, trailing " = "); `headCompact(i)` the compact one ("name="); both null when the field
-    * is not fusable.
-    */
-  private[scalanotation] final class FusedFieldPlan(
-      val kinds: Array[scala.Byte],
-      val headSpaced: Array[java.lang.String | Null],
-      val headCompact: Array[java.lang.String | Null]
-  )
-
-  private[scalanotation] object FusedFieldPlan:
-    val Empty: FusedFieldPlan =
-      FusedFieldPlan(Array.emptyByteArray, Array.empty, Array.empty)
 
   /** entry values of [[fusedFieldPlan]] */
   private[scalanotation] object FusePlan:
