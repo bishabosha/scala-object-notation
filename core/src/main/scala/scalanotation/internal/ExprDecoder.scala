@@ -293,7 +293,10 @@ private[scalanotation] class ExprDecoder() extends PushSlots with SharedHelpers:
             val fills  = schema.fieldPlans.fills
             var state  = read.init(fields.length, slots = null)
             if fills != null then
-              if fieldExprs.isEmpty && fields.nonEmpty then raise(DecodeError.UnitValueNotAllowed())
+              // an empty NamedTupleExpr is the empty named tuple (`NamedTuple.Empty`): defaults
+              // mode fills every field, while skippable mode keeps rejecting it
+              if fieldExprs.isEmpty && fields.nonEmpty && schema.allowSkippedNullableFields then
+                raise(DecodeError.UnitValueNotAllowed())
               var fieldExprIndex = 0
               var fieldIndex     = 0
               while fieldExprIndex < fieldExprs.length do

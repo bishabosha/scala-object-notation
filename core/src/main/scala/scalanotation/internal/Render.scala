@@ -82,6 +82,8 @@ private[scalanotation] object ExprRenderer:
       depth: Int
   )(using format: TextFormat): Unit =
     expr match
+      case Expr.NamedTupleExpr(elements) if elements.isEmpty =>
+        out.append("NamedTuple.Empty")
       case Expr.NamedTupleExpr(elements) =>
         renderNamedTuple(out, depth, elements.length) { index =>
           val (name, value) = elements(index)

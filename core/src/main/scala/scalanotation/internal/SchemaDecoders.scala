@@ -468,14 +468,21 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
       val nameChars         = fieldPlans.nameChars
       var state: read.State = read.init(fields.length, slots)
 
-      if openParen && !tryReadPunctChar('(') then consumeRecordLParenToken(schema).check
+      var emptyLiteral = false
+      if openParen && !tryReadPunctChar('(') then
+        consumeRecordLParenToken(schema).check
+        emptyLiteral = pullControl() == RecordEmptyLiteral
 
       var fieldIndex                   = 0 // the next expected schema field
       var decodedCount                 = 0 // fields actually present in the input
       var lastFieldName: String | Null = null
       var closingOffset                = 0
 
-      if tryConsumeRParen() then
+      if emptyLiteral then
+        // `NamedTuple.Empty`: no fields provided — the trailing fill below provides every
+        // default, and the count check reports precisely when some field has none
+        closingOffset = consumedRParenOffset
+      else if tryConsumeRParen() then
         closingOffset = consumedRParenOffset
         // partial records close legitimately with no further fields: the count check below
         // classifies a shortfall, matching the token path's decisions. `()` is the Unit literal
@@ -677,10 +684,38 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
     pushControl(index)
   }
 
-  /** cold `(` fallback for the record entry: a pending token or a non-record shape */
+  /** [[consumeRecordLParenToken]]'s control-slot value when `(` opened the record */
+  private inline val RecordOpened = 0
+
+  /** [[consumeRecordLParenToken]]'s control-slot value for the `NamedTuple.Empty` literal — the
+    * whole record was consumed with no fields provided (the literal's offset is left in
+    * [[consumedRParenOffset]])
+    */
+  private inline val RecordEmptyLiteral = 1
+
+  /** Cold `(` fallback for the record entry: a pending token, the `NamedTuple.Empty` literal —
+    * Scala's spelling of the empty named tuple, since `()` is the Unit literal — or a non-record
+    * shape.
+    */
   private def consumeRecordLParenToken(schema: RawSchema[?]): Result[Unit, DecodeError] =
     Result.task {
-      if currentKind() == TokenKind.LParen then advance()
+      if currentKind() == TokenKind.LParen then
+        advance()
+        pushControl(RecordOpened)
+      else if currentKind() == TokenKind.Identifier && currentNameMatches("NamedTuple") then
+        advance()
+        if currentKind() != TokenKind.Dot then
+          raise(
+            DecodeError.ExpectedType(schema.describeSelf, describeCurrent()).atToken(currentSpan())
+          )
+        advance()
+        if !(currentKind() == TokenKind.Identifier && currentNameMatches("Empty")) then
+          raise(
+            DecodeError.ExpectedType(schema.describeSelf, describeCurrent()).atToken(currentSpan())
+          )
+        consumedRParenOffset = currentOffset()
+        advance()
+        pushControl(RecordEmptyLiteral)
       else
         raise(
           DecodeError.ExpectedType(schema.describeSelf, describeCurrent()).atToken(currentSpan())
