@@ -6,18 +6,18 @@ package scalanotation.internal
   * or [[Scan.Failed]] — with each stage bound to a `val`:
   *
   * {{{
-  * val name = wordAfterTrivia(index, expected)
-  * val eq   = operatorAfterTrivia(name, '=')
-  * if eq >= 0 then ...
+  * val from = plainTrivia(index)
+  * val name = identEnd(exact(from, expected))
+  * if name >= 0 then ...
   * }}}
   *
   * Everything erases at compile time. The combinators are `inline` methods mixed into the scanner
-  * (a `this` call needs no inliner proxy), cursor arguments are substituted directly, and string
-  * literals unroll through type-level string ops (see [[keyword]] — no macros) — so a chain
-  * compiles to the same straight-line comparisons and while-loops the scanner ops were previously
-  * written as by hand, with no closures, no allocation, and near-handcrafted bytecode size (which
-  * keeps the scans within the JIT's inlining budgets — the shape that value-class or given-based
-  * designs measurably lose).
+  * (a `this` call needs no inliner proxy), cursor arguments are substituted directly, and predicate
+  * parameters are inline function literals that beta-reduce — so a chain compiles to the same
+  * straight-line comparisons and while-loops the scanner ops were previously written as by hand,
+  * with no closures, no allocation, and near-handcrafted bytecode size (which keeps the scans
+  * within the JIT's inlining budgets — the shape that value-class or given-based designs measurably
+  * lose).
   *
   * Failure is the [[Scan.Failed]] cursor: combinators short-circuit on it, so a chain is written
   * without intermediate checks and inspected once at the end. Nothing commits until the caller
@@ -61,6 +61,14 @@ private[internal] trait Scan:
     while i < limit && { val ch = text(i); ch == ' ' || (ch >= '\t' && ch <= '\r') } do i += 1
     i
 
+  /** consumes exactly `expected`, else fails */
+  protected inline def oneChar(p: Int, inline expected: Char): Int =
+    if p >= 0 && p < inputLength && chars(p) == expected then p + 1 else Failed
+
+  /** consumes a char satisfying `pred`, else fails */
+  protected inline def charWhere(p: Int)(inline pred: Char => Boolean): Int =
+    if p >= 0 && p < inputLength && pred(chars(p)) then p + 1 else Failed
+
   /** Consumes `expected` only when it is a whole operator token — the following char must not
     * extend it (`=` matches, `==`/`=>` do not).
     */
@@ -70,9 +78,19 @@ private[internal] trait Scan:
     then p + 1
     else Failed
 
-  /** The unrolled char compares of [[keyword]] — one compare-or-fail branch per literal char,
-    * bounds pre-checked. Threads the cursor rather than a conjunction, so the expansion is a plain
-    * branch chain.
+  /** Consumes every char of the string literal `S`, else fails. The literal unrolls at compile time
+    * — type-level string ops, no macros — so `lit["true"](p)` inlines to a single bounds check and
+    * four unguarded char compares.
+    */
+  protected inline def lit[S <: String & Singleton](p: Int): Int =
+    val text  = chars
+    val limit = inputLength
+    if p < 0 || p + constValue[Length[S]] > limit then Failed
+    else litChars[S, 0](text, p)
+
+  /** The unrolled char compares of [[lit]] — one compare-or-fail branch per literal char, bounds
+    * pre-checked. Threads the cursor rather than a conjunction, so the expansion is a plain branch
+    * chain.
     */
   private inline def litChars[S <: String, I <: Int](
       inline text: Array[Char],
@@ -83,6 +101,35 @@ private[internal] trait Scan:
       else Failed
     else at + constValue[Length[S]]
 
+  /** consumes every char of `expected`, else fails */
+  protected inline def exact(p: Int, expected: Array[Char]): Int =
+    if p < 0 then p
+    else
+      val text  = chars
+      val limit = inputLength
+      val len   = expected.length
+      if p + len > limit then Failed
+      else
+        var i  = 0
+        var at = p
+        while i < len && text(at) == expected(i) do
+          i += 1
+          at += 1
+        if i == len then at else Failed
+
+  /** fails unless the identifier ends here — the next char must not be an identifier part */
+  protected inline def identEnd(p: Int): Int =
+    if p < 0 || (p < inputLength && identifierPart(chars(p))) then Failed
+    else p
+
+  /** walks chars satisfying `pred` — never fails; inspect the stop char via [[peek]] */
+  protected inline def takeWhile(p: Int)(inline pred: Char => Boolean): Int =
+    val text  = chars
+    val limit = inputLength
+    var i     = p
+    while i < limit && pred(text(i)) do i += 1
+    i
+
   /** the char under the cursor, or `' '` at the end of input — never consumes */
   protected inline def peek(p: Int): Char =
     if p >= 0 && p < inputLength then chars(p) else ' '
@@ -91,10 +138,24 @@ private[internal] trait Scan:
   // bind: compositions that sit on the hottest scans stay this way so the emitted method remains
   // within the JIT's inlining budgets (a chain of fine-grained ops measurably falls out of them).
 
-  /** A whole keyword `S` from `p`: every char of the literal, then an identifier boundary. The
-    * literal unrolls at compile time — type-level string ops, no macros — so `keyword["true"](p)`
-    * inlines to a single bounds check, four unguarded char compares and the boundary check.
-    */
+  /** [[exact]] then [[identEnd]] — a whole plain-identifier word matching `expected` */
+  protected inline def word(p: Int, expected: Array[Char]): Int =
+    if p < 0 then p
+    else
+      val text  = chars
+      val limit = inputLength
+      val len   = expected.length
+      if p + len > limit then Failed
+      else
+        var i  = 0
+        var at = p
+        while i < len && text(at) == expected(i) do
+          i += 1
+          at += 1
+        if i == len && (at >= limit || !identifierPart(text(at))) then at
+        else Failed
+
+  /** [[lit]] then [[identEnd]] — a whole keyword `S` */
   protected inline def keyword[S <: String & Singleton](p: Int): Int =
     val text  = chars
     val limit = inputLength
@@ -117,9 +178,8 @@ private[internal] trait Scan:
       if text(i - 1) == '_' then while i < limit && operatorPart(text(i)) do i += 1
       i
 
-  /** [[plainTrivia]], then every char of `expected`, then an identifier boundary — the leading form
-    * of a field header. On success the word spans the returned cursor minus `expected.length` to
-    * the cursor.
+  /** [[plainTrivia]] then [[word]] — the leading form of a field header. On success the word spans
+    * the returned cursor minus `expected.length` to the cursor.
     */
   protected inline def wordAfterTrivia(p: Int, expected: Array[Char]): Int =
     val text  = chars
