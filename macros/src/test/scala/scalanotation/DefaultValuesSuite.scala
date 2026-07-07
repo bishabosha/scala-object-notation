@@ -95,6 +95,51 @@ class DefaultValuesSuite extends munit.FunSuite:
       Result.Ok(Server("a"))
     )
 
+  test("derived defaults compose per level through nested, Option- and Vector-represented fields"):
+    case class Probe(path: String = "/health", timeout: Int = 30)
+    case class Endpoint(host: String, port: Int = 8080, probe: Option[Probe] = None)
+    case class Cluster(
+        name: String = "main",
+        endpoints: List[Endpoint] = Nil,
+        arbiter: Option[Endpoint] = None
+    )
+
+    // each level derives and configures its OWN defaults; outer schemas embed the configured
+    // reader schema, so the installed defaults ride along inside Option and Seq representations
+    given DefaultValues[Probe]    = Defaults.derived
+    given Configured[Probe]       = Configured.default.withDefaultValues
+    given Reader[Probe]           = Reader.configured.derived
+    given DefaultValues[Endpoint] = Defaults.derived
+    given Configured[Endpoint]    = Configured.default.withDefaultValues
+    given Reader[Endpoint]        = Reader.configured.derived
+    given DefaultValues[Cluster]  = Defaults.derived
+    given Configured[Cluster]     = Configured.default.withDefaultValues
+    given Reader[Cluster]         = Reader.configured.derived
+
+    // every level omits fields at once: Cluster.name, Endpoint.port/probe, Probe.timeout
+    assertReads[Cluster](
+      """(endpoints = Vector((host = "a"), (host = "b", port = 9), (host = "c", probe = (path = "/p"))), arbiter = (host = "z", probe = ()))"""
+    )(
+      Result.Ok(
+        Cluster(
+          "main",
+          List(
+            Endpoint("a"),
+            Endpoint("b", 9),
+            Endpoint("c", probe = Some(Probe("/p")))
+          ),
+          Some(Endpoint("z", probe = Some(Probe())))
+        )
+      )
+    )
+    // defaults at the root alone
+    assertReads[Cluster]("""()""")(Result.Ok(Cluster()))
+    // an empty record still fails precisely when some field has no default
+    Readers.readAs[Endpoint]("""()""") match
+      case Result.Err(error) =>
+        assert(error.rootCause.isInstanceOf[DecodeError.FieldCountMismatch], error.toString)
+      case Result.Ok(value) => fail(s"Expected a decode failure, got $value")
+
   test("manual bindings install defaults at nested paths"):
     case class Db(host: String, port: Int)
     case class Config(name: String, db: Db)
