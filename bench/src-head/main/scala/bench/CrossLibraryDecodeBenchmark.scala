@@ -29,14 +29,6 @@ object OrderBatch:
   given Configured[OrderBatch]   = Configured.typed
   given Reader[OrderBatch]       = Reader.configured.derived
 
-// mixed-case enum batch — each library decodes its own default sum encoding
-enum Shape derives scalanotation.ReadWriter:
-  case Circle(radius: Double)
-  case Rect(width: Double, height: Double)
-  case Label(text: String)
-
-case class ShapeBatch(shapes: Vector[Shape]) derives scalanotation.ReadWriter
-
 /** Cross-library comparison: SON typed batched decoding against jsoniter-scala, uPickle, and
   * zio-blocks decoding the equivalent JSON. SON reads a String; the JSON libraries are measured
   * both from a String (input parity) and — where supported — from a byte array (their fastest entry
@@ -74,16 +66,6 @@ class CrossLibraryDecodeBenchmark:
     s"""{"orders":[${(1 to 100).map(jsonOrder).mkString(",")}]}"""
   private val jsonOrdersBytes = jsonOrdersInput.getBytes(StandardCharsets.UTF_8)
 
-  // --- batch of 100 mixed enum cases; each library decodes its own default sum encoding ---
-  private val shapeBatch = ShapeBatch(
-    (1 to 100).toVector.map { i =>
-      (i % 3: @unchecked) match
-        case 0 => Shape.Circle(i * 1.5)
-        case 1 => Shape.Rect(i * 2.0, i * 3.0)
-        case 2 => Shape.Label(s"shape-$i")
-    }
-  )
-
   // codecs, schemas, and readers derived once — every side measures pure decoding
   private given JsonValueCodec[TypedFlatClass]        = JsonCodecMaker.make
   private given JsonValueCodec[TypedPrimitive10Class] = JsonCodecMaker.make
@@ -95,20 +77,6 @@ class CrossLibraryDecodeBenchmark:
   private given upickle.default.ReadWriter[OrderBatch]            = upickle.default.macroRW
 
   private given Schema[OrderRecord] = Schema.derived
-  private given Schema[Shape]       = Schema.derived
-
-  private given JsonValueCodec[ShapeBatch]             = JsonCodecMaker.make
-  private given upickle.default.ReadWriter[Shape]      = upickle.default.ReadWriter.derived
-  private given upickle.default.ReadWriter[ShapeBatch] = upickle.default.macroRW
-  private val zioShapesCodec = Schema.derived[ShapeBatch].derive(JsonFormat)
-
-  // inputs produced by each library's own writer, so every side decodes its idiomatic format
-  private val sonShapesInput       = scalanotation.Writers.write(shapeBatch)
-  private val jsonShapesInput      = writeToString(shapeBatch)
-  private val upickleShapesInput   = upickle.default.write(shapeBatch)
-  private val zioShapesInput       = zioShapesCodec.encode(shapeBatch)
-  private val sonShapesBytesInput  = sonShapesInput.getBytes(StandardCharsets.UTF_8)
-  private val jsonShapesBytesInput = jsonShapesInput.getBytes(StandardCharsets.UTF_8)
 
   private val zioFlatCodec        = Schema.derived[TypedFlatClass].derive(JsonFormat)
   private val zioPrimitive10Codec = Schema.derived[TypedPrimitive10Class].derive(JsonFormat)
@@ -186,8 +154,6 @@ class CrossLibraryDecodeBenchmark:
       "sonOrders100CompactBytes",
       Readers.batched.readAs[OrderBatch](sonOrdersCompactBytesInput)
     )
-    requireOk("sonShapes100", Readers.batched.readAs[ShapeBatch](sonShapesInput))
-    requireOk("sonShapes100Bytes", Readers.batched.readAs[ShapeBatch](sonShapesBytesInput))
   }
 
   @Benchmark def sonFlatCompact: Any =
@@ -205,19 +171,6 @@ class CrossLibraryDecodeBenchmark:
     Readers.batched.readAs[OrderBatch](sonOrdersBytesInput)
   @Benchmark def sonOrders100CompactBytes: Any =
     Readers.batched.readAs[OrderBatch](sonOrdersCompactBytesInput)
-
-  @Benchmark def sonShapes100: Any =
-    Readers.batched.readAs[ShapeBatch](sonShapesInput)
-  @Benchmark def sonShapes100Bytes: Any =
-    Readers.batched.readAs[ShapeBatch](sonShapesBytesInput)
-  @Benchmark def jsoniterShapes100String: Any =
-    readFromString[ShapeBatch](jsonShapesInput)
-  @Benchmark def jsoniterShapes100Bytes: Any =
-    readFromArray[ShapeBatch](jsonShapesBytesInput)
-  @Benchmark def upickleShapes100String: Any =
-    upickle.default.read[ShapeBatch](upickleShapesInput)
-  @Benchmark def zioBlocksShapes100String: Any =
-    zioShapesCodec.decode(zioShapesInput)
 
   @Benchmark def sonOrders100: Any =
     Readers.batched.readAs[OrderBatch](sonOrdersInput)
