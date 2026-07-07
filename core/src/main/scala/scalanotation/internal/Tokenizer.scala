@@ -372,6 +372,23 @@ private[scalanotation] final class Tokenizer private[internal] (
         SeparatorClosing
       else SeparatorNone
 
+  /** Scanner-direct scan of a numeric literal at a value position: runs the exact number-token
+    * grammar into the slots, skipping the token-stream bookkeeping. False consumes nothing (not an
+    * ASCII digit next — signs, unicode digits and everything else stay on the token path).
+    */
+  private[internal] def scanNumberValue(): Boolean =
+    skipTrivia()
+    if isAtEnd then false
+    else
+      val ch = currentChar()
+      if ch >= '0' && ch <= '9' then
+        start = index
+        str = null
+        scanNumber()
+        end = index
+        true
+      else false
+
   /** Scanner-direct scan of an optionally negated numeric literal in one trivia pass — the
     * [[Tokenizer.NumberNone]]/[[Tokenizer.NumberPositive]]/[[Tokenizer.NumberNegated]] codes. The
     * token path treats the sign as its own Minus token with identical interpretation, so only the
@@ -401,7 +418,7 @@ private[scalanotation] final class Tokenizer private[internal] (
         NumberNegated
       else NumberNone
 
-  /** Scanner-direct scan of a string literal at a value position — see [[scanSignedNumberValue]].
+  /** Scanner-direct scan of a string literal at a value position — see [[scanNumberValue]].
     * Dedented multi-quote strings stay on the token path.
     */
   private[internal] def scanStringValue(): Boolean =
@@ -413,6 +430,19 @@ private[scalanotation] final class Tokenizer private[internal] (
       scanString()
       end = index
       true
+
+  /** Consumes a `-` sign directly followed by a digit. The token path scans the sign as its own
+    * Minus token and interprets the literal with the sign passed separately, so this only skips the
+    * sign's token round trip; any other shape (`- 5`, `-x`, `->`) is left for the token path.
+    */
+  private[internal] def scanSignChar(): Boolean =
+    skipTrivia()
+    if !isAtEnd && currentChar() == '-' && index + 1 < inputLength
+      && { val ch = chars(index + 1); ch >= '0' && ch <= '9' }
+    then
+      index += 1
+      true
+    else false
 
   /** Fused scan of a `true`/`false` literal at a value position: 1/0 with it consumed, -1 with
     * nothing consumed. The boundary check mirrors [[scanIdentifier]], so any other identifier shape
@@ -1629,6 +1659,10 @@ private[scalanotation] abstract class TokenStream private[internal] (
   protected final def probePlusChar(): Boolean =
     !hasToken && scanner.peekPlusChar()
 
+  /** Char-level read of a `-` sign directly before a digit: false consumes nothing. */
+  protected final def tryReadSignChar(): Boolean =
+    !hasToken && scanner.scanSignChar()
+
   /** Char-level read of a `true`/`false` value: 1/0 consumed, -1 nothing consumed. */
   protected final def tryReadBooleanChar(): Int =
     if hasToken then Tokenizer.BooleanNone else scanner.scanBooleanValue()
@@ -1637,6 +1671,9 @@ private[scalanotation] abstract class TokenStream private[internal] (
   // them whenever the stream is between tokens) and is semantically consumed — no pending token.
   // [[adoptScannedToken]] turns the scanned literal into the pending current token instead, for
   // error paths that must report it exactly like the generic token path.
+
+  protected final def tryScanNumberDirect(): Boolean =
+    !hasToken && scanner.scanNumberValue()
 
   /** 0 = nothing consumed, 1 = positive literal scanned, 2 = negated literal scanned */
   protected final def tryScanSignedNumberDirect(): Int =
