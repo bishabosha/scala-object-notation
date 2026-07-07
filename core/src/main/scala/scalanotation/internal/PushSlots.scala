@@ -53,7 +53,7 @@ private[scalanotation] abstract class PushSlots extends Internal.PoolHolder:
       s"Nesting depth exceeds the supported maximum of ${PushSlots.MaxNestingDepth}"
     )
 
-  /** the field index where the most recent [[fillSkippedFields]] stopped */
+  /** the field index where the most recent [[fillSkippedNullableFields]] stopped */
   private var skipFillIndex: Int = 0
 
   /** the [[SlotKind]] of the most recent push: tells the caller which slot is live */
@@ -74,15 +74,14 @@ private[scalanotation] abstract class PushSlots extends Internal.PoolHolder:
     skipFillIndex = 0
     res
 
-  /** Fills omitted fields with their fill values (`None` in skippable mode, the installed default
-    * in defaults mode) from `startIndex` until the field named `actualName`, returning the new
-    * builder state and leaving the next field index in [[skipFillIndex]].
+  /** fills skipped nullable fields with `None` from `startIndex` until the field named
+    * `actualName`, returning the new builder state and leaving the next field index in
+    * [[skipFillIndex]]
     */
-  protected final def fillSkippedFields(
+  protected final def fillSkippedNullableFields(
       read: RawSchema.NamedTupleRead
   )(
       fields: IArray[Field],
-      fills: Array[AnyRef | Null],
       state0: read.State,
       startIndex: Int,
       actualName: String
@@ -91,9 +90,9 @@ private[scalanotation] abstract class PushSlots extends Internal.PoolHolder:
     var state = state0
     while index < fields.length
       && fields(index).name != actualName
-      && fills(index) != null
+      && TokenDecoder.isNullable(fields(index).schema)
     do
-      state = read.add(state, index, fills(index))
+      state = read.add(state, index, None)
       index += 1
     skipFillIndex = index
     state
