@@ -125,16 +125,20 @@ object Configured:
       case defaults => installDefaults(typed, defaults)
 
   /** Installs the gathered default values onto fresh copies of the schema's record nodes — the
-    * decode loop fills omitted fields from them. Structure mirrors [[makeSkippable]]; the two modes
-    * are mutually exclusive (enforced by `withDefaultValues`).
+    * decode loop fills omitted fields from them. Macro-gathered defaults address the root record
+    * (or each sum case); manual bindings walk their path through nested records, `Option`s and
+    * `Vector`s first. Structure mirrors [[makeSkippable]]; the two modes are mutually exclusive
+    * (enforced by `withDefaultValues` and re-checked at installation).
     */
   private def installDefaults[T](
       schema: RawSchema[T],
       defaults: DefaultValues[?]
   ): RawSchema[T] =
+    val rootBindings =
+      defaults.selfDefaults.view
+        .map((name, value) => (List(DefaultValues.Segment.Field(name)), value))
+        .toList ++ defaults.bindings
     schema match
-      case RawSchema.NamedTuple(fields, read, write, allowSkipped) =>
-        installFieldDefaults(schema, defaults.selfDefaults)
       case RawSchema.Sum(cases, write) =>
         RawSchema.Sum(cases.map(installCaseDefaults(defaults, _)), write)
       case RawSchema.DiscriminatorSum(cases, write, discriminatorField) =>
@@ -143,9 +147,11 @@ object Configured:
           write,
           discriminatorField
         )
-      case RawSchema.Mapped(base, mapping) =>
+      case RawSchema.Mapped(base, mapping)
+          if base.isInstanceOf[RawSchema.Sum[?]]
+            || base.isInstanceOf[RawSchema.DiscriminatorSum[?]] =>
         RawSchema.Mapped(installDefaults(base, defaults), mapping)
-      case other => other
+      case other => installBindingsAt(other, rootBindings)
 
   private def installCaseDefaults(
       defaults: DefaultValues[?],
@@ -153,31 +159,99 @@ object Configured:
   ): RawSchema.SumCase =
     defaults.caseDefaults.get(sumCase.name) match
       case Some(fieldDefaults) =>
-        sumCase.copy(schema = installFieldDefaults(sumCase.schema, fieldDefaults))
+        val bindings =
+          fieldDefaults.view
+            .map((name, value) => (List(DefaultValues.Segment.Field(name)), value))
+            .toList
+        sumCase.copy(schema = installBindingsAt(sumCase.schema, bindings))
       case None => sumCase
 
-  private def installFieldDefaults[T](
+  /** installs path bindings into `schema`, recursing along each binding's segments */
+  private def installBindingsAt[T](
       schema: RawSchema[T],
-      fieldDefaults: Map[String, AnyRef]
+      bindings: List[(List[DefaultValues.Segment], AnyRef)]
   ): RawSchema[T] =
-    schema match
-      case RawSchema.NamedTuple(fields, read, write, allowSkipped) =>
-        if fieldDefaults.isEmpty then schema
-        else
+    if bindings.isEmpty then schema
+    else
+      schema match
+        case RawSchema.NamedTuple(fields, read, write, allowSkipped) =>
           require(
             !allowSkipped,
             "default values and skippable options are mutually exclusive decode modes"
           )
-          val defaultsByIndex: IArray[AnyRef | Null] =
-            IArray.from(fields.map(field => fieldDefaults.getOrElse(field.name, null)))
-          val copy = RawSchema.NamedTuple[T](fields, read, write, allowSkipped)
-          copy.installFieldDefaults(defaultsByIndex)
+          bindings.foreach { (segments, _) =>
+            segments match
+              case DefaultValues.Segment.Field(name) :: _ =>
+                require(
+                  fields.exists(_.name == name),
+                  s"no field named '$name' on ${schema.describeSelf} to install a default for"
+                )
+              case other :: _ =>
+                throw IllegalArgumentException(
+                  s"a default path selects '$other' but ${schema.describeSelf} is a record"
+                )
+              case Nil => ()
+          }
+          val newFields = fields.map { field =>
+            val deeper = bindings.collect {
+              case (DefaultValues.Segment.Field(field.name) :: (rest @ _ :: _), value) =>
+                (rest, value)
+            }
+            if deeper.isEmpty then field
+            else field.copy(schema = installBindingsAt(field.schema, deeper))
+          }
+          val localDefaults = bindings.collect {
+            case (DefaultValues.Segment.Field(name) :: Nil, value) => name -> value
+          }.toMap
+          val copy = RawSchema.NamedTuple[T](newFields, read, write, allowSkipped)
+          if localDefaults.nonEmpty then
+            copy.installFieldDefaults(
+              IArray.from(newFields.map(field => localDefaults.getOrElse(field.name, null)))
+            )
           copy
-      case RawSchema.PartialNamedTuple(base, alreadySeenField) =>
-        RawSchema.PartialNamedTuple(installFieldDefaults(base, fieldDefaults), alreadySeenField)
-      case RawSchema.Mapped(base, mapping) =>
-        RawSchema.Mapped(installFieldDefaults(base, fieldDefaults), mapping)
-      case other => other
+        case option: RawSchema.Option[t] =>
+          RawSchema
+            .Option(
+              installBindingsAt(
+                option.inner,
+                stepped(bindings, schema, DefaultValues.Segment.InOption)
+              )
+            )
+            .asInstanceOf[RawSchema[T]]
+        case vector: RawSchema.Vector[a, e] =>
+          RawSchema
+            .Vector[a, e](
+              installBindingsAt(
+                vector.element.asInstanceOf[RawSchema[e]],
+                stepped(bindings, schema, DefaultValues.Segment.InVector)
+              ),
+              vector.read,
+              vector.write
+            )
+            .asInstanceOf[RawSchema[T]]
+        case RawSchema.PartialNamedTuple(base, alreadySeenField) =>
+          RawSchema.PartialNamedTuple(installBindingsAt(base, bindings), alreadySeenField)
+        case RawSchema.Mapped(base, mapping) =>
+          RawSchema.Mapped(installBindingsAt(base, bindings), mapping)
+        case other =>
+          throw IllegalArgumentException(
+            s"a default path continues into ${other.describeSelf}, which has no fields to default"
+          )
+
+  /** consumes one expected step segment off every binding, rejecting mismatched paths */
+  private def stepped(
+      bindings: List[(List[DefaultValues.Segment], AnyRef)],
+      at: RawSchema[?],
+      expected: DefaultValues.Segment
+  ): List[(List[DefaultValues.Segment], AnyRef)] =
+    bindings.map { (segments, value) =>
+      segments match
+        case head :: rest if head == expected => (rest, value)
+        case other                            =>
+          throw IllegalArgumentException(
+            s"a default path selects '${other.headOption}' but the schema at this step is ${at.describeSelf}"
+          )
+    }
 
   private def attachTypedFactories[T](
       schema: RawSchema[T],
