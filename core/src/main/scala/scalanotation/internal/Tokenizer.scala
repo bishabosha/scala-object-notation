@@ -211,223 +211,6 @@ private[scalanotation] final class Tokenizer private[internal] (
     else scanToken()
     end = index
 
-  // --- char-level scans for the schema-directed decode path -------------------------------------
-  // Each consumes exactly the asked-for shape or nothing (returning false/0 with the position
-  // untouched), so a fallback token scan over the same characters sees exactly what it would have
-  // seen without the attempt.
-
-  /** start offset of the last successful char-level scan below — for error spans */
-  private[internal] var charScanStart: Int = 0
-
-  /** Scans one plain identifier as an offset slice into `out.start`/`out.end`, without keyword
-    * classification and without touching `out.kind`. False when the next char cannot start a plain
-    * identifier (quoted names, operators, digits, EOF) — the caller falls back to a token scan. The
-    * consumed chars are exactly what [[scanIdentifier]] would consume, including the trailing
-    * '_'-then-operator continuation rule.
-    */
-  private[internal] def scanIdentSlice(): Boolean =
-    skipTrivia()
-    if isAtEnd || !isIdentifierStart(currentChar()) then false
-    else
-      start = index
-      while !isAtEnd && isIdentifierPart(currentChar()) do index += 1
-      if input.charAt(index - 1) == '_' then
-        while !isAtEnd && isOperatorPart(currentChar()) do index += 1
-      end = index
-      charScanStart = start
-      true
-
-  /** Fused scan of a `<expected> =` field header: 1 with both consumed, 0 with only the identifier
-    * consumed as a slice (a mismatched name or a missing `=` — the caller resolves via the slice),
-    * -1 with nothing consumed (no plain identifier follows).
-    *
-    * The expected name is matched directly against the input in one pass; `expected` must be
-    * plan-eligible ([[Tokenizer.isPlainFieldName]]), which also rules out '_'-ending names, so the
-    * boundary check below is exactly the identifier end the generic scanner would find.
-    */
-  private[internal] def scanFieldHeader(expected: String): Int =
-    // Fully locals-based: trivia, the name match, trivia and '=' run over register-resident
-    // text/index with a single write-back, since this is the hottest scan in record decoding.
-    // Unusual whitespace (comments, unicode spaces) diverts to the general reader path.
-    val text   = input
-    val length = text.length
-    var i      = index
-    while i < length && { val ch = text.charAt(i); ch == ' ' || (ch >= '\t' && ch <= '\r') } do
-      i += 1
-    val from = i
-    val len  = expected.length
-    var j    = 0
-    while j < len && i < length && text.charAt(i) == expected.charAt(j) do
-      i += 1
-      j += 1
-    if j == len && (i >= length || !isIdentifierPart(text.charAt(i))) then
-      out.start = from
-      out.end = i
-      while i < length && { val ch = text.charAt(i); ch == ' ' || (ch >= '\t' && ch <= '\r') } do
-        i += 1
-      if i < length && text.charAt(i) == '='
-        && (i + 1 >= length || !isOperatorPart(text.charAt(i + 1)))
-      then
-        charScanStart = i
-        index = i + 1
-        1
-      else
-        index = i
-        // '=' not found directly: comments or unusual whitespace may hide it — the general
-        // char reader retries before the caller falls back to the token path
-        if scanEqualsChar() then 1 else 0
-    else
-      // a different (or non-plain) name, or unusual leading trivia: rescan generically as a
-      // slice for the caller's resolution
-      index = from
-      if scanIdentSlice() then 0 else -1
-
-  /** Consumes a single `=` that is a whole operator (rejecting `==`, `=>`, ...): false consumes
-    * nothing.
-    */
-  private[internal] def scanEqualsChar(): Boolean =
-    skipTrivia()
-    if !isAtEnd && currentChar() == '='
-      && (index + 1 >= input.length || !isOperatorPart(input.charAt(index + 1)))
-    then
-      charScanStart = index
-      index += 1
-      true
-    else false
-
-  /** Consumes an element separator: 1 for `,`, 2 for `closing`, 0 (nothing consumed) otherwise. */
-  private[internal] def scanSeparatorChar(closing: Char): Int =
-    skipTrivia()
-    if isAtEnd then 0
-    else
-      val ch = currentChar()
-      if ch == ',' then
-        charScanStart = index
-        index += 1
-        1
-      else if ch == closing then
-        charScanStart = index
-        index += 1
-        2
-      else 0
-
-  /** Scanner-direct scan of a numeric literal at a value position: runs the exact number-token
-    * grammar into the slots, skipping the token-stream bookkeeping. False consumes nothing (not an
-    * ASCII digit next — signs, unicode digits and everything else stay on the token path).
-    */
-  private[internal] def scanNumberValue(): Boolean =
-    skipTrivia()
-    if isAtEnd then false
-    else
-      val ch = currentChar()
-      if ch >= '0' && ch <= '9' then
-        start = index
-        str = null
-        scanNumber()
-        end = index
-        true
-      else false
-
-  /** Scanner-direct scan of an optionally negated numeric literal in one trivia pass: 0 = nothing
-    * consumed, 1 = positive literal scanned, 2 = `-` and literal scanned. The token path treats the
-    * sign as its own Minus token with identical interpretation, so only the round trip is skipped.
-    */
-  private[internal] def scanSignedNumberValue(): Int =
-    skipTrivia()
-    val length = input.length
-    val from   = index
-    if from >= length then 0
-    else
-      val ch0 = input.charAt(from)
-      if ch0 >= '0' && ch0 <= '9' then
-        start = from
-        str = null
-        scanNumber()
-        end = index
-        1
-      else if ch0 == '-' && from + 1 < length
-        && { val d = input.charAt(from + 1); d >= '0' && d <= '9' }
-      then
-        index = from + 1
-        start = index
-        str = null
-        scanNumber()
-        end = index
-        2
-      else 0
-
-  /** Scanner-direct scan of a string literal at a value position — see [[scanNumberValue]].
-    * Dedented multi-quote strings stay on the token path.
-    */
-  private[internal] def scanStringValue(): Boolean =
-    skipTrivia()
-    if isAtEnd || currentChar() != '"' then false
-    else
-      start = index
-      str = null
-      scanString()
-      end = index
-      true
-
-  /** Consumes a `-` sign directly followed by a digit. The token path scans the sign as its own
-    * Minus token and interprets the literal with the sign passed separately, so this only skips the
-    * sign's token round trip; any other shape (`- 5`, `-x`, `->`) is left for the token path.
-    */
-  private[internal] def scanSignChar(): Boolean =
-    skipTrivia()
-    if !isAtEnd && currentChar() == '-' && index + 1 < input.length
-      && { val ch = input.charAt(index + 1); ch >= '0' && ch <= '9' }
-    then
-      index += 1
-      true
-    else false
-
-  /** Fused scan of a `true`/`false` literal at a value position: 1/0 with it consumed, -1 with
-    * nothing consumed. The boundary check mirrors [[scanIdentifier]], so any other identifier shape
-    * (`trueish`, `true_`) is left for the token path, which classifies it identically.
-    */
-  private[internal] def scanBooleanValue(): Int =
-    skipTrivia()
-    val i      = index
-    val length = input.length
-    if i + 4 <= length
-      && input.charAt(i) == 't' && input.charAt(i + 1) == 'r'
-      && input.charAt(i + 2) == 'u' && input.charAt(i + 3) == 'e'
-      && (i + 4 >= length || !isIdentifierPart(input.charAt(i + 4)))
-    then
-      index = i + 4
-      1
-    else if i + 5 <= length
-      && input.charAt(i) == 'f' && input.charAt(i + 1) == 'a'
-      && input.charAt(i + 2) == 'l' && input.charAt(i + 3) == 's'
-      && input.charAt(i + 4) == 'e'
-      && (i + 5 >= length || !isIdentifierPart(input.charAt(i + 5)))
-    then
-      index = i + 5
-      0
-    else -1
-
-  /** Whether the next char begins a `+` operator (string concatenation) — consumes only trivia. */
-  private[internal] def peekPlusChar(): Boolean =
-    skipTrivia()
-    !isAtEnd && currentChar() == '+'
-    && (index + 1 >= input.length || !isOperatorPart(input.charAt(index + 1)))
-
-  /** Consumes a single expected punctuation char: false consumes nothing. */
-  private[internal] def scanPunctChar(expected: Char): Boolean =
-    skipTrivia()
-    if !isAtEnd && currentChar() == expected then
-      charScanStart = index
-      index += 1
-      true
-    else false
-
-  /** Rewinds to `offset` so the token path can rescan a char-level attempt — only valid while the
-    * owning stream is between tokens.
-    */
-  private[internal] def rewindTo(offset: Int): Unit =
-    index = offset
-
   private def scanToken(): Unit =
     currentChar() match
       case '('                            => advance(); kind = TokenKind.LParen
@@ -1252,26 +1035,6 @@ private[scalanotation] object Tokenizer:
       i += 1
     result
 
-  /** Whether `name` scans as a single plain identifier-like token that the token path's field-name
-    * matcher accepts by slice comparison, so a char-level slice match on `name` is exactly
-    * equivalent to the token path. Decided by running the real scanner over the name once (cold:
-    * cached per schema). Keyword-classified names (`true`, `val`, ...), quoted names, operator
-    * names (`+`, `-`) and names ending in '_' (operator continuation) are excluded.
-    */
-  private[scalanotation] def isPlainFieldName(name: String): Boolean =
-    if name.isEmpty || name.charAt(name.length - 1) == '_' then false
-    else
-      try
-        val scanner = Tokenizer(name)
-        scanner.scanNext()
-        val kindOk = scanner.out.kind match
-          case TokenKind.Identifier =>
-            scanner.out.str == null // quoted identifiers materialize their name
-          case TokenKind.VectorId | TokenKind.EmptyTupleId | TokenKind.TupleId => true
-          case _                                                               => false
-        kindOk && scanner.out.start == 0 && scanner.out.end == name.length
-      catch case _: TokenizeException => false
-
   /** Materialize line/column information for an offset — error/debug path only. */
   def spanAt(input: String, offset: Int): DecodeError.Span =
     var line   = 1
@@ -1363,12 +1126,7 @@ private[scalanotation] abstract class TokenStream private[internal] (
   /** number of tokens scanned beyond the current one (0, 1, or 2) */
   private var lookaheadCount = 0
 
-  /** Whether `cur` holds a scanned, un-consumed token. Scanning is lazy: [[advance]] only marks the
-    * current token consumed, and the next [[currentKind]] (or any other token accessor) scans on
-    * demand. Between tokens (`hasToken == false`) the char-level readers below can consume
-    * structure directly off the input without materializing tokens at all.
-    */
-  private var hasToken = false
+  if scanOnInit then scanNextToken() // initialize the current token
 
   /** Re-aims this stream at the start of a new input, for reuse from a pool. */
   protected def resetStream(newInput: String, newDebug: Boolean): Unit =
@@ -1380,7 +1138,7 @@ private[scalanotation] abstract class TokenStream private[internal] (
     bufB.str = null
     cur = scanner.out
     lookaheadCount = 0
-    hasToken = false
+    scanNextToken()
 
   private def scanNextToken(): Unit =
     scanner.scanNext()
@@ -1389,12 +1147,6 @@ private[scalanotation] abstract class TokenStream private[internal] (
         Tokenizer.materialize(input, scanner)
       ) // TODO: should allow logger customization in the future
 
-  private def ensureToken(): Unit =
-    if !hasToken then
-      scanNextToken()
-      cur = scanner.out
-      hasToken = true
-
   protected final def addExperimentalFlags(flags: Int): Unit =
     experimentalFlags |= flags
     scanner.setExperimentalFlags(experimentalFlags)
@@ -1402,19 +1154,13 @@ private[scalanotation] abstract class TokenStream private[internal] (
   protected final def experimentalFlagEnabled(flag: Int): Boolean =
     ExperimentalFlags.enabled(experimentalFlags, flag)
 
-  protected def currentKind(): Int =
-    ensureToken()
-    cur.kind
-
-  protected def currentOffset(): Int =
-    ensureToken()
-    cur.start
+  protected def currentKind(): Int   = cur.kind
+  protected def currentOffset(): Int = cur.start
 
   private def otherBuffer: TokenSlots =
     if cur eq bufA then bufB else bufA
 
   private def ensureLookahead(count: Int): Unit =
-    ensureToken()
     while lookaheadCount < count do
       // preserve the newest un-consumed token before the scanner overwrites its slots; the first
       // peek moves the current token itself into a buffer
@@ -1433,104 +1179,14 @@ private[scalanotation] abstract class TokenStream private[internal] (
     scanner.out.kind
 
   protected def advance(): Unit =
-    ensureToken()
-    if lookaheadCount == 0 then hasToken = false
+    if lookaheadCount == 0 then
+      if scanner.out.kind != TokenKind.Eof then scanNextToken()
     else if lookaheadCount == 1 then
       cur = scanner.out
       lookaheadCount = 0
     else
       cur = otherBuffer
       lookaheadCount = 1
-
-  // --- char-level readers for the schema decode layer -------------------------------------------
-  // Valid only between tokens (no pending current token — the stream's resting state under lazy
-  // scanning). Each either consumes exactly the asked-for shape or consumes nothing and returns
-  // false/0; the caller then falls back to the token path, which scans the same characters
-  // generically for identical semantics and errors.
-
-  /** true when no scanned, un-consumed token is pending */
-  protected final def betweenTokens: Boolean = !hasToken
-
-  /** Fused char-level read of a `<expected> =` field header: 1 with both consumed, 0 with only the
-    * name consumed as a slice (readable via [[sliceNameMatches]]/[[sliceNameOffset]]), -1 with
-    * nothing consumed (a pending token or no plain identifier next).
-    */
-  protected final def expectFieldHeader(expected: String): Int =
-    if hasToken then -1 else scanner.scanFieldHeader(expected)
-
-  /** Scans a plain-identifier field name as an offset slice — no token, no classification. On
-    * success the slice is readable via [[sliceNameMatches]]/[[sliceNameOffset]] until the next
-    * scan; [[rescanNameSliceAsToken]] rewinds and rescans it generically for mismatch handling.
-    */
-  protected final def tryReadNameSlice(): Boolean =
-    !hasToken && scanner.scanIdentSlice()
-
-  protected final def sliceNameMatches(expected: String): Boolean =
-    sliceMatches(scanner.out, expected)
-
-  protected final def sliceNameOffset(): Int = scanner.out.start
-
-  /** Rescans the last [[tryReadNameSlice]] result as a generic token, so the token path sees the
-    * identical characters (classification included) for error reporting and non-plain matching.
-    */
-  protected final def rescanNameSliceAsToken(): Unit =
-    scanner.rewindTo(scanner.out.start)
-    ensureToken()
-
-  protected final def tryReadEqualsChar(): Boolean =
-    !hasToken && scanner.scanEqualsChar()
-
-  /** 1 = `,` consumed, 2 = `closing` consumed, 0 = nothing consumed (pending token or another
-    * shape).
-    */
-  protected final def tryReadSeparatorChar(closing: Char): Int =
-    if hasToken then 0 else scanner.scanSeparatorChar(closing)
-
-  protected final def tryReadPunctChar(expected: Char): Boolean =
-    !hasToken && scanner.scanPunctChar(expected)
-
-  /** Whether a `+` operator follows, probed at the char level — consumes nothing (beyond trivia),
-    * so the stream stays between tokens when the answer is false.
-    */
-  protected final def probePlusChar(): Boolean =
-    !hasToken && scanner.peekPlusChar()
-
-  /** Char-level read of a `-` sign directly before a digit: false consumes nothing. */
-  protected final def tryReadSignChar(): Boolean =
-    !hasToken && scanner.scanSignChar()
-
-  /** Char-level read of a `true`/`false` value: 1/0 consumed, -1 nothing consumed. */
-  protected final def tryReadBooleanChar(): Int =
-    if hasToken then -1 else scanner.scanBooleanValue()
-
-  // Scanner-direct value scans: on success the literal sits in the scanner slots (`cur` aims at
-  // them whenever the stream is between tokens) and is semantically consumed — no pending token.
-  // [[adoptScannedToken]] turns the scanned literal into the pending current token instead, for
-  // error paths that must report it exactly like the generic token path.
-
-  protected final def tryScanNumberDirect(): Boolean =
-    !hasToken && scanner.scanNumberValue()
-
-  /** 0 = nothing consumed, 1 = positive literal scanned, 2 = negated literal scanned */
-  protected final def tryScanSignedNumberDirect(): Int =
-    if hasToken then 0 else scanner.scanSignedNumberValue()
-
-  protected final def tryScanStringDirect(): Boolean =
-    !hasToken && scanner.scanStringValue()
-
-  /** the kind of the literal scanned by the last successful direct scan */
-  protected final def scannedKind(): Int = scanner.out.kind
-
-  /** the string payload of the literal scanned by the last successful direct scan */
-  protected final def scannedStringValue(): String = scanner.out.str.nn
-
-  /** makes the directly scanned literal the pending current token (error reporting) */
-  protected final def adoptScannedToken(): Unit =
-    cur = scanner.out
-    hasToken = true
-
-  /** start offset of the last successful char-level read — for error spans */
-  protected final def charScanOffset(): Int = scanner.charScanStart
 
   // payload accessors — happy path, unboxed where primitive. Int and Long take the sign decoded
   // from the preceding token: the value is interpreted here, in place from the input slice, so
@@ -1602,7 +1258,7 @@ private[scalanotation] abstract class TokenStream private[internal] (
 
   protected def currentLongValue(negative: Boolean): Long =
     val digits = cur.accDigits
-    // up to 18 digits the negated magnitude cannot overflow, so no range check is needed
+    // within MaxAccumulatedDigits the negated magnitude cannot overflow: no range check needed
     if digits >= 1 && digits <= Tokenizer.MaxAccumulatedDigits then
       if negative then cur.num else -cur.num
     else Tokenizer.longValueAt(input, cur.start, cur.end, negative)
@@ -1610,13 +1266,9 @@ private[scalanotation] abstract class TokenStream private[internal] (
   // error-path materialization
   protected def spanAt(offset: Int): DecodeError.Span = Tokenizer.spanAt(input, offset)
 
-  protected def currentSpan(): DecodeError.Span =
-    ensureToken()
-    spanAt(cur.start)
+  protected def currentSpan(): DecodeError.Span = spanAt(cur.start)
 
-  protected def describeCurrent(): String =
-    ensureToken()
-    describeSlot(cur)
+  protected def describeCurrent(): String = describeSlot(cur)
 
   private def describeSlot(slots: TokenSlots): String =
     def raw = input.substring(slots.start, slots.end)
