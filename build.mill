@@ -34,6 +34,7 @@ trait ScalaObjectNotationModule extends SbtModule:
 
   object test extends SbtTests with TestModule.Munit:
     override def munitVersion   = Versions.munit
+    override def forkArgs       = super.forkArgs() ++ Seq("-Xss4m")
     override def sourcesFolders =
       // TODO: reorganize modules to benefit from SbtPlatformModule automatic source folder names?
       super.sourcesFolders.flatMap(p => Seq(p, os.sub / "jvm-native" / p))
