@@ -607,48 +607,7 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
       fieldIndexStart: Int,
       sliceRead: Boolean
   ): Result[Unit, DecodeError] = Result.task {
-    // Slice fast path: an arriving plain name matches directly against the plan-cached field
-    // chars — no token rescan, and nothing materializes on the match path. Only plan-eligible
-    // field names participate (a plain slice must never match a keyword or quoted name), the
-    // walk passes only skippable nullables, and every miss falls through to the token path
-    // below, which sees the identical characters and owns classification and error rendering.
-    var resolved = -1
-    if sliceRead then
-      val kinds     = fieldPlans.kinds
-      val nameChars = fieldPlans.nameChars
-      val skippable = fieldPlans.nullable
-      var index     = fieldIndexStart
-      var blocked   = false
-      while !blocked && resolved < 0 && index < fields.length do
-        if kinds(index) != RawSchema.FieldPlan.TokenName && sliceNameEquals(nameChars(index))
-        then resolved = index
-        else if allowSkip && skippable(index) then index += 1
-        else blocked = true
-      if resolved >= 0 then
-        if seenFields != null && seenFields.contains(resolved) then
-          raise(makeDuplicateKnownFieldError(fields(resolved).name, sliceNameOffset()))
-        pushControl(resolved)
-      else rescanNameSliceAsToken()
-
-    if resolved < 0 then
-      resolveRecordFieldToken(fields, fieldPlans, seenFields, alreadySeenField)(
-        allowSkip,
-        fieldIndexStart
-      ).check
-  }
-
-  /** the token path of [[resolveRecordFieldSlow]]: non-plain or non-matching names, and all of the
-    * error rendering
-    */
-  private def resolveRecordFieldToken(
-      fields: IArray[Field],
-      fieldPlans: RawSchema.FieldPlans,
-      seenFields: Internal.FieldIndexSet | Null,
-      alreadySeenField: String | Null
-  )(
-      allowSkip: Boolean,
-      fieldIndexStart: Int
-  ): Result[Unit, DecodeError] = Result.task {
+    if sliceRead then rescanNameSliceAsToken()
     val nameOffset = currentOffset()
     if !isFieldNameStart(currentKind()) then
       raise(DecodeError.ExpectedFieldName(describeCurrent()).atToken(currentSpan()))
