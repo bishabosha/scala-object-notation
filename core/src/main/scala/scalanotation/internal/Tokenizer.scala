@@ -141,19 +141,12 @@ private[scalanotation] final class Tokenizer private[internal] (
 
   import Tokenizer.*
 
-  /** The input as a char array: every scan reads plain array loads instead of paying
-    * String.charAt's coder dispatch per char. Costs one copy of the input per decode; the String
-    * stays for substrings (values, error text).
-    */
-  private[internal] var chars: Array[Char] = input.toCharArray
-
   /** Repositions this scanner at the start of a new input, for reuse from a pool. */
   private[internal] def reset(
       newInput: String,
       newExperimentalFlags: Int = ExperimentalFlags.None
   ): Unit =
     input = newInput
-    chars = newInput.toCharArray
     index = 0
     experimentalFlags = newExperimentalFlags
     kind = TokenKind.Eof
@@ -205,7 +198,7 @@ private[scalanotation] final class Tokenizer private[internal] (
     else
       var i = 0
       while i < len do
-        if chars(from + i) != expected.charAt(i) then return false
+        if input.charAt(from + i) != expected.charAt(i) then return false
         i += 1
       true
 
@@ -238,7 +231,8 @@ private[scalanotation] final class Tokenizer private[internal] (
     else
       start = index
       while !isAtEnd && isIdentifierPart(currentChar()) do index += 1
-      if chars(index - 1) == '_' then while !isAtEnd && isOperatorPart(currentChar()) do index += 1
+      if input.charAt(index - 1) == '_' then
+        while !isAtEnd && isOperatorPart(currentChar()) do index += 1
       end = index
       charScanStart = start
       true
@@ -255,22 +249,24 @@ private[scalanotation] final class Tokenizer private[internal] (
     // Fully locals-based: trivia, the name match, trivia and '=' run over register-resident
     // text/index with a single write-back, since this is the hottest scan in record decoding.
     // Unusual whitespace (comments, unicode spaces) diverts to the general reader path.
-    val text   = chars
+    val text   = input
     val length = text.length
     var i      = index
-    while i < length && { val ch = text(i); ch == ' ' || (ch >= '\t' && ch <= '\r') } do i += 1
+    while i < length && { val ch = text.charAt(i); ch == ' ' || (ch >= '\t' && ch <= '\r') } do
+      i += 1
     val from = i
     val len  = expected.length
     var j    = 0
-    while j < len && i < length && text(i) == expected(j) do
+    while j < len && i < length && text.charAt(i) == expected(j) do
       i += 1
       j += 1
-    if j == len && (i >= length || !isIdentifierPart(text(i))) then
+    if j == len && (i >= length || !isIdentifierPart(text.charAt(i))) then
       out.start = from
       out.end = i
-      while i < length && { val ch = text(i); ch == ' ' || (ch >= '\t' && ch <= '\r') } do i += 1
-      if i < length && text(i) == '='
-        && (i + 1 >= length || !isOperatorPart(text(i + 1)))
+      while i < length && { val ch = text.charAt(i); ch == ' ' || (ch >= '\t' && ch <= '\r') } do
+        i += 1
+      if i < length && text.charAt(i) == '='
+        && (i + 1 >= length || !isOperatorPart(text.charAt(i + 1)))
       then
         charScanStart = i
         index = i + 1
@@ -292,7 +288,7 @@ private[scalanotation] final class Tokenizer private[internal] (
   private[internal] def scanEqualsChar(): Boolean =
     skipTrivia()
     if !isAtEnd && currentChar() == '='
-      && (index + 1 >= input.length || !isOperatorPart(chars(index + 1)))
+      && (index + 1 >= input.length || !isOperatorPart(input.charAt(index + 1)))
     then
       charScanStart = index
       index += 1
@@ -349,7 +345,7 @@ private[scalanotation] final class Tokenizer private[internal] (
     val from   = index
     if from >= length then 0
     else
-      val ch0 = chars(from)
+      val ch0 = input.charAt(from)
       if ch0 >= '0' && ch0 <= '9' then
         start = from
         str = null
@@ -357,7 +353,7 @@ private[scalanotation] final class Tokenizer private[internal] (
         end = index
         1
       else if ch0 == '-' && from + 1 < length
-        && { val d = chars(from + 1); d >= '0' && d <= '9' }
+        && { val d = input.charAt(from + 1); d >= '0' && d <= '9' }
       then
         index = from + 1
         start = index
@@ -387,7 +383,7 @@ private[scalanotation] final class Tokenizer private[internal] (
   private[internal] def scanSignChar(): Boolean =
     skipTrivia()
     if !isAtEnd && currentChar() == '-' && index + 1 < input.length
-      && { val ch = chars(index + 1); ch >= '0' && ch <= '9' }
+      && { val ch = input.charAt(index + 1); ch >= '0' && ch <= '9' }
     then
       index += 1
       true
@@ -402,17 +398,17 @@ private[scalanotation] final class Tokenizer private[internal] (
     val i      = index
     val length = input.length
     if i + 4 <= length
-      && chars(i) == 't' && chars(i + 1) == 'r'
-      && chars(i + 2) == 'u' && chars(i + 3) == 'e'
-      && (i + 4 >= length || !isIdentifierPart(chars(i + 4)))
+      && input.charAt(i) == 't' && input.charAt(i + 1) == 'r'
+      && input.charAt(i + 2) == 'u' && input.charAt(i + 3) == 'e'
+      && (i + 4 >= length || !isIdentifierPart(input.charAt(i + 4)))
     then
       index = i + 4
       1
     else if i + 5 <= length
-      && chars(i) == 'f' && chars(i + 1) == 'a'
-      && chars(i + 2) == 'l' && chars(i + 3) == 's'
-      && chars(i + 4) == 'e'
-      && (i + 5 >= length || !isIdentifierPart(chars(i + 5)))
+      && input.charAt(i) == 'f' && input.charAt(i + 1) == 'a'
+      && input.charAt(i + 2) == 'l' && input.charAt(i + 3) == 's'
+      && input.charAt(i + 4) == 'e'
+      && (i + 5 >= length || !isIdentifierPart(input.charAt(i + 5)))
     then
       index = i + 5
       0
@@ -422,7 +418,7 @@ private[scalanotation] final class Tokenizer private[internal] (
   private[internal] def peekPlusChar(): Boolean =
     skipTrivia()
     !isAtEnd && currentChar() == '+'
-    && (index + 1 >= input.length || !isOperatorPart(chars(index + 1)))
+    && (index + 1 >= input.length || !isOperatorPart(input.charAt(index + 1)))
 
   /** Fused scan of a field separator and the next expected header in one pass: 2 = `closing`
     * consumed, 3 = trailing `,` and `closing` consumed, and after a consumed `,` the
@@ -498,7 +494,7 @@ private[scalanotation] final class Tokenizer private[internal] (
   private def scanIdentifier(): Unit =
     // the identifier is a slice of the input: track offsets, no per-token builder
     while !isAtEnd && isIdentifierPart(currentChar()) do advance()
-    if index > start && chars(index - 1) == '_' then
+    if index > start && input.charAt(index - 1) == '_' then
       while !isAtEnd && isOperatorPart(currentChar()) do advance()
     kind = classifyIdentifier()
 
@@ -508,7 +504,7 @@ private[scalanotation] final class Tokenizer private[internal] (
     */
   private def classifyIdentifier(): Int =
     inline def kw(inline expected: String): Boolean = sliceEquals(start, index, expected)
-    chars(start) match
+    input.charAt(start) match
       case 'a' =>
         if kw("abstract") then TokenKind.Keyword else TokenKind.Identifier
       case 'c' =>
@@ -619,7 +615,7 @@ private[scalanotation] final class Tokenizer private[internal] (
     // the fixed punctuation operators are classified straight from the slice — `=` especially is
     // scanned once per named-tuple field, so it must never allocate
     if len == 1 then
-      chars(start) match
+      input.charAt(start) match
         case '=' => kind = TokenKind.Equals
         case '+' => kind = TokenKind.Plus
         case '-' => kind = TokenKind.Minus
@@ -680,7 +676,7 @@ private[scalanotation] final class Tokenizer private[internal] (
     // alongside shape validation, so plain Int/Long literals need no second pass at consumption.
     // Separators, unicode digits (accepted by the shape, interpreted slowly), or more than 18
     // digits invalidate the accumulator.
-    val text   = chars
+    val text   = input
     val length = text.length
     var i      = index
 
@@ -699,7 +695,7 @@ private[scalanotation] final class Tokenizer private[internal] (
 
     var walking = true
     while walking && i < length do
-      val ch = text(i)
+      val ch = text.charAt(i)
       if ch >= '0' && ch <= '9' then
         if accDigits != AccumulatorInvalid && accDigits < MaxAccumulatedDigits then
           acc = acc * 10 - (ch - '0')
@@ -719,8 +715,8 @@ private[scalanotation] final class Tokenizer private[internal] (
         i += 1
       else walking = false
 
-    if i + 1 < length && text(i) == '.' && {
-        val d = text(i + 1)
+    if i + 1 < length && text.charAt(i) == '.' && {
+        val d = text.charAt(i + 1)
         (d >= '0' && d <= '9') || (d > IdentifierSyntax.MaxAscii && Character.isDigit(d))
       }
     then
@@ -728,7 +724,7 @@ private[scalanotation] final class Tokenizer private[internal] (
       i += 1
       walking = true
       while walking && i < length do
-        val ch = text(i)
+        val ch = text.charAt(i)
         if ch >= '0' && ch <= '9' then
           if accDigits != AccumulatorInvalid && accDigits < MaxAccumulatedDigits then
             acc = acc * 10 - (ch - '0')
@@ -745,23 +741,23 @@ private[scalanotation] final class Tokenizer private[internal] (
           i += 1
         else walking = false
 
-    if i < length && { val ch = text(i); ch == 'e' || ch == 'E' } then
+    if i < length && { val ch = text.charAt(i); ch == 'e' || ch == 'E' } then
       hasExponent = true
       i += 1
       var expNegative = false
-      if i < length && { val ch = text(i); ch == '+' || ch == '-' } then
-        expNegative = text(i) == '-'
+      if i < length && { val ch = text.charAt(i); ch == '+' || ch == '-' } then
+        expNegative = text.charAt(i) == '-'
         i += 1
       index = i
       if i >= length || ! {
-          val ch = text(i)
+          val ch = text.charAt(i)
           (ch >= '0' && ch <= '9') || (ch > IdentifierSyntax.MaxAscii && Character.isDigit(ch))
         }
       then fail("Exponent requires at least one digit")
       var explicitExp = 0
       walking = true
       while walking && i < length do
-        val ch = text(i)
+        val ch = text.charAt(i)
         if ch >= '0' && ch <= '9' then
           if explicitExp < ExponentSaturation then explicitExp = explicitExp * 10 + (ch - '0')
           i += 1
@@ -889,7 +885,7 @@ private[scalanotation] final class Tokenizer private[internal] (
 
   private def quoteRunLength(): Int =
     var i = 0
-    while index + i < input.length && chars(index + i) == '\'' do i += 1
+    while index + i < input.length && input.charAt(index + i) == '\'' do i += 1
     i
 
   private def trimDedentedString(
@@ -898,8 +894,9 @@ private[scalanotation] final class Tokenizer private[internal] (
       sawCR: Boolean
   ): String =
     var firstLineEnd = contentStart
-    while firstLineEnd < contentEnd && isIndentWhitespace(chars(firstLineEnd)) do firstLineEnd += 1
-    if firstLineEnd >= contentEnd || !isLineBreak(chars(firstLineEnd)) then
+    while firstLineEnd < contentEnd && isIndentWhitespace(input.charAt(firstLineEnd)) do
+      firstLineEnd += 1
+    if firstLineEnd >= contentEnd || !isLineBreak(input.charAt(firstLineEnd)) then
       failAt(
         "Dedented string literal must start with newline after opening quotes",
         firstLineEnd
@@ -907,16 +904,16 @@ private[scalanotation] final class Tokenizer private[internal] (
     val bodyStart = afterLineBreak(firstLineEnd)
 
     var closingLineBreak = contentEnd - 1
-    while closingLineBreak >= contentStart && isIndentWhitespace(chars(closingLineBreak)) do
+    while closingLineBreak >= contentStart && isIndentWhitespace(input.charAt(closingLineBreak)) do
       closingLineBreak -= 1
-    if closingLineBreak < contentStart || !isLineBreak(chars(closingLineBreak)) then
+    if closingLineBreak < contentStart || !isLineBreak(input.charAt(closingLineBreak)) then
       failAt(
         "Last line of dedented string literal must contain only whitespace before closing delimiter",
         math.max(closingLineBreak, contentStart)
       )
-    if chars(closingLineBreak) == '\n'
+    if input.charAt(closingLineBreak) == '\n'
       && closingLineBreak > contentStart
-      && chars(closingLineBreak - 1) == '\r'
+      && input.charAt(closingLineBreak - 1) == '\r'
     then closingLineBreak -= 1
 
     val closingIndentStart = afterLineBreak(closingLineBreak)
@@ -939,7 +936,7 @@ private[scalanotation] final class Tokenizer private[internal] (
       var lineStart     = bodyStart
       while lineStart < bodyEnd do
         var lineEnd = lineStart
-        while lineEnd < bodyEnd && !isLineBreak(chars(lineEnd)) do lineEnd += 1
+        while lineEnd < bodyEnd && !isLineBreak(input.charAt(lineEnd)) do lineEnd += 1
 
         val cut =
           if lineHasPrefix(lineStart, lineEnd, closingIndentStart, closingIndentEnd) then
@@ -970,23 +967,23 @@ private[scalanotation] final class Tokenizer private[internal] (
   private def isIndentOnlyLine(lineStart: Int, lineEnd: Int): Boolean =
     var i = lineStart
     while i < lineEnd do
-      if !isIndentWhitespace(chars(i)) then return false
+      if !isIndentWhitespace(input.charAt(i)) then return false
       i += 1
     true
 
   private def normalizedSubstring(from: Int, until: Int): String =
     var i = from
-    while i < until && chars(i) != '\r' do i += 1
+    while i < until && input.charAt(i) != '\r' do i += 1
     if i >= until then input.substring(from, until)
     else
       val out = new StringBuilder(until - from)
       out.append(input.substring(from, i))
       while i < until do
-        chars(i) match
+        input.charAt(i) match
           case '\r' =>
             out.append('\n')
             i += 1
-            if i < until && chars(i) == '\n' then i += 1
+            if i < until && input.charAt(i) == '\n' then i += 1
           case ch =>
             out.append(ch)
             i += 1
@@ -999,7 +996,7 @@ private[scalanotation] final class Tokenizer private[internal] (
     ch == '\n' || ch == '\r'
 
   private def afterLineBreak(offset: Int): Int =
-    if chars(offset) == '\r' && offset + 1 < input.length && chars(offset + 1) == '\n'
+    if input.charAt(offset) == '\r' && offset + 1 < input.length && input.charAt(offset + 1) == '\n'
     then offset + 2
     else offset + 1
 
@@ -1033,15 +1030,15 @@ private[scalanotation] final class Tokenizer private[internal] (
   private def skipTrivia(): Unit =
     // Gaps between tokens are almost always zero or one ' ': both exits are reached with at most
     // two char loads and no loop. Everything else diverts to the general walk.
-    val text   = chars
+    val text   = input
     val length = text.length
     var i      = index
     if i < length then
-      val ch0 = text(i)
+      val ch0 = text.charAt(i)
       if ch0 == ' ' then
         i += 1
         if i < length then
-          val ch1 = text(i)
+          val ch1 = text.charAt(i)
           if ch1 == ' ' || (ch1 >= '\t' && ch1 <= '\r') || ch1 == '/'
             || ch1 > IdentifierSyntax.MaxAscii
             || (ch1 >= MinSeparatorControl && ch1 <= MaxSeparatorControl)
@@ -1055,11 +1052,11 @@ private[scalanotation] final class Tokenizer private[internal] (
       then skipTriviaWalk()
 
   private def skipTriviaWalk(): Unit =
-    val text   = chars
+    val text   = input
     val length = text.length
     var i      = index
     while i < length do
-      val ch = text(i)
+      val ch = text.charAt(i)
       if ch == ' ' || (ch >= '\t' && ch <= '\r') then i += 1
       else if ch == '/' || ch > IdentifierSyntax.MaxAscii
         || (ch >= MinSeparatorControl && ch <= MaxSeparatorControl)
@@ -1118,24 +1115,24 @@ private[scalanotation] final class Tokenizer private[internal] (
 
   private def isAtEnd: Boolean = index >= input.length
 
-  private def currentChar(): Char = chars(index)
+  private def currentChar(): Char = input.charAt(index)
 
   private def peekCompare(expected: Char, offset: Int = 1): Boolean =
     val nextIndex = index + offset
-    nextIndex < input.length && chars(nextIndex) == expected
+    nextIndex < input.length && input.charAt(nextIndex) == expected
 
   private def peekIsDigit(offset: Int = 1): Boolean =
     val nextIndex = index + offset
-    nextIndex < input.length && chars(nextIndex).isDigit
+    nextIndex < input.length && input.charAt(nextIndex).isDigit
 
   private def canScanPairArrow: Boolean =
     peekCompare('>') && {
       val afterArrow = index + 2
-      afterArrow >= input.length || !isOperatorPart(chars(afterArrow))
+      afterArrow >= input.length || !isOperatorPart(input.charAt(afterArrow))
     }
 
   private def advance(): Char =
-    val ch = chars(index)
+    val ch = input.charAt(index)
     index += 1
     ch
 
