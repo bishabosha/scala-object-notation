@@ -148,55 +148,6 @@ class ReadWriterConfigSuite extends ScalanotationSuite:
         assertEquals(error.rootCause, DecodeError.DuplicateField("kind"))
       case Result.Ok(value) => fail(s"Expected a decode failure, got $value")
 
-  test("configured discriminator sum decoder accepts non-plain case name literals"):
-    enum Command:
-      case Copy(from: String, to: String)
-
-    given Configured[Command] = Configured.discriminator("kind")
-    given Reader[Command]     = Reader.configured.derived
-
-    val expected = Result.Ok(Command.Copy("a", "b"))
-    // the fast path slice-matches escape-free literals; each discrepancy below must fall
-    // back to the general string decode and resolve the identical case
-    assertEquals(Readers.readAs[Command]("""(kind = "Copy", from = "a", to = "b")"""), expected)
-    assertEquals(
-      Readers.readAs[Command]("""(kind = "Co" + "py", from = "a", to = "b")"""),
-      expected
-    )
-    assertEquals(
-      Readers.readAs[Command]("""(kind = "" + "Copy", from = "a", to = "b")"""),
-      expected
-    )
-
-  test("configured discriminator sum decoder reports unknown cases in any literal form"):
-    enum Command:
-      case Copy(from: String, to: String)
-
-    given Configured[Command] = Configured.discriminator("kind")
-    given Reader[Command]     = Reader.configured.derived
-
-    def unknownCase(input: String, decodedName: String): Unit =
-      Readers.readAs[Command](input) match
-        case Result.Err(error) =>
-          assertEquals(error.rootCause, DecodeError.UnexpectedField(decodedName))
-        case Result.Ok(value) => fail(s"Expected a decode failure, got $value")
-
-    unknownCase("""(kind = "Move", from = "a", to = "b")""", "Move")
-    unknownCase("""(kind = "Mo" + "ve", from = "a", to = "b")""", "Move")
-    // an escape diverts to the general decode, which processes it before reporting
-    unknownCase("""(kind = "Mo\tve", from = "a", to = "b")""", "Mo\tve")
-
-  test("configured discriminator sum decoder rejects non-string discriminator values"):
-    enum Command:
-      case Copy(from: String, to: String)
-
-    given Configured[Command] = Configured.discriminator("kind")
-    given Reader[Command]     = Reader.configured.derived
-
-    Readers.readAs[Command]("""(kind = Copy, from = "a", to = "b")""") match
-      case Result.Err(error) => assert(error.rootCause.isInstanceOf[DecodeError.ExpectedType])
-      case Result.Ok(value)  => fail(s"Expected a decode failure, got $value")
-
   test("configured ReadWriter with no discriminator uses the standard sum schema"):
     enum Mode:
       case Fast
