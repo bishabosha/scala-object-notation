@@ -1487,8 +1487,8 @@ private[scalanotation] abstract class TokenStream private[internal] (
   protected final def tryReadEqualsChar(): Boolean =
     !hasToken && scanner.scanEqualsChar()
 
-  /** 1 = `,` consumed, 2 = `closing` consumed, 3 = a trailing `,` and the `closing` both consumed,
-    * 0 = nothing consumed (pending token or another shape).
+  /** 1 = `,` consumed, 2 = `closing` consumed, 3 = a trailing `,` and the `closing` both
+    * consumed, 0 = nothing consumed (pending token or another shape).
     */
   protected final def tryReadSeparatorChar(closing: Char): Int =
     if hasToken then 0 else scanner.scanSeparatorChar(closing)
