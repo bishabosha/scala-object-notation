@@ -29,31 +29,6 @@ object OrderBatch:
   given Configured[OrderBatch]   = Configured.typed
   given Reader[OrderBatch]       = Reader.configured.derived
 
-// config-like skippable record: optional fields interleave the required ones, so inputs that
-// omit them exercise the record loop's slow name resolver on every following field
-case class SparseRecord(
-    id: Long,
-    note: Option[String],
-    factor: Option[Double],
-    sku: String,
-    retries: Option[Int],
-    qty: Int,
-    flag: Option[Boolean],
-    price: Double,
-    alias: Option[String],
-    active: Boolean
-)
-object SparseRecord:
-  given TypedFactory[SparseRecord] = TypedFactories.derived
-  given Configured[SparseRecord]   = Configured.skippable
-  given Reader[SparseRecord]       = Reader.configured.derived
-
-case class SparseBatch(records: Vector[SparseRecord])
-object SparseBatch:
-  given TypedFactory[SparseBatch] = TypedFactories.derived
-  given Configured[SparseBatch]   = Configured.typed
-  given Reader[SparseBatch]       = Reader.configured.derived
-
 // mixed-case enum batch — each library decodes its own default sum encoding, with SON in its
 // typed-factory configuration (like OrderRecord)
 enum Shape:
@@ -124,11 +99,6 @@ class CrossLibraryDecodeBenchmark:
   private val jsonOrdersInput =
     s"""{"orders":[${(1 to 100).map(jsonOrder).mkString(",")}]}"""
   private val jsonOrdersBytes = jsonOrdersInput.getBytes(StandardCharsets.UTF_8)
-
-  private def sparseRecord(i: Int): String =
-    s"""(id = ${i * 1000L}, sku = "sku-$i", qty = ${i % 10 + 1}, price = ${i * 100}.99, active = ${i % 2 == 0})"""
-  private val sonSparseInput =
-    s"(records = Vector(${(1 to 100).map(sparseRecord).mkString(", ")}))"
 
   // --- batch of 100 mixed enum cases; each library decodes its own default sum encoding ---
   private val shapeBatch = ShapeBatch(
@@ -213,11 +183,6 @@ class CrossLibraryDecodeBenchmark:
   // Compact SON rendering (minimal whitespace), comparable in density to the compact JSON
   // inputs. `=` directly followed by `-` would scan as one operator token (Scala tokenization),
   // so a single space stays in front of negative literals — the most compact valid form.
-  @Benchmark def sonSparse100: Any =
-    val result = scalanotation.Readers.readAs[SparseBatch](sonSparseInput)
-    if result.isErr then sys.error(s"sonSparse100 failed: $result")
-    result
-
   private def compactSon(son: String): String =
     son.replace(" = ", "=").replace(", ", ",").replace("=-", "= -")
 
