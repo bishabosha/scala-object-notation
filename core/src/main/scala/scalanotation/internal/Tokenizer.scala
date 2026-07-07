@@ -311,35 +311,6 @@ private[scalanotation] final class Tokenizer private[internal] (
         true
       else false
 
-  /** Scanner-direct scan of an optionally negated numeric literal in one trivia pass: 0 = nothing
-    * consumed, 1 = positive literal scanned, 2 = `-` and literal scanned. The token path treats
-    * the sign as its own Minus token with identical interpretation, so only the round trip is
-    * skipped.
-    */
-  private[internal] def scanSignedNumberValue(): Int =
-    skipTrivia()
-    val length = input.length
-    val from   = index
-    if from >= length then 0
-    else
-      val ch0 = input.charAt(from)
-      if ch0 >= '0' && ch0 <= '9' then
-        start = from
-        str = null
-        scanNumber()
-        end = index
-        1
-      else if ch0 == '-' && from + 1 < length
-        && { val d = input.charAt(from + 1); d >= '0' && d <= '9' }
-      then
-        index = from + 1
-        start = index
-        str = null
-        scanNumber()
-        end = index
-        2
-      else 0
-
   /** Scanner-direct scan of a string literal at a value position — see [[scanNumberValue]].
     * Dedented multi-quote strings stay on the token path.
     */
@@ -1373,10 +1344,6 @@ private[scalanotation] abstract class TokenStream private[internal] (
 
   protected final def tryScanNumberDirect(): Boolean =
     !hasToken && scanner.scanNumberValue()
-
-  /** 0 = nothing consumed, 1 = positive literal scanned, 2 = negated literal scanned */
-  protected final def tryScanSignedNumberDirect(): Int =
-    if hasToken then 0 else scanner.scanSignedNumberValue()
 
   protected final def tryScanStringDirect(): Boolean =
     !hasToken && scanner.scanStringValue()
