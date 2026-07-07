@@ -33,7 +33,8 @@ private[scalanotation] trait BaseDecoders extends SharedHelpers:
       inline store: N => Unit
   ): Unit =
     val negative =
-      if currentKind() == TokenKind.Minus then
+      if tryReadSignChar() then true // char-level sign; the literal token follows directly
+      else if currentKind() == TokenKind.Minus then
         advance()
         true
       else false
