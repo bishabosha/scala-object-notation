@@ -6,7 +6,6 @@ import scalanotation.RouterSchema
 import scalanotation.schema.RawSchema.Field
 import steps.result.Result
 import steps.result.Result.eval.check
-import steps.result.Result.eval.ok
 import steps.result.Result.eval.raise
 import scalanotation.schema.RawSchema
 import scalanotation.internal.Internal.breakErr
@@ -441,10 +440,8 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
     * skipped-nullable-field schemas. The happy path reads structure at the char level — a
     * plain-identifier name slice compared against the expected field name, `=`, the value's own
     * token, and the `,`/`)` separator — so a primitive field materializes exactly one token (its
-    * value). Any deviation (pending tokens, non-plain names, mismatches, skips) drops to the cold
-    * helpers, which fall back to the token path over the same characters and preserve the generic
-    * loop's semantics and errors. The loop body stays small so the JIT can inline the char-level
-    * readers into it.
+    * value). Any deviation (pending tokens, non-plain names, mismatches) rewinds and falls back to
+    * the token path over the same characters, preserving the generic loop's semantics and errors.
     */
   private def decodeRecordFields(
       schema: RawSchema.NamedTuple[?],
@@ -460,7 +457,12 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
       val plans             = schema.fieldPlans
       var state: read.State = read.init(fields.length, slots)
 
-      if !tryReadPunctChar('(') then consumeRecordLParenToken(schema).check
+      if !tryReadPunctChar('(') then
+        if currentKind() == TokenKind.LParen then advance()
+        else
+          raise(
+            DecodeError.ExpectedType(schema.describeSelf, describeCurrent()).atToken(currentSpan())
+          )
 
       var fieldIndex                   = 0 // the next expected schema field
       var decodedCount                 = 0 // fields actually present in the input
@@ -474,37 +476,86 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
       else
         var done = false
         while !done do
-          // --- field name: char-level slice against the expected field, else the cold resolver ---
+          // --- field name: char-level slice against the expected field, else the token path ---
           var decodedIndex = -1
           var nameOffset   = 0
           if tryReadNameSlice() then
             nameOffset = sliceNameOffset()
-            if fieldIndex < fields.length && plans(fieldIndex) != RawSchema.FieldPlan.TokenName
-              && sliceNameMatches(fields(fieldIndex).name)
-            then decodedIndex = fieldIndex
+            var index   = fieldIndex
+            var walking = true
+            while walking do
+              if index < fields.length && plans(index) != RawSchema.FieldPlan.TokenName then
+                if sliceNameMatches(fields(index).name) then
+                  decodedIndex = index
+                  walking = false
+                else if allowSkip && TokenDecoder.isNullable(fields(index).schema) then index += 1
+                else walking = false
+              else walking = false
+            if decodedIndex >= 0 then
+              // None-fill the skipped range — every schema in it is nullable (checked in the walk)
+              while fieldIndex < decodedIndex do
+                state = read.add(state, fieldIndex, None)
+                fieldIndex += 1
+              if seenFields != null && seenFields.contains(decodedIndex) then
+                raise(makeDuplicateKnownFieldError(fields(decodedIndex).name, nameOffset))
             else
-              decodedIndex =
-                resolveRecordFieldSlow(fields, plans, seenFields, allowSkip, fieldIndex, true).ok
-          else
-            nameOffset = currentOffset()
-            decodedIndex =
-              resolveRecordFieldSlow(fields, plans, seenFields, allowSkip, fieldIndex, false).ok
+              // a mismatch, a non-plain expected name, or the end of the schema: rescan the name
+              // as a generic token and classify through the token path below
+              rescanNameSliceAsToken()
 
-          if decodedIndex > fieldIndex then
-            // None-fill the skipped range — the resolver validated that every schema in it is a
-            // skippable nullable
-            while fieldIndex < decodedIndex do
-              state = read.add(state, fieldIndex, None)
-              fieldIndex += 1
+          if decodedIndex < 0 then
+            // --- token path: identical decisions to the previous generic loop ---
+            nameOffset = currentOffset()
+            if !isFieldNameStart(currentKind()) then
+              raise(DecodeError.ExpectedFieldName(describeCurrent()).atToken(currentSpan()))
+            decodedIndex = {
+              if allowSkip then
+                val expectedBeforeSkip =
+                  if fieldIndex < fields.length then fields(fieldIndex) else null
+                while fieldIndex < fields.length
+                  && !currentFieldNameMatches(fields(fieldIndex).name)
+                  && TokenDecoder.isNullable(fields(fieldIndex).schema)
+                do
+                  state = read.add(state, fieldIndex, None)
+                  fieldIndex += 1
+
+                if fieldIndex >= fields.length then
+                  duplicateDecodedFieldError(fields, seenFields, fieldIndex, nameOffset).check
+                  if expectedBeforeSkip == null then
+                    raise(
+                      currentFieldCountMismatchError(nameOffset, fields.length, decodedCount + 1)
+                    )
+                  else raise(currentFieldOrderMismatchError(nameOffset, expectedBeforeSkip.name))
+                else
+                  val expectedField = fields(fieldIndex)
+                  if currentFieldNameMatches(expectedField.name) then fieldIndex
+                  else
+                    duplicateDecodedFieldError(fields, seenFields, fieldIndex, nameOffset).check
+                    raise(currentFieldOrderMismatchError(nameOffset, expectedField.name))
+              else if fieldIndex >= fields.length then
+                duplicateDecodedFieldError(fields, seenFields, fieldIndex, nameOffset).check
+                raise(currentFieldCountMismatchError(nameOffset, fields.length, decodedCount + 1))
+              else
+                val expectedField = fields(fieldIndex)
+                if currentFieldNameMatches(expectedField.name) then fieldIndex
+                else
+                  duplicateDecodedFieldError(fields, seenFields, fieldIndex, nameOffset).check
+                  raise(currentFieldOrderMismatchError(nameOffset, expectedField.name))
+            }
+            if seenFields != null && seenFields.contains(decodedIndex) then
+              raise(makeDuplicateKnownFieldError(fields(decodedIndex).name, nameOffset))
+            advance() // consume the field-name token
 
           // --- '=' ---
-          if !tryReadEqualsChar() then consumeEqualsToken().check
+          if !tryReadEqualsChar() then
+            if currentKind() == TokenKind.Equals then advance()
+            else raise(DecodeError.ExpectedEquals(describeCurrent()).atToken(currentSpan()))
 
           // --- value ---
           val expectedField = fields(decodedIndex)
           decodePlannedValue(plans(decodedIndex), expectedField.schema) match
             case Result.Err(error) =>
-              raise(recordFieldValueError(error, expectedField, nameOffset))
+              raise(error.atPath(s".${expectedField.name}").atToken(spanAt(nameOffset)))
             case _ =>
               state = addSlot(read)(state, decodedIndex)
               if seenFields != null then seenFields.mark(decodedIndex)
@@ -522,9 +573,19 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
               closingOffset = charScanOffset()
               done = true
             case _ =>
-              if recordSeparatorToken().ok == 1 then
-                closingOffset = consumedRParenOffset
-                done = true
+              currentKind() match
+                case TokenKind.Comma =>
+                  advance()
+                  if currentKind() == TokenKind.RParen then
+                    closingOffset = currentOffset()
+                    advance()
+                    done = true
+                case TokenKind.RParen =>
+                  closingOffset = currentOffset()
+                  advance()
+                  done = true
+                case _ =>
+                  raise(DecodeError.ExpectedRParen(describeCurrent()).atToken(currentSpan()))
 
       if allowSkip then
         state = fillTrailingSkippedNullableFields(read)(fields, state, fieldIndex)
@@ -541,119 +602,6 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
         )
       else pushRef(read.finish(state))
     }
-
-  /** Cold path of the record loop's name step. Resolves the arriving field name to its schema
-    * index — walking skippable nullable fields, classifying duplicates, order and count
-    * mismatches — with the token path's exact decisions. On success the name is consumed and the
-    * caller None-fills up to the returned index (the walk here only passes skippable nullables).
-    * `sliceRead` says a plain name slice was already consumed at the char level; any deviation
-    * rewinds it and rescans generically.
-    */
-  private def resolveRecordFieldSlow(
-      fields: IArray[Field],
-      plans: Array[scala.Byte],
-      seenFields: Internal.FieldIndexSet | Null,
-      allowSkip: Boolean,
-      fieldIndexStart: Int,
-      sliceRead: Boolean
-  ): Result[Int, DecodeError] = Result.eval {
-    var resolved = -1
-    if sliceRead then
-      val nameOffset = sliceNameOffset()
-      var index      = fieldIndexStart
-      var walking    = true
-      while walking do
-        if index < fields.length && plans(index) != RawSchema.FieldPlan.TokenName then
-          if sliceNameMatches(fields(index).name) then
-            resolved = index
-            walking = false
-          else if allowSkip && TokenDecoder.isNullable(fields(index).schema) then index += 1
-          else walking = false
-        else walking = false
-      if resolved >= 0 then
-        if seenFields != null && seenFields.contains(resolved) then
-          raise(makeDuplicateKnownFieldError(fields(resolved).name, nameOffset))
-      else
-        // a mismatch, a non-plain expected name, or the end of the schema: rescan the name as a
-        // generic token and classify below
-        rescanNameSliceAsToken()
-
-    if resolved < 0 then
-      // token path: identical decisions to the previous generic loop
-      val nameOffset = currentOffset()
-      if !isFieldNameStart(currentKind()) then
-        raise(DecodeError.ExpectedFieldName(describeCurrent()).atToken(currentSpan()))
-      var index = fieldIndexStart
-      if allowSkip then
-        val expectedBeforeSkip = if index < fields.length then fields(index) else null
-        while index < fields.length
-          && !currentFieldNameMatches(fields(index).name)
-          && TokenDecoder.isNullable(fields(index).schema)
-        do index += 1
-
-        if index >= fields.length then
-          duplicateDecodedFieldError(fields, seenFields, index, nameOffset).check
-          if expectedBeforeSkip == null then
-            raise(currentFieldCountMismatchError(nameOffset, fields.length, index + 1))
-          else raise(currentFieldOrderMismatchError(nameOffset, expectedBeforeSkip.name))
-        else if !currentFieldNameMatches(fields(index).name) then
-          duplicateDecodedFieldError(fields, seenFields, index, nameOffset).check
-          raise(currentFieldOrderMismatchError(nameOffset, fields(index).name))
-      else if index >= fields.length then
-        duplicateDecodedFieldError(fields, seenFields, index, nameOffset).check
-        raise(currentFieldCountMismatchError(nameOffset, fields.length, index + 1))
-      else if !currentFieldNameMatches(fields(index).name) then
-        duplicateDecodedFieldError(fields, seenFields, index, nameOffset).check
-        raise(currentFieldOrderMismatchError(nameOffset, fields(index).name))
-      resolved = index
-      if seenFields != null && seenFields.contains(resolved) then
-        raise(makeDuplicateKnownFieldError(fields(resolved).name, nameOffset))
-      advance() // consume the field-name token
-    resolved
-  }
-
-  /** cold `(` fallback for the record entry: a pending token or a non-record shape */
-  private def consumeRecordLParenToken(schema: RawSchema[?]): Result[Unit, DecodeError] =
-    Result.task {
-      if currentKind() == TokenKind.LParen then advance()
-      else
-        raise(
-          DecodeError.ExpectedType(schema.describeSelf, describeCurrent()).atToken(currentSpan())
-        )
-    }
-
-  /** cold `=` fallback: a pending token or a non-`=` shape */
-  private def consumeEqualsToken(): Result[Unit, DecodeError] = Result.task {
-    if currentKind() == TokenKind.Equals then advance()
-    else raise(DecodeError.ExpectedEquals(describeCurrent()).atToken(currentSpan()))
-  }
-
-  /** Cold separator fallback on the token path: 0 = comma consumed (another field follows), 1 =
-    * record closed (offset left in [[consumedRParenOffset]]).
-    */
-  private def recordSeparatorToken(): Result[Int, DecodeError] = Result.eval {
-    currentKind() match
-      case TokenKind.Comma =>
-        advance()
-        if currentKind() == TokenKind.RParen then
-          consumedRParenOffset = currentOffset()
-          advance()
-          1
-        else 0
-      case TokenKind.RParen =>
-        consumedRParenOffset = currentOffset()
-        advance()
-        1
-      case _ => raise(DecodeError.ExpectedRParen(describeCurrent()).atToken(currentSpan()))
-  }
-
-  /** cold decoration of a field value's decode error */
-  private def recordFieldValueError(
-      error: DecodeError,
-      field: Field,
-      nameOffset: Int
-  ): DecodeError =
-    error.atPath(s".${field.name}").atToken(spanAt(nameOffset))
 
   /** Dispatches a value decode through its precomputed [[RawSchema.FieldPlan]] code: direct
     * primitive decoders for direct primitive schemas, the general dispatcher for everything else.
