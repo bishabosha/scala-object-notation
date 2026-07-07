@@ -534,9 +534,15 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
               decodedCount += 1
               lastFieldName = expectedField.name
 
-          // --- separator ---
-          tryReadSeparatorChar(')') match
-            case 1     => headerProbe = probeRecordHeader(fields, plans, nameChars, fieldIndex)
+          // --- separator, fused with the next field's header ---
+          val nextExpected =
+            if fieldIndex < fields.length && plans(fieldIndex) != RawSchema.FieldPlan.TokenName
+            then nameChars(fieldIndex)
+            else null
+          tryReadSeparatorHeader(')', nextExpected) match
+            case 4     => headerProbe = 1  // comma, name and '=' all consumed
+            case 5     => headerProbe = 0  // comma and a name slice consumed
+            case 1     => headerProbe = -1 // only the comma consumed: token-path name
             case 2 | 3 =>
               closingOffset = charScanOffset()
               done = true
@@ -576,12 +582,12 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
     else if tryReadNameSlice() then 0
     else -1
 
-  /** Cold path of the record loop's name step: resolves an arriving field name that was not the
-    * exact expected header. The name is first normalized to a generic token — a consumed char-level
-    * slice rewinds and rescans, so classification and errors are the token path's — and one
-    * resolution algorithm serves ordered and skippable schemas alike (ordered mode is an empty skip
-    * walk). On success the name is consumed and the resolved index is left in the control slot; the
-    * caller None-fills up to it (the walk only passes skippable nullables).
+  /** Cold path of the record loop's name step. Resolves the arriving field name to its schema index
+    * — walking skippable nullable fields, classifying duplicates, order and count mismatches — with
+    * the token path's exact decisions. On success the name is consumed and the resolved index is
+    * left in the control slot; the caller None-fills up to it (the walk here only passes skippable
+    * nullables). `sliceRead` says a plain name slice was already consumed at the char level; any
+    * deviation rewinds it and rescans generically.
     */
   private def resolveRecordFieldSlow(
       fields: IArray[Field],
@@ -591,31 +597,61 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
       fieldIndexStart: Int,
       sliceRead: Boolean
   ): Result[Unit, DecodeError] = Result.task {
-    if sliceRead then rescanNameSliceAsToken()
-    val nameOffset = currentOffset()
-    if !isFieldNameStart(currentKind()) then
-      raise(DecodeError.ExpectedFieldName(describeCurrent()).atToken(currentSpan()))
+    val plans    = fieldPlans.kinds
+    val nullable = fieldPlans.nullable
+    var resolved = -1
+    if sliceRead then
+      val nameOffset = sliceNameOffset()
+      var index      = fieldIndexStart
+      var walking    = true
+      while walking do
+        if index < fields.length && plans(index) != RawSchema.FieldPlan.TokenName then
+          if sliceNameMatches(fields(index).name) then
+            resolved = index
+            walking = false
+          else if allowSkip && nullable(index) then index += 1
+          else walking = false
+        else walking = false
+      if resolved >= 0 then
+        if seenFields != null && seenFields.contains(resolved) then
+          raise(makeDuplicateKnownFieldError(fields(resolved).name, nameOffset))
+      else
+        // a mismatch, a non-plain expected name, or the end of the schema: rescan the name as a
+        // generic token and classify below
+        rescanNameSliceAsToken()
 
-    val nullable           = fieldPlans.nullable
-    var index              = fieldIndexStart
-    val expectedBeforeSkip = if index < fields.length then fields(index) else null
-    while allowSkip && index < fields.length
-      && !currentFieldNameMatches(fields(index).name)
-      && nullable(index)
-    do index += 1
+    if resolved < 0 then
+      // token path: identical decisions to the previous generic loop
+      val nameOffset = currentOffset()
+      if !isFieldNameStart(currentKind()) then
+        raise(DecodeError.ExpectedFieldName(describeCurrent()).atToken(currentSpan()))
+      var index = fieldIndexStart
+      if allowSkip then
+        val expectedBeforeSkip = if index < fields.length then fields(index) else null
+        while index < fields.length
+          && !currentFieldNameMatches(fields(index).name)
+          && nullable(index)
+        do index += 1
 
-    if index >= fields.length then
-      duplicateDecodedFieldError(fields, seenFields, index, nameOffset).check
-      if expectedBeforeSkip == null then
+        if index >= fields.length then
+          duplicateDecodedFieldError(fields, seenFields, index, nameOffset).check
+          if expectedBeforeSkip == null then
+            raise(currentFieldCountMismatchError(nameOffset, fields.length, index + 1))
+          else raise(currentFieldOrderMismatchError(nameOffset, expectedBeforeSkip.name))
+        else if !currentFieldNameMatches(fields(index).name) then
+          duplicateDecodedFieldError(fields, seenFields, index, nameOffset).check
+          raise(currentFieldOrderMismatchError(nameOffset, fields(index).name))
+      else if index >= fields.length then
+        duplicateDecodedFieldError(fields, seenFields, index, nameOffset).check
         raise(currentFieldCountMismatchError(nameOffset, fields.length, index + 1))
-      else raise(currentFieldOrderMismatchError(nameOffset, expectedBeforeSkip.name))
-    else if !currentFieldNameMatches(fields(index).name) then
-      duplicateDecodedFieldError(fields, seenFields, index, nameOffset).check
-      raise(currentFieldOrderMismatchError(nameOffset, fields(index).name))
-    if seenFields != null && seenFields.contains(index) then
-      raise(makeDuplicateKnownFieldError(fields(index).name, nameOffset))
-    advance() // consume the field-name token
-    pushControl(index)
+      else if !currentFieldNameMatches(fields(index).name) then
+        duplicateDecodedFieldError(fields, seenFields, index, nameOffset).check
+        raise(currentFieldOrderMismatchError(nameOffset, fields(index).name))
+      resolved = index
+      if seenFields != null && seenFields.contains(resolved) then
+        raise(makeDuplicateKnownFieldError(fields(resolved).name, nameOffset))
+      advance() // consume the field-name token
+    pushControl(resolved)
   }
 
   /** cold `(` fallback for the record entry: a pending token or a non-record shape */
