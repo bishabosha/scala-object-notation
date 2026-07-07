@@ -130,22 +130,6 @@ enum RawSchema[A]:
             nullable(index) = scalanotation.internal.TokenDecoder.isNullable(field.schema)
             index += 1
           RawSchema.FieldPlans(kinds, nameChars, nullable)
-        case sum: RawSchema.Sum[?] =>
-          val cases     = sum.cases
-          val kinds     = new Array[scala.Byte](cases.length)
-          val nameChars = new Array[Array[scala.Char]](cases.length)
-          val nullable  = new Array[scala.Boolean](cases.length)
-          var index     = 0
-          while index < cases.length do
-            val sumCase = cases(index)
-            kinds(index) =
-              if scalanotation.internal.Tokenizer.isPlainFieldName(sumCase.name) then
-                RawSchema.valuePlanOf(sumCase.schema)
-              else RawSchema.FieldPlan.TokenName
-            nameChars(index) = sumCase.name.toCharArray
-            nullable(index) = scalanotation.internal.TokenDecoder.isNullable(sumCase.schema)
-            index += 1
-          RawSchema.FieldPlans(kinds, nameChars, nullable)
         case _ => RawSchema.FieldPlans.Empty
       fieldPlansCache = computed
       computed
