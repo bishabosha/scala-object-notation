@@ -135,7 +135,7 @@ private[scalanotation] final class Tokenizer private[internal] (
     initialInput: String,
     private var index: Int,
     private var experimentalFlags: Int
-) extends Scan:
+):
   def this(input: String) =
     this(input, 0, ExperimentalFlags.None)
 
@@ -284,14 +284,13 @@ private[scalanotation] final class Tokenizer private[internal] (
     */
   private[internal] def scanIdentSlice(): Boolean =
     skipTrivia()
-    val from  = index
-    val ident = identifier(from)
-    if ident < 0 then false
+    if isAtEnd || !isIdentifierStart(currentChar()) then false
     else
-      start = from
-      end = ident
-      charScanStart = from
-      index = ident
+      start = index
+      while !isAtEnd && isIdentifierPart(currentChar()) do index += 1
+      if chars(index - 1) == '_' then while !isAtEnd && isOperatorPart(currentChar()) do index += 1
+      end = index
+      charScanStart = start
       true
 
   /** Fused scan of a `<expected> =` field header: 1 with both consumed, 0 with only the identifier
@@ -303,72 +302,75 @@ private[scalanotation] final class Tokenizer private[internal] (
     * boundary check below is exactly the identifier end the generic scanner would find.
     */
   private[internal] def scanFieldHeader(expected: Array[Char]): Int =
-    // The hottest scan in record decoding — the combinator chain inlines to one pass over
-    // register-resident text/index with a single write-back. Unusual whitespace (comments,
-    // unicode spaces) diverts to the general reader path.
-    val name = wordAfterTrivia(index, expected)
-    if name >= 0 then
-      out.start = name - expected.length
-      out.end = name
-      val eq = operatorAfterTrivia(name, '=')
-      if eq >= 0 then
-        charScanStart = eq - 1
-        index = eq
+    // Fully locals-based: trivia, the name match, trivia and '=' run over register-resident
+    // text/index with a single write-back, since this is the hottest scan in record decoding.
+    // Unusual whitespace (comments, unicode spaces) diverts to the general reader path.
+    val text   = chars
+    val length = inputLength
+    var i      = index
+    while i < length && { val ch = text(i); ch == ' ' || (ch >= '\t' && ch <= '\r') } do i += 1
+    val from = i
+    val len  = expected.length
+    var j    = 0
+    while j < len && i < length && text(i) == expected(j) do
+      i += 1
+      j += 1
+    if j == len && (i >= length || !isIdentifierPart(text(i))) then
+      out.start = from
+      out.end = i
+      while i < length && { val ch = text(i); ch == ' ' || (ch >= '\t' && ch <= '\r') } do i += 1
+      if i < length && text(i) == '='
+        && (i + 1 >= length || !isOperatorPart(text(i + 1)))
+      then
+        charScanStart = i
+        index = i + 1
         HeaderMatched
-      else headerEqualsRetry(name)
-    else headerNameMismatch()
-
-  /** '=' not found directly after a matched name: comments or unusual whitespace may hide it — the
-    * general char reader retries (walking any trivia from the name's end) before the caller falls
-    * back to the token path. Outlined so [[scanFieldHeader]]'s hot path stays within the JIT's
-    * inlining budgets.
-    */
-  private def headerEqualsRetry(name: Int): Int =
-    index = name
-    if scanEqualsChar() then HeaderMatched else HeaderNameSlice
-
-  /** A different (or non-plain) name, or unusual leading trivia: rescan generically as a slice for
-    * the caller's resolution — outlined like [[headerEqualsRetry]].
-    */
-  private def headerNameMismatch(): Int =
-    index = plainTrivia(index)
-    if scanIdentSlice() then HeaderNameSlice else HeaderNone
+      else
+        index = i
+        // '=' not found directly: comments or unusual whitespace may hide it — the general
+        // char reader retries before the caller falls back to the token path
+        if scanEqualsChar() then HeaderMatched else HeaderNameSlice
+    else
+      // a different (or non-plain) name, or unusual leading trivia: rescan generically as a
+      // slice for the caller's resolution
+      index = from
+      if scanIdentSlice() then HeaderNameSlice else HeaderNone
 
   /** Consumes a single `=` that is a whole operator (rejecting `==`, `=>`, ...): false consumes
     * nothing.
     */
   private[internal] def scanEqualsChar(): Boolean =
     skipTrivia()
-    val from = index
-    val eq   = wholeOperator(from, '=')
-    if eq >= 0 then
-      charScanStart = from
-      index = eq
+    if !isAtEnd && currentChar() == '='
+      && (index + 1 >= inputLength || !isOperatorPart(chars(index + 1)))
+    then
+      charScanStart = index
+      index += 1
       true
     else false
 
   /** Consumes an element separator: 1 for `,`, 2 for `closing`, 0 (nothing consumed) otherwise. */
   private[internal] def scanSeparatorChar(closing: Char): Int =
     skipTrivia()
-    val from = index
-    val ch   = peek(from)
-    if ch == ',' then
-      charScanStart = from
-      index = from + 1
-      // a trailing comma may directly precede the closing char: consuming both here saves the
-      // caller a separate probe after every element
-      skipTrivia()
-      val at = index
-      if peek(at) == closing then
-        charScanStart = at
-        index = at + 1
-        SeparatorTrailingClosing
-      else SeparatorComma
-    else if ch == closing then
-      charScanStart = from
-      index = from + 1
-      SeparatorClosing
-    else SeparatorNone
+    if isAtEnd then SeparatorNone
+    else
+      val ch = currentChar()
+      if ch == ',' then
+        charScanStart = index
+        index += 1
+        // a trailing comma may directly precede the closing char: consuming both here saves the
+        // caller a separate probe after every element
+        skipTrivia()
+        if !isAtEnd && currentChar() == closing then
+          charScanStart = index
+          index += 1
+          SeparatorTrailingClosing
+        else SeparatorComma
+      else if ch == closing then
+        charScanStart = index
+        index += 1
+        SeparatorClosing
+      else SeparatorNone
 
   /** Scanner-direct scan of an optionally negated numeric literal in one trivia pass — the
     * [[Tokenizer.NumberNone]]/[[Tokenizer.NumberPositive]]/[[Tokenizer.NumberNegated]] codes. The
@@ -377,37 +379,40 @@ private[scalanotation] final class Tokenizer private[internal] (
     */
   private[internal] def scanSignedNumberValue(): Int =
     skipTrivia()
-    val from = index
-    val ch   = peek(from)
-    if ch >= '0' && ch <= '9' then
-      start = from
-      str = null
-      scanNumber()
-      end = index
-      NumberPositive
-    else if ch == '-' && { val d = peek(from + 1); d >= '0' && d <= '9' } then
-      // only the sign commits here; scanNumber reads the digits (and everything after them)
-      index = from + 1
-      start = from + 1
-      str = null
-      scanNumber()
-      end = index
-      NumberNegated
-    else NumberNone
+    val length = inputLength
+    val from   = index
+    if from >= length then NumberNone
+    else
+      val ch0 = chars(from)
+      if ch0 >= '0' && ch0 <= '9' then
+        start = from
+        str = null
+        scanNumber()
+        end = index
+        NumberPositive
+      else if ch0 == '-' && from + 1 < length
+        && { val d = chars(from + 1); d >= '0' && d <= '9' }
+      then
+        index = from + 1
+        start = index
+        str = null
+        scanNumber()
+        end = index
+        NumberNegated
+      else NumberNone
 
   /** Scanner-direct scan of a string literal at a value position — see [[scanSignedNumberValue]].
     * Dedented multi-quote strings stay on the token path.
     */
   private[internal] def scanStringValue(): Boolean =
     skipTrivia()
-    val from = index
-    if peek(from) == '"' then
-      start = from
+    if isAtEnd || currentChar() != '"' then false
+    else
+      start = index
       str = null
       scanString()
       end = index
       true
-    else false
 
   /** Scans an escape-free, non-concatenated `"` string literal's CONTENT as a slice: true with the
     * literal consumed and the content bounds in `out.start`/`out.end` — nothing materializes, so
@@ -417,28 +422,34 @@ private[scalanotation] final class Tokenizer private[internal] (
     */
   private[internal] def scanStringContentSlice(): Boolean =
     skipTrivia()
-    val literal = index
-    val closed  = stringSlice(literal) // no `"` literal, an escape or the end of input fail here
-    if closed < 0 then false
-    else if concatenationMayFollow(closed) then false
+    if isAtEnd || currentChar() != '"' then false
     else
-      out.start = literal + 1
-      out.end = closed - 1
-      charScanStart = literal
-      index = closed
-      true
-
-  /** Whether a `+` (concatenation) may follow the closing quote at `closed` — only the general
-    * decode handles concatenation. The probe walks plain trivia only, so anything that could HIDE a
-    * `+` (a comment, unicode whitespace, separator controls — skipTrivia's divert set) also answers
-    * true. Outlined so [[scanStringContentSlice]] stays within the JIT's inlining budgets.
-    */
-  private def concatenationMayFollow(closed: Int): Boolean =
-    val probe = plainTrivia(closed)
-    val next  = peek(probe)
-    (next == '+' && wholeOperator(probe, '+') >= 0)
-    || next == '/' || next > IdentifierSyntax.MaxAscii
-    || (next >= MinSeparatorControl && next <= MaxSeparatorControl)
+      val text    = chars
+      val length  = inputLength
+      val literal = index
+      var i       = literal + 1
+      var ch      = ' '
+      while i < length && { ch = text(i); ch != '"' && ch != '\\' } do i += 1
+      if i >= length || ch == '\\' then false
+      else
+        // a `+` after the closing quote means concatenation — only the general decode handles
+        // it. The probe walks plain trivia only, so anything that could HIDE a `+` (a comment,
+        // unicode whitespace, separator controls — skipTrivia's divert set) also bails.
+        var j = i + 1
+        while j < length && { val c = text(j); c == ' ' || (c >= '\t' && c <= '\r') } do j += 1
+        if j < length && {
+            val c = text(j)
+            (c == '+' && (j + 1 >= length || !isOperatorPart(text(j + 1))))
+            || c == '/' || c > IdentifierSyntax.MaxAscii
+            || (c >= MinSeparatorControl && c <= MaxSeparatorControl)
+          }
+        then false
+        else
+          out.start = literal + 1
+          out.end = i
+          charScanStart = literal
+          index = i + 1
+          true
 
   /** Fused scan of a `true`/`false` literal at a value position: 1/0 with it consumed, -1 with
     * nothing consumed. The boundary check mirrors [[scanIdentifier]], so any other identifier shape
@@ -446,35 +457,37 @@ private[scalanotation] final class Tokenizer private[internal] (
     */
   private[internal] def scanBooleanValue(): Int =
     skipTrivia()
-    val from   = index
-    val isTrue = keyword["true"](from)
-    if isTrue >= 0 then
-      index = isTrue
+    val i      = index
+    val length = inputLength
+    if i + 4 <= length
+      && chars(i) == 't' && chars(i + 1) == 'r'
+      && chars(i + 2) == 'u' && chars(i + 3) == 'e'
+      && (i + 4 >= length || !isIdentifierPart(chars(i + 4)))
+    then
+      index = i + 4
       BooleanTrue
-    else scanFalseValue(from)
-
-  /** the `false` half of [[scanBooleanValue]] — split so each half sits within the JIT's inlining
-    * budgets
-    */
-  private def scanFalseValue(from: Int): Int =
-    val isFalse = keyword["false"](from)
-    if isFalse >= 0 then
-      index = isFalse
+    else if i + 5 <= length
+      && chars(i) == 'f' && chars(i + 1) == 'a'
+      && chars(i + 2) == 'l' && chars(i + 3) == 's'
+      && chars(i + 4) == 'e'
+      && (i + 5 >= length || !isIdentifierPart(chars(i + 5)))
+    then
+      index = i + 5
       BooleanFalse
     else BooleanNone
 
   /** Whether the next char begins a `+` operator (string concatenation) — consumes only trivia. */
   private[internal] def peekPlusChar(): Boolean =
     skipTrivia()
-    wholeOperator(index, '+') >= 0
+    !isAtEnd && currentChar() == '+'
+    && (index + 1 >= inputLength || !isOperatorPart(chars(index + 1)))
 
   /** Consumes a single expected punctuation char: false consumes nothing. */
   private[internal] def scanPunctChar(expected: Char): Boolean =
     skipTrivia()
-    val from = index
-    if peek(from) == expected then
-      charScanStart = from
-      index = from + 1
+    if !isAtEnd && currentChar() == expected then
+      charScanStart = index
+      index += 1
       true
     else false
 
