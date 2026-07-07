@@ -91,26 +91,6 @@ private[scalanotation] final class TokenizeException(val message: String, val of
     extends Exception
     with scala.util.control.NoStackTrace
 
-/** One scanned token as unboxed slot fields. The scanner owns one instance that it scans into;
-  * [[TokenStream]] keeps two more as a lookahead buffer and copies into them only when a peek has
-  * to preserve the current token.
-  */
-private[internal] final class TokenSlots:
-  var kind: Int          = TokenKind.Eof
-  var start: Int         = 0
-  var end: Int           = 0
-  var str: String | Null = null
-  var num: Long          = 0L
-  var dbl: Double        = 0.0
-
-  def copyFrom(other: TokenSlots): Unit =
-    kind = other.kind
-    start = other.start
-    end = other.end
-    str = other.str
-    num = other.num
-    dbl = other.dbl
-
 private[scalanotation] object ExperimentalFlags:
   final val None: Int                    = 0
   final val AllowSIP72: Int              = 1 << 0
@@ -164,24 +144,13 @@ private[scalanotation] final class Tokenizer private[internal] (
         done = kind == TokenKind.Eof
       tokens.result()
 
-  // Slots describing the most recently scanned token — unboxed in the happy path. The slots live
-  // in a [[TokenSlots]] object so [[TokenStream]] can read the scanner's output in place: the
-  // stream's current-token pointer aims here directly, and a copy is only made when lookahead
-  // needs to preserve a token. The forwarders below keep the scanning code reading naturally.
-  private[internal] val out: TokenSlots = new TokenSlots
-
-  private def kind: Int                            = out.kind
-  private def kind_=(value: Int): Unit             = out.kind = value
-  private def start: Int                           = out.start
-  private def start_=(value: Int): Unit            = out.start = value
-  private def end: Int                             = out.end
-  private def end_=(value: Int): Unit              = out.end = value
-  private def str: String | Null                   = out.str
-  private def str_=(value: String | Null): Unit    = out.str = value
-  private def num: Long                            = out.num
-  private def num_=(value: Long): Unit             = out.num = value
-  private def dbl: Double                          = out.dbl
-  private def dbl_=(value: Double): Unit           = out.dbl = value
+  // slots describing the most recently scanned token — unboxed in the happy path
+  private[internal] var kind: Int          = TokenKind.Eof
+  private[internal] var start: Int         = 0
+  private[internal] var end: Int           = 0
+  private[internal] var str: String | Null = null
+  private[internal] var num: Long          = 0L
+  private[internal] var dbl: Double        = 0.0
 
   private def sliceEquals(from: Int, until: Int, expected: String): Boolean =
     // keywords are all short, so a plain char loop beats regionMatches' vectorized setup
@@ -193,50 +162,6 @@ private[scalanotation] final class Tokenizer private[internal] (
         if input.charAt(from + i) != expected.charAt(i) then return false
         i += 1
       true
-
-  /** start offset of the identifier last matched by [[tryScanFieldHeader]] — for error spans */
-  private[internal] var fieldHeaderStart: Int = 0
-
-  /** Fused scan of a `<expected> =` field header: matches the identifier characters directly
-    * against `expected` and consumes the `=`, skipping token classification and slot writes for
-    * both tokens. Returns false — with the position restored — on any deviation, so the caller can
-    * rescan generically; `expected` must satisfy [[Tokenizer.scansAsPlainFieldName]], which
-    * guarantees a successful fused match consumes exactly what the generic scanner would.
-    */
-  private[internal] def tryScanFieldHeader(expected: String): Boolean =
-    val saved = index
-    skipTrivia()
-    fieldHeaderStart = index
-    val len   = expected.length
-    val limit = index + len
-    // the boundary char after the identifier must exist too (an ident at EOF has no '=' anyway)
-    if limit >= input.length then
-      index = saved
-      return false
-    var i = index
-    var j = 0
-    while j < len do
-      if input.charAt(i) != expected.charAt(j) then
-        index = saved
-        return false
-      i += 1
-      j += 1
-    // the identifier must end exactly here ('_'-suffixed names never fuse, so the operator
-    // continuation rule cannot apply)
-    if isIdentifierPart(input.charAt(i)) then
-      index = saved
-      return false
-    index = i
-    skipTrivia()
-    if isAtEnd || currentChar() != '=' then
-      index = saved
-      return false
-    // the '=' must be the whole operator — reject '==', '=>', ...
-    if index + 1 < input.length && isOperatorPart(input.charAt(index + 1)) then
-      index = saved
-      return false
-    index += 1
-    true
 
   /** Scan the next token into the slot fields. Throws [[TokenizeException]] on malformed input. */
   def scanNext(): Unit =
@@ -892,24 +817,6 @@ private[scalanotation] object Tokenizer:
       i += 1
     result
 
-  /** Whether `name` scans as one plain (unquoted, non-keyword, non-special) identifier covering
-    * the whole string, so a [[Tokenizer.tryScanFieldHeader]] char-by-char match is exactly
-    * equivalent to the generic scan. Parity is guaranteed by construction: the check runs the real
-    * scanner over the name. Names ending in '_' are excluded because the operator-continuation
-    * rule would let the generic scanner consume past them. Cold: run once per schema and cached.
-    */
-  private[scalanotation] def scansAsPlainFieldName(name: String): Boolean =
-    if name.isEmpty || name.charAt(name.length - 1) == '_' then false
-    else
-      try
-        val scanner = Tokenizer(name)
-        scanner.scanNext()
-        scanner.out.kind == TokenKind.Identifier
-        && scanner.out.start == 0
-        && scanner.out.end == name.length
-        && scanner.out.str == null
-      catch case _: TokenizeException => false
-
   /** Materialize line/column information for an offset — error/debug path only. */
   def spanAt(input: String, offset: Int): DecodeError.Span =
     var line   = 1
@@ -972,11 +879,10 @@ private[scalanotation] object Tokenizer:
     Tokenizer(input).tokenize(debug)
 
 /** A bounded buffer over a streaming [[Tokenizer]]: at most three tokens (the current token plus
-  * two lookahead tokens) are live at any time, held as unboxed [[TokenSlots]]. The current-token
-  * pointer usually aims straight at the scanner's own output slots, so the common no-lookahead
-  * path never copies a token; a peek preserves the current token by copying it into one of two
-  * buffers first. Boxed [[Token]]s and [[DecodeError.Span]]s are only materialized when
-  * constructing a [[DecodeError]] (or for debug output).
+  * two lookahead tokens) are buffered at any time, held in vectorized slots — parallel arrays with
+  * an unboxed Int kind slot and unboxed Int offset slots per token. Boxed [[Token]]s and
+  * [[DecodeError.Span]]s are only materialized when constructing a [[DecodeError]] (or for debug
+  * output).
   */
 private[scalanotation] abstract class TokenStream private[internal] (
     private var input: String,
@@ -991,17 +897,18 @@ private[scalanotation] abstract class TokenStream private[internal] (
 
   private var experimentalFlags = ExperimentalFlags.None
 
-  // lookahead buffers: only written when a peek must preserve a token
-  private val bufA = new TokenSlots
-  private val bufB = new TokenSlots
+  // vectorized slots: a tiny ring holding current, first lookahead, and second lookahead
+  private val kinds  = new Array[Int](3)
+  private val starts = new Array[Int](3)
+  private val ends   = new Array[Int](3)
+  private val strs   = new Array[String | Null](3)
+  private val nums   = new Array[Long](3)
+  private val dbls   = new Array[Double](3)
 
-  /** the current token: the scanner's own output slots unless a peek buffered it */
-  private var cur: TokenSlots = scanner.out
-
-  /** number of tokens scanned beyond the current one (0, 1, or 2) */
+  private var cur            = 0
   private var lookaheadCount = 0
 
-  if scanOnInit then scanNextToken() // initialize the current token
+  if scanOnInit then scanIntoSlot(cur) // initialize the current token
 
   /** Re-aims this stream at the start of a new input, for reuse from a pool. */
   protected def resetStream(newInput: String, newDebug: Boolean): Unit =
@@ -1009,14 +916,21 @@ private[scalanotation] abstract class TokenStream private[internal] (
     debug = newDebug
     experimentalFlags = ExperimentalFlags.None
     scanner.reset(newInput, experimentalFlags)
-    bufA.str = null // release references to the previous input's strings
-    bufB.str = null
-    cur = scanner.out
+    strs(0) = null // release references to the previous input's strings
+    strs(1) = null
+    strs(2) = null
+    cur = 0
     lookaheadCount = 0
-    scanNextToken()
+    scanIntoSlot(cur)
 
-  private def scanNextToken(): Unit =
+  private def scanIntoSlot(slot: Int): Unit =
     scanner.scanNext()
+    kinds(slot) = scanner.kind
+    starts(slot) = scanner.start
+    ends(slot) = scanner.end
+    strs(slot) = scanner.str
+    nums(slot) = scanner.num
+    dbls(slot) = scanner.dbl
     if debug then
       Console.err.println(
         Tokenizer.materialize(input, scanner)
@@ -1029,80 +943,52 @@ private[scalanotation] abstract class TokenStream private[internal] (
   protected final def experimentalFlagEnabled(flag: Int): Boolean =
     ExperimentalFlags.enabled(experimentalFlags, flag)
 
-  protected def currentKind(): Int   = cur.kind
-  protected def currentOffset(): Int = cur.start
+  protected def currentKind(): Int   = kinds(cur)
+  protected def currentOffset(): Int = starts(cur)
 
-  private def otherBuffer: TokenSlots =
-    if cur eq bufA then bufB else bufA
+  private def slot(offset: Int): Int =
+    val next = cur + offset
+    if next >= 3 then next - 3 else next
 
   private def ensureLookahead(count: Int): Unit =
     while lookaheadCount < count do
-      // preserve the newest un-consumed token before the scanner overwrites its slots; the first
-      // peek moves the current token itself into a buffer
-      val buffer = otherBuffer
-      buffer.copyFrom(scanner.out)
-      if lookaheadCount == 0 then cur = buffer
-      scanNextToken()
       lookaheadCount += 1
+      scanIntoSlot(slot(lookaheadCount))
 
   protected def peekKind(): Int =
     ensureLookahead(1)
-    if lookaheadCount == 1 then scanner.out.kind else otherBuffer.kind
+    kinds(slot(1))
 
   protected def peekSecondKind(): Int =
     ensureLookahead(2)
-    scanner.out.kind
+    kinds(slot(2))
 
   protected def advance(): Unit =
-    if lookaheadCount == 0 then
-      if scanner.out.kind != TokenKind.Eof then scanNextToken()
-    else if lookaheadCount == 1 then
-      cur = scanner.out
-      lookaheadCount = 0
-    else
-      cur = otherBuffer
-      lookaheadCount = 1
-
-  /** Fused advance over a `<expected> =` field header: when the upcoming input matches, both
-    * header tokens are consumed in one scanner pass and the value token becomes current — true is
-    * returned. Otherwise (or when `expected` is null or lookahead is buffered) this is a plain
-    * [[advance]] and false is returned; the caller proceeds generically from the next token.
-    * `expected` must satisfy [[Tokenizer.scansAsPlainFieldName]].
-    */
-  protected final def advanceExpectingFieldHeader(expected: String | Null): Boolean =
-    if expected != null && lookaheadCount == 0 && cur.kind != TokenKind.Eof
-      && scanner.tryScanFieldHeader(expected)
-    then
-      scanNextToken()
-      cur = scanner.out
-      true
-    else
-      advance()
-      false
-
-  /** offset of the identifier consumed by the last fused [[advanceExpectingFieldHeader]] */
-  protected final def lastFieldHeaderOffset(): Int = scanner.fieldHeaderStart
+    if lookaheadCount > 0 then
+      cur = slot(1)
+      lookaheadCount -= 1
+    else if kinds(cur) != TokenKind.Eof then scanIntoSlot(cur)
 
   // payload accessors — happy path, unboxed where primitive. Int and Long take the sign decoded
   // from the preceding token: the value is interpreted here, in place from the input slice, so
   // MinValue (whose magnitude overflows the positive range) parses once the sign is known.
   protected def currentName(): String        = nameAt(cur)
-  protected def currentStringValue(): String = cur.str.nn
-  protected def currentCharValue(): Char     = cur.num.toChar
-  protected def currentFloatValue(): Float   = cur.dbl.toFloat
-  protected def currentDoubleValue(): Double = cur.dbl
+  protected def currentStringValue(): String = strs(cur).nn
+  protected def currentCharValue(): Char     = nums(cur).toChar
+  protected def currentFloatValue(): Float   = dbls(cur).toFloat
+  protected def currentDoubleValue(): Double = dbls(cur)
 
   protected def currentNameMatches(expected: String): Boolean =
-    val cached = cur.str
+    val cached = strs(cur)
     if cached != null then cached == expected
     else sliceMatches(cur, expected)
 
-  private def nameAt(slots: TokenSlots): String =
-    val cached = slots.str
+  private def nameAt(slot: Int): String =
+    val cached = strs(slot)
     if cached != null then cached
     else
-      val name = input.substring(slots.start, slots.end)
-      slots.str = name
+      val name = input.substring(starts(slot), ends(slot))
+      strs(slot) = name
       name
 
   protected def currentFieldName(): String =
@@ -1118,7 +1004,7 @@ private[scalanotation] abstract class TokenStream private[internal] (
   protected def currentFieldNameMatches(expected: String): Boolean =
     currentKind() match
       case TokenKind.Identifier =>
-        val cached = cur.str
+        val cached = strs(cur)
         if cached != null then cached == expected
         else sliceMatches(cur, expected)
       case TokenKind.VectorId     => expected == "Vector"
@@ -1128,10 +1014,10 @@ private[scalanotation] abstract class TokenStream private[internal] (
       case TokenKind.Minus        => expected == "-"
       case _                      => false
 
-  private def sliceMatches(slots: TokenSlots, expected: String): Boolean =
+  private def sliceMatches(slot: Int, expected: String): Boolean =
     // field names are typically a handful of chars: a plain loop beats regionMatches' setup
-    val from = slots.start
-    val len  = slots.end - from
+    val from = starts(slot)
+    val len  = ends(slot) - from
     if len != expected.length then false
     else
       var i = 0
@@ -1141,20 +1027,20 @@ private[scalanotation] abstract class TokenStream private[internal] (
       true
 
   protected def currentIntValue(negative: Boolean): Int =
-    Tokenizer.intValueAt(input, cur.start, cur.end, negative)
+    Tokenizer.intValueAt(input, starts(cur), ends(cur), negative)
 
   protected def currentLongValue(negative: Boolean): Long =
-    Tokenizer.longValueAt(input, cur.start, cur.end, negative)
+    Tokenizer.longValueAt(input, starts(cur), ends(cur), negative)
 
   // error-path materialization
   protected def spanAt(offset: Int): DecodeError.Span = Tokenizer.spanAt(input, offset)
-  protected def currentSpan(): DecodeError.Span       = spanAt(cur.start)
+  protected def currentSpan(): DecodeError.Span       = spanAt(starts(cur))
 
   protected def describeCurrent(): String = describeSlot(cur)
 
-  private def describeSlot(slots: TokenSlots): String =
-    def raw = input.substring(slots.start, slots.end)
-    slots.kind match
+  private def describeSlot(slot: Int): String =
+    def raw = input.substring(starts(slot), ends(slot))
+    kinds(slot) match
       case TokenKind.PackageKw    => "'package'"
       case TokenKind.ValKw        => "'val'"
       case TokenKind.VectorId     => "'Vector'"
@@ -1164,7 +1050,7 @@ private[scalanotation] abstract class TokenStream private[internal] (
       case TokenKind.EmptyTupleId => "'EmptyTuple'"
       case TokenKind.TupleId      => "'Tuple'"
       case TokenKind.Keyword      => s"'$raw'"
-      case TokenKind.Identifier   => s"identifier '${nameAt(slots)}'"
+      case TokenKind.Identifier   => s"identifier '${nameAt(slot)}'"
       case TokenKind.IntLit       => s"integer literal '$raw'"
       case TokenKind.LongLit      => s"long literal '$raw'"
       case TokenKind.FloatLit     => s"float literal '$raw'"
