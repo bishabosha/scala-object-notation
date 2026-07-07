@@ -312,8 +312,9 @@ private[scalanotation] final class Tokenizer private[internal] (
       else false
 
   /** Scanner-direct scan of an optionally negated numeric literal in one trivia pass: 0 = nothing
-    * consumed, 1 = positive literal scanned, 2 = `-` and literal scanned. The token path treats the
-    * sign as its own Minus token with identical interpretation, so only the round trip is skipped.
+    * consumed, 1 = positive literal scanned, 2 = `-` and literal scanned. The token path treats
+    * the sign as its own Minus token with identical interpretation, so only the round trip is
+    * skipped.
     */
   private[internal] def scanSignedNumberValue(): Int =
     skipTrivia()
@@ -629,13 +630,6 @@ private[scalanotation] final class Tokenizer private[internal] (
     var acc          = 0L
     var accDigits    = 0
     var sawSeparator = false
-    // Exact-double eligibility: the walks accumulate the (negated) mantissa across integer and
-    // fraction digits plus the decimal exponent. When the mantissa fits 2^53 and |exp10| <= 22,
-    // both operands of a single multiply/divide by a power of ten are exactly representable, so
-    // one IEEE rounding produces the same result parseDouble would — everything else (separators,
-    // unicode digits, > 18 digits, big exponents) falls back to parseDouble.
-    var dblOk = true
-    var exp10 = 0
 
     var walking = true
     while walking && i < length do
@@ -644,18 +638,14 @@ private[scalanotation] final class Tokenizer private[internal] (
         if accDigits >= 0 && accDigits < 18 then
           acc = acc * 10 - (ch - '0')
           accDigits += 1
-        else
-          accDigits = -1
-          dblOk = false
+        else accDigits = -1
         i += 1
       else if ch == '_' then
         sawSeparator = true
         accDigits = -1
-        dblOk = false
         i += 1
       else if ch > 127 && Character.isDigit(ch) then
         accDigits = -1
-        dblOk = false
         i += 1
       else walking = false
 
@@ -669,57 +659,33 @@ private[scalanotation] final class Tokenizer private[internal] (
       walking = true
       while walking && i < length do
         val ch = text.charAt(i)
-        if ch >= '0' && ch <= '9' then
-          if accDigits >= 0 && accDigits < 18 then
-            acc = acc * 10 - (ch - '0')
-            accDigits += 1
-            exp10 -= 1
-          else dblOk = false
-          i += 1
+        if (ch >= '0' && ch <= '9') || (ch > 127 && Character.isDigit(ch)) then i += 1
         else if ch == '_' then
           sawSeparator = true
-          dblOk = false
-          i += 1
-        else if ch > 127 && Character.isDigit(ch) then
-          dblOk = false
           i += 1
         else walking = false
 
     if i < length && { val ch = text.charAt(i); ch == 'e' || ch == 'E' } then
       hasExponent = true
       i += 1
-      var expNegative = false
-      if i < length && { val ch = text.charAt(i); ch == '+' || ch == '-' } then
-        expNegative = text.charAt(i) == '-'
-        i += 1
+      if i < length && { val ch = text.charAt(i); ch == '+' || ch == '-' } then i += 1
       index = i
-      if i >= length || ! {
+      if i >= length || !{
           val ch = text.charAt(i)
           (ch >= '0' && ch <= '9') || (ch > 127 && Character.isDigit(ch))
         }
       then fail("Exponent requires at least one digit")
-      var explicitExp = 0
       walking = true
       while walking && i < length do
         val ch = text.charAt(i)
-        if ch >= '0' && ch <= '9' then
-          if explicitExp < 10000 then explicitExp = explicitExp * 10 + (ch - '0')
-          i += 1
+        if (ch >= '0' && ch <= '9') || (ch > 127 && Character.isDigit(ch)) then i += 1
         else if ch == '_' then
           sawSeparator = true
-          dblOk = false
-          i += 1
-        else if ch > 127 && Character.isDigit(ch) then
-          dblOk = false
           i += 1
         else walking = false
-      exp10 += (if expNegative then -explicitExp else explicitExp)
 
     index = i
     val digitsEnd = index
-    val mantissa  = -acc
-    val dblExact  =
-      dblOk && accDigits >= 1 && mantissa <= (1L << 53) && exp10 >= -22 && exp10 <= 22
     // '\u0000' marks "no suffix" — no Option[Char] is allocated per literal
     val suffix =
       if isAtEnd then '\u0000'
@@ -749,18 +715,10 @@ private[scalanotation] final class Tokenizer private[internal] (
         dbl = parseFloatLiteral(normalizedDigits(sawSeparator)).toDouble
       case 'd' | 'D' =>
         kind = TokenKind.DoubleLit
-        dbl =
-          if dblExact then
-            if exp10 >= 0 then mantissa.toDouble * exactPow10(exp10)
-            else mantissa.toDouble / exactPow10(-exp10)
-          else parseDoubleLiteral(normalizedDigits(sawSeparator))
+        dbl = parseDoubleLiteral(normalizedDigits(sawSeparator))
       case _ if hasDot || hasExponent =>
         kind = TokenKind.DoubleLit
-        dbl =
-          if dblExact then
-            if exp10 >= 0 then mantissa.toDouble * exactPow10(exp10)
-            else mantissa.toDouble / exactPow10(-exp10)
-          else parseDoubleLiteral(normalizedDigits(sawSeparator))
+        dbl = parseDoubleLiteral(normalizedDigits(sawSeparator))
       case _ =>
         kind = TokenKind.IntLit
         num = acc
@@ -1113,17 +1071,6 @@ private[scalanotation] final class Tokenizer private[internal] (
     throw TokenizeException(message, offset)
 
 private[scalanotation] object Tokenizer:
-  /** 10^0 .. 10^22 — every entry is exactly representable as a Double */
-  private[internal] val exactPow10: Array[Double] =
-    val table = new Array[Double](23)
-    var i     = 0
-    var value = 1.0
-    while i < table.length do
-      table(i) = value
-      value *= 10.0
-      i += 1
-    table
-
   private val KW_val        = "val"
   private val KW_package    = "package"
   private val KW_true       = "true"
