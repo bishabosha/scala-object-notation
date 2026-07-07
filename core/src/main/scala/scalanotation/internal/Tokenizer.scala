@@ -103,12 +103,6 @@ private[internal] final class TokenSlots:
   var num: Long          = 0L
   var dbl: Double        = 0.0
 
-  /** For IntLit/LongLit: digit count of the base-10 negated value accumulated into [[num]] during
-    * the scan, or -1 when the literal needs the slow interpretation (separators, prefixes, > 18
-    * digits). Meaningless for other kinds.
-    */
-  var accDigits: Int = -1
-
   def copyFrom(other: TokenSlots): Unit =
     kind = other.kind
     start = other.start
@@ -116,7 +110,6 @@ private[internal] final class TokenSlots:
     str = other.str
     num = other.num
     dbl = other.dbl
-    accDigits = other.accDigits
 
 private[scalanotation] object ExperimentalFlags:
   final val None: Int                    = 0
@@ -487,7 +480,6 @@ private[scalanotation] final class Tokenizer private[internal] (
     val isLong = !isAtEnd && (currentChar() == 'l' || currentChar() == 'L')
     if isLong then advance()
     kind = if isLong then TokenKind.LongLit else TokenKind.IntLit
-    out.accDigits = -1 // prefixed literals always interpret via the slow path
 
   private def scanDecimalNumber(): Unit =
     // the digits are a slice of the input: track offsets, no per-token builder
@@ -503,22 +495,7 @@ private[scalanotation] final class Tokenizer private[internal] (
         advance()
       sawSeparator
 
-    // The integer-part walk accumulates the negated base-10 value alongside shape validation, so
-    // plain Int/Long literals need no second pass at consumption. Separators or more than 18
-    // digits invalidate the accumulator; consumers fall back to the exact slow interpretation.
-    var acc          = 0L
-    var accDigits    = 0
-    var sawSeparator = false
-    while !isAtEnd && (currentChar().isDigit || currentChar() == '_') do
-      val ch = currentChar()
-      if ch == '_' then
-        sawSeparator = true
-        accDigits = -1
-      else if accDigits >= 0 && accDigits < 18 then
-        acc = acc * 10 - (ch - '0')
-        accDigits += 1
-      else accDigits = -1
-      index += 1
+    var sawSeparator = takeDigits()
     if !isAtEnd && currentChar() == '.' && peekIsDigit() then
       hasDot = true
       advance()
@@ -554,8 +531,6 @@ private[scalanotation] final class Tokenizer private[internal] (
         if hasDot || hasExponent then
           fail("Long literals cannot contain a decimal point or exponent")
         kind = TokenKind.LongLit
-        num = acc
-        out.accDigits = accDigits
       case 'f' | 'F' =>
         kind = TokenKind.FloatLit
         dbl = parseFloatLiteral(normalizedDigits(sawSeparator)).toDouble
@@ -567,8 +542,6 @@ private[scalanotation] final class Tokenizer private[internal] (
         dbl = parseDoubleLiteral(normalizedDigits(sawSeparator))
       case _ =>
         kind = TokenKind.IntLit
-        num = acc
-        out.accDigits = accDigits
 
   private def scanString(): Unit =
     advance()
@@ -962,9 +935,8 @@ private[scalanotation] object Tokenizer:
     while i < end do
       val ch = input.charAt(i)
       if ch != '_' && ch != 'l' && ch != 'L' then
-        // the scanner has validated the shape, so base-10 digits need no table lookup
-        val digit = if base == 10 then ch - '0' else Character.digit(ch, base)
-        if digit < 0 || digit >= base || result < multmin then invalid()
+        val digit = Character.digit(ch, base)
+        if digit < 0 || result < multmin then invalid()
         result = result * base
         if result < limit + digit then invalid()
         result = result - digit
@@ -1256,33 +1228,23 @@ private[scalanotation] abstract class TokenStream private[internal] (
       case TokenKind.Minus        => expected == "-"
       case _                      => false
 
-  private inline def sliceMatches(slots: TokenSlots, expected: String): Boolean =
+  private def sliceMatches(slots: TokenSlots, expected: String): Boolean =
     // field names are typically a handful of chars: a plain loop beats regionMatches' setup
     val from = slots.start
     val len  = slots.end - from
     if len != expected.length then false
     else
-      var i  = 0
-      var ok = true
-      while ok && i < len do
-        if input.charAt(from + i) != expected.charAt(i) then ok = false
-        else i += 1
-      ok
+      var i = 0
+      while i < len do
+        if input.charAt(from + i) != expected.charAt(i) then return false
+        i += 1
+      true
 
   protected def currentIntValue(negative: Boolean): Int =
-    val digits = cur.accDigits
-    if digits >= 1 && digits <= 10 then
-      val negated = cur.num
-      val limit   = if negative then Int.MinValue.toLong else -Int.MaxValue.toLong
-      if negated >= limit then (if negative then negated else -negated).toInt
-      else Tokenizer.intValueAt(input, cur.start, cur.end, negative) // exact overflow error
-    else Tokenizer.intValueAt(input, cur.start, cur.end, negative)
+    Tokenizer.intValueAt(input, cur.start, cur.end, negative)
 
   protected def currentLongValue(negative: Boolean): Long =
-    val digits = cur.accDigits
-    // up to 18 digits the negated magnitude cannot overflow, so no range check is needed
-    if digits >= 1 && digits <= 18 then if negative then cur.num else -cur.num
-    else Tokenizer.longValueAt(input, cur.start, cur.end, negative)
+    Tokenizer.longValueAt(input, cur.start, cur.end, negative)
 
   // error-path materialization
   protected def spanAt(offset: Int): DecodeError.Span = Tokenizer.spanAt(input, offset)
