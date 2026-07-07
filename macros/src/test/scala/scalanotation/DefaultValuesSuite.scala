@@ -132,11 +132,26 @@ class DefaultValuesSuite extends munit.FunSuite:
         )
       )
     )
-    // `()` is the Unit literal, never a record — even with every field defaulted
+    // `()` is the Unit literal, never a record — even with every field defaulted; the empty
+    // named tuple is spelled the way Scala spells it
     Readers.readAs[Cluster]("""()""") match
       case Result.Err(error) =>
         assert(error.rootCause.isInstanceOf[DecodeError.UnitValueNotAllowed], error.toString)
       case Result.Ok(value) => fail(s"Expected a decode failure, got $value")
+    assertReads[Cluster]("""NamedTuple.Empty""")(Result.Ok(Cluster()))
+    assertReads[Cluster](
+      """(endpoints = Vector((host = "a", probe = NamedTuple.Empty)))"""
+    )(
+      Result.Ok(Cluster(endpoints = List(Endpoint("a", probe = Some(Probe())))))
+    )
+    // a record with any non-defaulted field reports the shortfall precisely
+    Readers.readAs[Endpoint]("""NamedTuple.Empty""") match
+      case Result.Err(error) =>
+        assert(error.rootCause.isInstanceOf[DecodeError.FieldCountMismatch], error.toString)
+      case Result.Ok(value) => fail(s"Expected a decode failure, got $value")
+    // the Expr layer has no Unit: an empty NamedTupleExpr IS the empty named tuple
+    assertEquals(Expr.NamedTupleExpr(IndexedSeq.empty).decodeAs[Cluster], Result.Ok(Cluster()))
+    assertEquals(Expr.NamedTupleExpr(IndexedSeq.empty).render, "NamedTuple.Empty")
 
   test("manual bindings install defaults at nested paths"):
     case class Db(host: String, port: Int)
