@@ -242,27 +242,21 @@ private[scalanotation] final class Tokenizer private[internal] (
       true
     else false
 
-  /** Consumes an element separator: 1 for `,`, 2 for `closing`, 0 (nothing consumed) otherwise. */
-  private[internal] def scanSeparatorChar(closing: Char): Int =
+  /** Consumes a field separator: 1 for `,`, 2 for `)`, 0 (nothing consumed) otherwise. */
+  private[internal] def scanSeparatorChar(): Int =
     skipTrivia()
     if isAtEnd then 0
     else
-      val ch = currentChar()
-      if ch == ',' then
-        charScanStart = index
-        index += 1
-        1
-      else if ch == closing then
-        charScanStart = index
-        index += 1
-        2
-      else 0
-
-  /** Whether the next char begins a `+` operator (string concatenation) — consumes only trivia. */
-  private[internal] def peekPlusChar(): Boolean =
-    skipTrivia()
-    !isAtEnd && currentChar() == '+'
-    && (index + 1 >= input.length || !isOperatorPart(input.charAt(index + 1)))
+      currentChar() match
+        case ',' =>
+          charScanStart = index
+          index += 1
+          1
+        case ')' =>
+          charScanStart = index
+          index += 1
+          2
+        case _ => 0
 
   /** Consumes a single expected punctuation char: false consumes nothing. */
   private[internal] def scanPunctChar(expected: Char): Boolean =
@@ -1164,20 +1158,12 @@ private[scalanotation] abstract class TokenStream private[internal] (
   protected final def tryReadEqualsChar(): Boolean =
     !hasToken && scanner.scanEqualsChar()
 
-  /** 1 = `,` consumed, 2 = `closing` consumed, 0 = nothing consumed (pending token or another
-    * shape).
-    */
-  protected final def tryReadSeparatorChar(closing: Char): Int =
-    if hasToken then 0 else scanner.scanSeparatorChar(closing)
+  /** 1 = `,` consumed, 2 = `)` consumed, 0 = nothing consumed (pending token or another shape). */
+  protected final def tryReadSeparatorChar(): Int =
+    if hasToken then 0 else scanner.scanSeparatorChar()
 
   protected final def tryReadPunctChar(expected: Char): Boolean =
     !hasToken && scanner.scanPunctChar(expected)
-
-  /** Whether a `+` operator follows, probed at the char level — consumes nothing (beyond trivia),
-    * so the stream stays between tokens when the answer is false.
-    */
-  protected final def probePlusChar(): Boolean =
-    !hasToken && scanner.peekPlusChar()
 
   /** start offset of the last successful char-level read — for error spans */
   protected final def charScanOffset(): Int = scanner.charScanStart
