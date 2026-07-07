@@ -122,6 +122,12 @@ object core extends ScalaObjectNotationModule, CorePublishedModule, Mima, TastyM
     tastymima.intf.ProblemMatcher.make(
       tastymima.intf.ProblemKind.MissingTermMember,
       "scalanotation.internal.BaseDecoders.*"
+    ),
+    // the None-fill walk generalized to the fills array (fillSkippedFields); PushSlots is
+    // private[scalanotation]
+    tastymima.intf.ProblemMatcher.make(
+      tastymima.intf.ProblemKind.MissingTermMember,
+      "scalanotation.internal.PushSlots.fillSkippedNullableFields"
     )
   )
 
