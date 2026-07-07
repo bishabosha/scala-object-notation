@@ -103,6 +103,43 @@ enum RawSchema[A]:
   // the same value.
   @volatile private var isValidNamedTupleCache: Result[Unit, DecodeError] | Null = null
 
+  // Which named-tuple fields are eligible for the fused header scan (plain, non-keyword,
+  // unquoted identifiers) — computed once per schema by running the real scanner over each name.
+  @volatile private var fusedFieldPlanCache: RawSchema.FusedFieldPlan | Null = null
+
+  /** Per-field plan for the decoder's fused header and value scans; cached per schema. The header
+    * is fusable when the name is a plain unquoted non-keyword identifier (decided by running the
+    * real scanner over it); the value additionally when the field schema is a direct primitive.
+    * Kind entries are the [[RawSchema.FusePlan]] constants.
+    */
+  private[scalanotation] def fusedFieldPlan: RawSchema.FusedFieldPlan =
+    val cached = fusedFieldPlanCache
+    if cached != null then cached
+    else
+      val computed = this match
+        case namedTuple: RawSchema.NamedTuple[?] =>
+          val fields = namedTuple.fields
+          val kinds  = new Array[scala.Byte](fields.length)
+          var index  = 0
+          while index < fields.length do
+            val field = fields(index)
+            kinds(index) =
+              if !scalanotation.internal.Tokenizer.scansAsPlainFieldName(field.name) then
+                RawSchema.FusePlan.None
+              else
+                field.schema match
+                  case RawSchema.Int     => RawSchema.FusePlan.IntValue
+                  case RawSchema.Long    => RawSchema.FusePlan.LongValue
+                  case RawSchema.Double  => RawSchema.FusePlan.DoubleValue
+                  case RawSchema.Boolean => RawSchema.FusePlan.BooleanValue
+                  case RawSchema.String  => RawSchema.FusePlan.StringValue
+                  case _                 => RawSchema.FusePlan.HeaderOnly
+            index += 1
+          RawSchema.FusedFieldPlan(kinds)
+        case _ => RawSchema.FusedFieldPlan.Empty
+      fusedFieldPlanCache = computed
+      computed
+
   private[scalanotation] def isValidNamedTuple[T: PublicInternal.NameSet](
       pool: PublicInternal.Pool[T]
   ): Result[Unit, DecodeError] =
@@ -195,6 +232,22 @@ object RawSchema:
       case 0 => "EmptyTuple"
       case 1 => "Tuple(...)"
       case _ => Iterator.fill(size)("...").mkString("(", ", ", ")")
+
+  /** Precompiled fusion plan for a named tuple's fields — see [[fusedFieldPlan]]. */
+  private[scalanotation] final class FusedFieldPlan(val kinds: Array[scala.Byte])
+
+  private[scalanotation] object FusedFieldPlan:
+    val Empty: FusedFieldPlan = FusedFieldPlan(Array.emptyByteArray)
+
+  /** entry values of [[fusedFieldPlan]] */
+  private[scalanotation] object FusePlan:
+    inline val None         = 0
+    inline val HeaderOnly   = 1
+    inline val IntValue     = 2
+    inline val LongValue    = 3
+    inline val DoubleValue  = 4
+    inline val BooleanValue = 5
+    inline val StringValue  = 6
 
   final class Key[T]()
   private val SumCaseLookup: Key[Map[String, SumCase]] = Key()
