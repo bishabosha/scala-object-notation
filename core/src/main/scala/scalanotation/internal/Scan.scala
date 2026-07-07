@@ -179,8 +179,7 @@ private[internal] trait Scan:
     val limit = inputLength
     var i     = p
     // probe-first: the word's first char is never a trivia char, so a direct hit at the cursor
-    // needs no whitespace walk; a single space before it — the idiomatic spaced form — shifts
-    // inline, and only wider gaps walk plain whitespace
+    // needs no whitespace walk; only a first-char miss walks plain whitespace
     if !(i < limit && text(i) == expected(0)) then i = plainGap(i)
     val len = expected.length
     var j   = 0
