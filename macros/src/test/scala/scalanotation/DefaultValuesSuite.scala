@@ -4,6 +4,8 @@ import scalanotation.macros.Defaults
 import scalanotation.macros.TypedFactories
 import steps.result.Result
 
+import scala.compiletime.testing.typeCheckErrors
+
 class DefaultValuesSuite extends munit.FunSuite:
 
   private def assertReads[T: Reader](input: String)(expected: Result[T, DecodeError]): Unit =
@@ -213,6 +215,77 @@ class DefaultValuesSuite extends munit.FunSuite:
       Result.Ok(Config("x", Db("h", 1)))
     )
 
+  test("manual bindings walk a deeply nested named tuple configuration"):
+    // modeled on the invoices configuration demo: nested records, a Vector of records holding
+    // another Vector of records, and an Option-wrapped record — defaults bind at every depth
+    type Item     = (desc: String, qty: Double, price: Int)
+    type Bank     = (holder: String, account: String, routing: Option[String])
+    type Section  = (title: String, itemsTitle: String)
+    type Appendix = (title: String, sections: Vector[Section])
+    type Invoice  = (
+        invoice: (id: Int, period: (start: String, days: Int)),
+        client: (name: String, contactPerson: Option[String]),
+        listings: (items: Vector[Item], taxRate: Int),
+        bank: Option[Bank],
+        appendices: Vector[Appendix]
+    )
+
+    given Reader[Item]     = Reader.derived
+    given Reader[Bank]     = Reader.derived
+    given Reader[Section]  = Reader.derived
+    given Reader[Appendix] = Reader.derived
+    // the Scala Native build's implicit search gives up on the last two root fields of the wide
+    // named tuple (the JVM and JS builds resolve them) — materialize their readers directly
+    given Reader[Option[Bank]]     = Reader.OptionSchema[Bank]
+    given Reader[Vector[Appendix]] = Reader.VectorSchema[Appendix]
+
+    given DefaultValues[Invoice] = DefaultValues.of[Invoice] { c =>
+      Seq(
+        c.invoice.period.days                      := 30,
+        c.client.contactPerson                     := None,
+        c.listings.taxRate                         := 8,
+        c.listings.items.each.qty                  := 1.0,
+        c.bank.some.holder                         := "Studio",
+        c.bank.some.routing                        := None,
+        c.appendices.each.sections.each.itemsTitle := "Items"
+      )
+    }
+    given Configured[Invoice] = Configured.default.withDefaultValues
+    given Reader[Invoice]     = Reader.configured.derived
+
+    val input =
+      """(
+        |  invoice = (id = 7, period = (start = "2026-01-01")),
+        |  client = (name = "Acme"),
+        |  listings = (items = Vector((desc = "Consulting", price = 120), (desc = "Hosting", qty = 3.0, price = 40))),
+        |  bank = (account = "CH00"),
+        |  appendices = Vector(
+        |    (title = "Terms", sections = Vector((title = "Scope"), (title = "Fees", itemsTitle = "Fee items")))
+        |  )
+        |)""".stripMargin
+    val expected: Invoice = (
+      invoice = (id = 7, period = (start = "2026-01-01", days = 30)),
+      client = (name = "Acme", contactPerson = None),
+      listings = (
+        items = Vector(
+          (desc = "Consulting", qty = 1.0, price = 120),
+          (desc = "Hosting", qty = 3.0, price = 40)
+        ),
+        taxRate = 8
+      ),
+      bank = Some((holder = "Studio", account = "CH00", routing = None)),
+      appendices = Vector(
+        (
+          title = "Terms",
+          sections = Vector(
+            (title = "Scope", itemsTitle = "Items"),
+            (title = "Fees", itemsTitle = "Fee items")
+          )
+        )
+      )
+    )
+    assertReads[Invoice](input)(Result.Ok(expected))
+
   test("manual bindings step through Option and Vector fields"):
     case class Worker(id: Int, retries: Int)
     case class Db(host: String, port: Int)
@@ -274,12 +347,36 @@ class DefaultValuesSuite extends munit.FunSuite:
 
     given DefaultValues[Config] =
       DefaultValues.of[Config] { c =>
-        Seq(c.selectDynamic("nope").asInstanceOf[DefaultValues.Path[Int]] := 1)
+        Seq(c.selectDynamic("nope").asInstanceOf[DefaultValues.Path[Int, true]] := 1)
       }
     given Configured[Config] = Configured.default.withDefaultValues
     intercept[IllegalArgumentException] {
       Reader.configured.derived[Config].schema
     }
+
+  test("':=' only typechecks on paths that end at a field"):
+    // the root path and .some/.each steps sit between fields — binding them is a type error
+    assert(
+      clue(
+        typeCheckErrors(
+          "import scalanotation.*\ncase class Worker(id: Int, retries: Int)\ncase class Config(db: Option[Worker], workers: Vector[Worker])\nDefaultValues.of[Config] { c => Seq(c := Config(None, Vector.empty)) }"
+        )
+      ).nonEmpty
+    )
+    assert(
+      clue(
+        typeCheckErrors(
+          "import scalanotation.*\ncase class Worker(id: Int, retries: Int)\ncase class Config(db: Option[Worker], workers: Vector[Worker])\nDefaultValues.of[Config] { c => Seq(c.workers.each := Worker(1, 2)) }"
+        )
+      ).nonEmpty
+    )
+    assert(
+      clue(
+        typeCheckErrors(
+          "import scalanotation.*\ncase class Worker(id: Int, retries: Int)\ncase class Config(db: Option[Worker], workers: Vector[Worker])\nDefaultValues.of[Config] { c => Seq(c.db.some := Worker(1, 2)) }"
+        )
+      ).nonEmpty
+    )
 
   test("defaults and skippable options are mutually exclusive"):
     case class Data(x: Option[Int], y: Int = 1)
