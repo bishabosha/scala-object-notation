@@ -793,11 +793,13 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
       index: Int,
       plan: Byte,
       schema: RawSchema[?]
-  ): Result[Unit, DecodeError] =
-    inline def added[E](inline decoded: Result[Unit, E])(inline add: => read.State) =
+  ): Result[Unit, DecodeError] = Result.task {
+    inline def added(inline decoded: Result[Unit, DecodeError])(inline add: => read.State)(
+        using scala.util.boundary.Label[Result[Unit, DecodeError]]
+    ) =
       decoded match
-        case err: Result.Err[?] => err.asInstanceOf[Result.Err[DecodeError]]
-        case _                  => Result.task { pushRef(add) }
+        case err: Result.Err[?] => breakErr(err.asInstanceOf[Result.Err[DecodeError]])
+        case _                  => pushRef(add)
     (plan: @scala.annotation.switch) match
       case RawSchema.FieldPlan.IntV =>
         added(decodeInt())(read.addInt(state, index, pullIntValue()))
@@ -821,6 +823,7 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
         added(decodeNestedOption(schema))(addSlot(read)(state, index))
       case _ =>
         added(decodeBase(schema))(addSlot(read)(state, index))
+  }
 
   // Straight dispatches for planned composite values — the same nesting guard and decoders
   // decodeBase reaches, minus its two schema matches per value.
@@ -852,11 +855,13 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
       values: Repr,
       plan: Byte,
       schema: RawSchema[?]
-  ): Result[Unit, DecodeError] =
-    inline def added[E](inline decoded: Result[Unit, E])(inline add: => Repr) =
+  ): Result[Unit, DecodeError] = Result.task {
+    inline def added(inline decoded: Result[Unit, DecodeError])(inline add: => Repr)(
+        using scala.util.boundary.Label[Result[Unit, DecodeError]]
+    ) =
       decoded match
-        case err: Result.Err[?] => err.asInstanceOf[Result.Err[DecodeError]]
-        case _                  => Result.task { pushRef(add) }
+        case err: Result.Err[?] => breakErr(err.asInstanceOf[Result.Err[DecodeError]])
+        case _                  => pushRef(add)
     (plan: @scala.annotation.switch) match
       case RawSchema.FieldPlan.IntV =>
         added(decodeInt())(read.addInt(values, pullIntValue()))
@@ -880,6 +885,7 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
         added(decodeNestedOption(schema))(addSlot(read)(values))
       case _ =>
         added(decodeBase(schema))(addSlot(read)(values))
+  }
 
   /** offset of the `)` consumed by the most recent successful [[tryConsumeRParen]] */
   private var consumedRParenOffset = 0
