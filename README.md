@@ -493,12 +493,7 @@ That reader accepts:
 ```
 
 Products whose fields are all `Option`s are also supported. When every field is skipped the record
-is empty, and `()` is the Unit literal — never a record — so the empty record is spelled the way
-Scala spells it:
-
-```scala
-NamedTuple.Empty
-```
+is empty, which is represented by `NamedTuple.Empty`.
 
 Discriminator sum types compose with skippable decoding, so product cases may contain only
 optional fields:
