@@ -120,51 +120,14 @@ object Configured:
     // property must live on the node the reader keeps
     config.defaultValues match
       case null     => typed
-      case defaults => installDefaults(typed, defaults)
+      case defaults => installBindingsAt(typed, defaults.bindings)
 
-  /** Installs the gathered default values onto fresh copies of the schema's record nodes — the
-    * decode loop fills omitted fields from them. Macro-gathered defaults address the root record
-    * (or each sum case); manual bindings walk their path through nested records, `Option`s and
-    * `Vector`s first. Structure mirrors [[makeSkippable]]; the two modes are mutually exclusive
-    * (enforced by `withDefaultValues` and re-checked at installation).
+  /** Installs path bindings onto fresh copies of the schema's record nodes — the decode loop fills
+    * omitted fields from them. Every binding recurses along its segments: fields through (possibly
+    * nested) records, `InOption`/`InVector` steps through their wrappers, and `InCase` segments
+    * through enum cases. Structure mirrors [[makeSkippable]]; defaults and skippable options are
+    * mutually exclusive (enforced by `withDefaultValues` and re-checked here).
     */
-  private def installDefaults[T](
-      schema: RawSchema[T],
-      defaults: DefaultValues[?]
-  ): RawSchema[T] =
-    val rootBindings =
-      defaults.selfDefaults.view
-        .map((name, value) => (List(DefaultValues.Segment.Field(name)), value))
-        .toList ++ defaults.bindings
-    schema match
-      case RawSchema.Sum(cases, write) =>
-        RawSchema.Sum(cases.map(installCaseDefaults(defaults, _)), write)
-      case RawSchema.DiscriminatorSum(cases, write, discriminatorField) =>
-        RawSchema.DiscriminatorSum(
-          cases.map(installCaseDefaults(defaults, _)),
-          write,
-          discriminatorField
-        )
-      case RawSchema.Mapped(base, mapping)
-          if base.isInstanceOf[RawSchema.Sum[?]]
-            || base.isInstanceOf[RawSchema.DiscriminatorSum[?]] =>
-        RawSchema.Mapped(installDefaults(base, defaults), mapping)
-      case other => installBindingsAt(other, rootBindings)
-
-  private def installCaseDefaults(
-      defaults: DefaultValues[?],
-      sumCase: RawSchema.SumCase
-  ): RawSchema.SumCase =
-    defaults.caseDefaults.get(sumCase.name) match
-      case Some(fieldDefaults) =>
-        val bindings =
-          fieldDefaults.view
-            .map((name, value) => (List(DefaultValues.Segment.Field(name)), value))
-            .toList
-        sumCase.copy(schema = installBindingsAt(sumCase.schema, bindings))
-      case None => sumCase
-
-  /** installs path bindings into `schema`, recursing along each binding's segments */
   private def installBindingsAt[T](
       schema: RawSchema[T],
       bindings: List[(List[DefaultValues.Segment], AnyRef)]
@@ -227,6 +190,14 @@ object Configured:
               vector.write
             )
             .asInstanceOf[RawSchema[T]]
+        case RawSchema.Sum(cases, write) =>
+          RawSchema.Sum(installCaseBindings(schema, cases, bindings), write)
+        case RawSchema.DiscriminatorSum(cases, write, discriminatorField) =>
+          RawSchema.DiscriminatorSum(
+            installCaseBindings(schema, cases, bindings),
+            write,
+            discriminatorField
+          )
         case RawSchema.PartialNamedTuple(base, alreadySeenField) =>
           RawSchema.PartialNamedTuple(installBindingsAt(base, bindings), alreadySeenField)
         case RawSchema.Mapped(base, mapping) =>
@@ -235,6 +206,38 @@ object Configured:
           throw IllegalArgumentException(
             s"a default path continues into ${other.describeSelf}, which has no fields to default"
           )
+
+  /** routes each binding into the enum case its `InCase` head selects, rejecting paths that address
+    * an enum any other way
+    */
+  private def installCaseBindings(
+      at: RawSchema[?],
+      cases: IArray[RawSchema.SumCase],
+      bindings: List[(List[DefaultValues.Segment], AnyRef)]
+  ): IArray[RawSchema.SumCase] =
+    bindings.foreach { (segments, _) =>
+      segments match
+        case DefaultValues.Segment.InCase(name) :: rest =>
+          require(
+            cases.exists(_.name == name),
+            s"no case named '$name' on ${at.describeSelf} to install a default for"
+          )
+          require(
+            rest.nonEmpty,
+            s"a default path ends at case '$name' — select one of its fields"
+          )
+        case other =>
+          throw IllegalArgumentException(
+            s"a default path selects '${other.headOption}' but ${at.describeSelf} is an enum"
+          )
+    }
+    cases.map { sumCase =>
+      val caseBindings = bindings.collect {
+        case (DefaultValues.Segment.InCase(sumCase.name) :: rest, value) => (rest, value)
+      }
+      if caseBindings.isEmpty then sumCase
+      else sumCase.copy(schema = installBindingsAt(sumCase.schema, caseBindings))
+    }
 
   /** consumes one expected step segment off every binding, rejecting mismatched paths */
   private def stepped(

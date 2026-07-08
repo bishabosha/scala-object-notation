@@ -7,12 +7,15 @@ import scala.annotation.publicInBinary
   * by `Defaults.derived` in the macros module (case-class and enum-case constructor defaults), or
   * assembled manually.
   *
+  * Every default shares one representation: a path of [[DefaultValues.Segment]]s to the value it
+  * binds. A case-class constructor default is a single-field path, an enum-case default steps
+  * through its case first, and manual bindings spell their whole path through nested records,
+  * `Option`s and `Vector`s.
+  *
   * Values are evaluated once, when the evidence is created. Defaults that depend on other
   * constructor parameters cannot be gathered and are treated as absent.
   */
 final class DefaultValues[T] @publicInBinary private[scalanotation] (
-    private[scalanotation] val selfDefaults: Map[String, AnyRef],
-    private[scalanotation] val caseDefaults: Map[String, Map[String, AnyRef]],
     private[scalanotation] val bindings: List[(List[DefaultValues.Segment], AnyRef)]
 )
 
@@ -22,7 +25,15 @@ object DefaultValues:
       selfDefaults: Map[String, AnyRef],
       caseDefaults: Map[String, Map[String, AnyRef]]
   ): DefaultValues[T] =
-    new DefaultValues[T](selfDefaults, caseDefaults, Nil)
+    val self = selfDefaults.view
+      .map((name, value) => (List[Segment](Segment.Field(name)), value))
+      .toList
+    val cases = caseDefaults.view.flatMap { (caseName, fieldDefaults) =>
+      fieldDefaults.view.map((name, value) =>
+        (List[Segment](Segment.InCase(caseName), Segment.Field(name)), value)
+      )
+    }.toList
+    new DefaultValues[T](self ++ cases)
 
   /** Assembles default values manually, as typed path bindings over `T`'s (possibly nested)
     * structure — a lens-like [[Path]] selects a field through records, `Option`s (`.some`) and
@@ -40,47 +51,51 @@ object DefaultValues:
     * }
     * }}}
     */
-  def of[T](bind: Path[T] => Seq[Binding]): DefaultValues[T] =
-    val bindings = bind(new Path[T](Nil)).view.map(b => (b.segments, b.value)).toList
-    new DefaultValues[T](Map.empty, Map.empty, bindings)
+  def of[T](bind: Path[T, false] => Seq[Binding]): DefaultValues[T] =
+    val bindings = bind(new Path[T, false](Nil)).view.map(b => (b.segments, b.value)).toList
+    new DefaultValues[T](bindings)
 
-  /** one step of a [[Path]] into the schema's nested structure */
+  /** One step of a [[Path]] into the schema's nested structure. [[Segment.InCase]] selects an enum
+    * case — spelled by macro-gathered enum defaults; the manual [[Path]] lens cannot express it yet
+    * (a typed constructor for case selection is future design work).
+    */
   private[scalanotation] enum Segment:
     case Field(name: String)
     case InOption
     case InVector
+    case InCase(name: String)
 
   /** A typed path into `T`'s nested structure. Field selections are computed from
     * `NamedTuple.From[T]` through `Selectable`, so only `T`'s real fields (with their real types)
     * are selectable; [[some]] and [[each]] step inside `Option` and `Vector` fields.
+    *
+    * `AtField` witnesses that the path's last step selected a field: only such paths can bind a
+    * default with [[`:=`]]. The root path and every [[some]]/[[each]] step sit between fields
+    * (`AtField = false`), so `c := ...` or `c.workers.each := ...` do not typecheck.
     */
-  final class Path[T] private[DefaultValues] (
+  final class Path[T, AtField <: Boolean] private[DefaultValues] (
       private[scalanotation] val reversedSegments: List[Segment]
   ) extends Selectable:
-    type Fields = NamedTuple.Map[NamedTuple.From[T], Path]
-    def selectDynamic(name: String): Path[?] =
+    type Fields = NamedTuple.Map[NamedTuple.From[T], [F] =>> Path[F, true]]
+    def selectDynamic(name: String): Path[?, true] =
       new Path(Segment.Field(name) :: reversedSegments)
 
-  extension [T](path: Path[T])
+  extension [T](path: Path[T, true])
     /** binds `value` as the decode-time default of the selected field */
     def :=(value: T): Binding =
-      require(
-        path.reversedSegments.headOption.exists(_.isInstanceOf[Segment.Field]),
-        "a default binds to a field — select one before ':=' (after .some/.each, select a field)"
-      )
       Binding(path.reversedSegments.reverse, value.asInstanceOf[AnyRef])
 
-  extension [T](path: Path[T])
+  extension [T, AtField <: Boolean](path: Path[T, AtField])
     /** steps inside a field represented by an Option schema, so defaults can bind to the inner
       * value's fields
       */
-    def some(using repr: OptionRepr[T]): Path[repr.Inner] =
+    def some(using repr: OptionRepr[T]): Path[repr.Inner, false] =
       new Path(Segment.InOption :: path.reversedSegments)
 
     /** steps inside a field represented by a Vector schema, so defaults can bind to the elements'
       * fields
       */
-    def each(using repr: VectorRepr[T]): Path[repr.Elem] =
+    def each(using repr: VectorRepr[T]): Path[repr.Elem, false] =
       new Path(Segment.InVector :: path.reversedSegments)
 
   /** Witnesses that `T` is represented by an Option schema, with inner values of type `Inner`.
