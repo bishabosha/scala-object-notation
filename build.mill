@@ -166,7 +166,7 @@ object demo extends ScalaObjectNotationModule:
 
   def mainClass = Some("scalableconfig.Main")
 
-val benchTestVersions = Seq("HEAD", "0.4.0", "0.3.7", "0.3.6", "0.3.5")
+val benchTestVersions = Seq("HEAD", "0.4.3", "0.4.2", "0.4.1", "0.4.0", "0.3.7", "0.3.6", "0.3.5")
 case class BenchTestVersion(version: String):
   def displayName: String = version match
     case "HEAD"              => "head"
@@ -215,7 +215,7 @@ trait BenchModule extends Cross.Module[String], ScalaObjectNotationModule, JmhMo
   override def sources = Task {
     super.sources() ++ versionSources()
   }
-  def runJmhMem(args: String*) = runJmh(("-prof" +: "gc" +: args.toSeq)*)
+  def runJmhMem(args: String*)    = runJmh(("-prof" +: "gc" +: args.toSeq)*)
   def runJmhMemJit(args: String*) = runJmh(
     (
       Seq(
