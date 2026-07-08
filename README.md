@@ -527,37 +527,9 @@ Fields omitted from the input can decode to default values instead of failing. T
 switch with skippable options: a configuration is either defaults-filling or skippable, never
 both.
 
-Constructor default parameters are gathered by `Defaults.derived` from the `scalanotation.macros`
-package, for case classes and for the structured cases of an enum:
-
-```scala
-import scalanotation.*
-import scalanotation.macros.Defaults
-
-case class Server(host: String, port: Int = 8080, secure: Boolean = false)
-
-given DefaultValues[Server] = Defaults.derived
-given Configured[Server]    = Configured.default.withDefaultValues
-given Reader[Server]        = Reader.configured.derived
-```
-
-That reader accepts any of:
-
-```scala
-(host = "a")
-(host = "a", secure = true)
-(host = "a", port = 9000, secure = true)
-```
-
-Omitted fields fill with their defaults in place, so provided fields may skip over defaulted ones.
-Defaults that depend on other constructor parameters cannot be gathered and are treated as absent.
-A record whose fields all have defaults can be spelled with every field omitted as
-`NamedTuple.Empty`.
-
-Defaults can also be assembled manually with `DefaultValues.of`, without a macro. A typed
-lens-like path selects a field anywhere in the nested structure — through records, optional
-values (`.some`) and sequence-like values (`.each`) — and `:=` binds the default installed for
-it:
+Defaults are assembled with `DefaultValues.of`. A typed lens-like path selects a field anywhere
+in the nested structure — through records, optional values (`.some`) and sequence-like values
+(`.each`) — and `:=` binds the default installed for it:
 
 ```scala
 import scalanotation.*
@@ -580,6 +552,10 @@ given Configured[Config] = Configured.default.withDefaultValues
 given Reader[Config]     = Reader.configured.derived
 ```
 
+Omitted fields fill with their defaults in place, so provided fields may skip over defaulted
+ones. A record whose fields all have defaults can be spelled with every field omitted as
+`NamedTuple.Empty`.
+
 Field selections are compiler-typed (only real fields with their real types are selectable), and
 `:=` only typechecks on a path that ends at a field — not after `.some`/`.each` or at the root.
 Paths naming a missing field are rejected when the reader is built.
@@ -588,6 +564,32 @@ Which fields count as optional or sequence-like is witness-driven, not fixed to 
 types: the library provides witnesses mirroring its readers (`Option`; `Vector`, `Seq` subtypes,
 `IArray`, `Array`), and a custom mapped type can supply its own `DefaultValues.OptionRepr` /
 `VectorRepr` witness to become steppable.
+
+Alternatively, constructor default parameters can be gathered automatically by `Defaults.derived`
+from the `scalanotation.macros` package, for case classes and for the structured cases of an
+enum:
+
+```scala
+import scalanotation.*
+import scalanotation.macros.Defaults
+
+case class Server(host: String, port: Int = 8080, secure: Boolean = false)
+
+given DefaultValues[Server] = Defaults.derived
+given Configured[Server]    = Configured.default.withDefaultValues
+given Reader[Server]        = Reader.configured.derived
+```
+
+That reader accepts any of:
+
+```scala
+(host = "a")
+(host = "a", secure = true)
+(host = "a", port = 9000, secure = true)
+```
+
+Defaults that depend on other constructor parameters cannot be gathered and are treated as
+absent.
 
 Both sources share one representation — a sequence of paths to bound values — and both compose
 with typed factories, e.g. `Configured.typed.withDefaultValues`.
