@@ -165,16 +165,16 @@ class CrossLibraryDecodeBenchmark:
     val random          = new scala.util.Random(i * 7919)
     def keep(p: Double) = random.nextDouble() < p
     List(
-      Some("id" -> s"${i * 1000L}"),
-      Option.when(keep(0.8))("note" -> s""""note-$i""""),
+      Some("id"                        -> s"${i * 1000L}"),
+      Option.when(keep(0.8))("note"    -> s""""note-$i""""),
       Option.when(keep(0.15))("factor" -> s"${i % 7}.25"),
-      Some("sku" -> s""""sku-$i""""),
+      Some("sku"                       -> s""""sku-$i""""),
       Option.when(keep(0.5))("retries" -> s"${i % 5}"),
-      Some("qty" -> s"${i % 10 + 1}"),
-      Option.when(keep(0.3))("flag" -> s"${i % 3 == 0}"),
-      Some("price" -> s"${i * 100}.99"),
-      Option.when(keep(0.65))("alias" -> s""""alias-$i""""),
-      Some("active" -> s"${i % 2 == 0}")
+      Some("qty"                       -> s"${i % 10 + 1}"),
+      Option.when(keep(0.3))("flag"    -> s"${i % 3 == 0}"),
+      Some("price"                     -> s"${i * 100}.99"),
+      Option.when(keep(0.65))("alias"  -> s""""alias-$i""""),
+      Some("active"                    -> s"${i % 2 == 0}")
     ).flatten
 
   private def sparseRecord(i: Int): String =
@@ -235,16 +235,16 @@ class CrossLibraryDecodeBenchmark:
   private val sonShapesKBytesInput = sonShapesKInput.getBytes(StandardCharsets.UTF_8)
   private val jsonShapesBytesInput = jsonShapesInput.getBytes(StandardCharsets.UTF_8)
 
-  private val zioFlatCodec        = Schema.derived[TypedFlatClass].derive(JsonFormat)
-  private val zioPrimitive10Codec = Schema.derived[TypedPrimitive10Class].derive(JsonFormat)
-  private val zioOrdersCodec      = Schema.derived[OrderBatch].derive(JsonFormat)
+  private val zioFlatCodec           = Schema.derived[TypedFlatClass].derive(JsonFormat)
+  private val zioPrimitive10Codec    = Schema.derived[TypedPrimitive10Class].derive(JsonFormat)
+  private val zioOrdersCodec         = Schema.derived[OrderBatch].derive(JsonFormat)
   private given Schema[SparseRecord] = Schema.derived
   private val zioSparseCodec         = Schema.derived[SparseBatch].derive(JsonFormat)
   private given JsonValueCodec[SparseBatch] = JsonCodecMaker.make
 
-  private given Schema[DefaultedRecord] = Schema.derived
-  private val zioDefaultedCodec         = Schema.derived[DefaultedBatch].derive(JsonFormat)
-  private given JsonValueCodec[DefaultedBatch]            = JsonCodecMaker.make
+  private given Schema[DefaultedRecord]        = Schema.derived
+  private val zioDefaultedCodec                = Schema.derived[DefaultedBatch].derive(JsonFormat)
+  private given JsonValueCodec[DefaultedBatch] = JsonCodecMaker.make
   private given upickle.default.ReadWriter[DefaultedRecord] = upickle.default.macroRW
   private given upickle.default.ReadWriter[DefaultedBatch]  = upickle.default.macroRW
 
