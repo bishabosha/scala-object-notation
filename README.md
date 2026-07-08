@@ -555,8 +555,9 @@ A record whose fields all have defaults can be spelled with every field omitted 
 `NamedTuple.Empty`.
 
 Defaults can also be assembled manually with `DefaultValues.of`, without a macro. A typed
-lens-like path selects a field anywhere in the nested structure — through records, `Option`s
-(`.some`) and `Vector`s (`.each`) — and `:=` binds the default installed for it:
+lens-like path selects a field anywhere in the nested structure — through records, optional
+values (`.some`) and sequence-like values (`.each`) — and `:=` binds the default installed for
+it:
 
 ```scala
 import scalanotation.*
@@ -583,10 +584,10 @@ Field selections are compiler-typed (only real fields with their real types are 
 `:=` only typechecks on a path that ends at a field — not after `.some`/`.each` or at the root.
 Paths naming a missing field are rejected when the reader is built.
 
-`.some` and `.each` step through any type *represented* by an `Option` or `Vector` schema. The
-library provides witnesses mirroring its readers (`Option`; `Vector`, `Seq` subtypes, `IArray`,
-`Array`); a custom mapped type can supply its own `DefaultValues.OptionRepr` / `VectorRepr`
-witness to become steppable.
+Which fields count as optional or sequence-like is witness-driven, not fixed to particular
+types: the library provides witnesses mirroring its readers (`Option`; `Vector`, `Seq` subtypes,
+`IArray`, `Array`), and a custom mapped type can supply its own `DefaultValues.OptionRepr` /
+`VectorRepr` witness to become steppable.
 
 Both sources share one representation — a sequence of paths to bound values — and both compose
 with typed factories, e.g. `Configured.typed.withDefaultValues`.

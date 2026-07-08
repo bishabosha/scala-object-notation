@@ -10,7 +10,7 @@ import scala.annotation.publicInBinary
   * Every default shares one representation: a path of [[DefaultValues.Segment]]s to the value it
   * binds. A case-class constructor default is a single-field path, an enum-case default steps
   * through its case first, and manual bindings spell their whole path through nested records,
-  * `Option`s and `Vector`s.
+  * optional values and sequence-like values.
   *
   * Values are evaluated once, when the evidence is created. Defaults that depend on other
   * constructor parameters cannot be gathered and are treated as absent.
@@ -36,8 +36,8 @@ object DefaultValues:
     new DefaultValues[T](self ++ cases)
 
   /** Assembles default values manually, as typed path bindings over `T`'s (possibly nested)
-    * structure — a lens-like [[Path]] selects a field through records, `Option`s (`.some`) and
-    * `Vector`s (`.each`), and `:=` binds the default installed for it:
+    * structure — a lens-like [[Path]] selects a field through records, optional values (`.some`)
+    * and sequence-like values (`.each`), and `:=` binds the default installed for it:
     * {{{
     * case class Db(host: String, port: Int)
     * case class Config(name: String, db: Option[Db], workers: Vector[Worker])
@@ -67,7 +67,7 @@ object DefaultValues:
 
   /** A typed path into `T`'s nested structure. Field selections are computed from
     * `NamedTuple.From[T]` through `Selectable`, so only `T`'s real fields (with their real types)
-    * are selectable; [[some]] and [[each]] step inside `Option` and `Vector` fields.
+    * are selectable; [[some]] and [[each]] step inside optional and sequence-like fields.
     *
     * `AtField` witnesses that the path's last step selected a field: only such paths can bind a
     * default with [[`:=`]]. The root path and every [[some]]/[[each]] step sit between fields
