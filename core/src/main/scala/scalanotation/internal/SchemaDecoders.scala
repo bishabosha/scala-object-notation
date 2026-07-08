@@ -570,8 +570,8 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
           ) match
             case err: Result.Err[DecodeError] =>
               raise(recordFieldValueError(err.error, expectedField, nameOffset))
-            case next =>
-              state = next.asInstanceOf[read.State]
+            case _ =>
+              state = pullAny().asInstanceOf[read.State]
               if seenFields != null then seenFields.mark(decodedIndex)
               fieldIndex = decodedIndex + 1
               decodedCount += 1
@@ -793,11 +793,11 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
       index: Int,
       plan: Byte,
       schema: RawSchema[?]
-  ): read.State | Result.Err[DecodeError] =
+  ): Result[Unit, DecodeError] =
     inline def added[E](inline decoded: Result[Unit, E])(inline add: => read.State) =
       decoded match
         case err: Result.Err[?] => err.asInstanceOf[Result.Err[DecodeError]]
-        case _                  => add
+        case _                  => Result.task { pushRef(add) }
     (plan: @scala.annotation.switch) match
       case RawSchema.FieldPlan.IntV =>
         added(decodeInt())(read.addInt(state, index, pullIntValue()))
@@ -852,11 +852,11 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
       values: Repr,
       plan: Byte,
       schema: RawSchema[?]
-  ): Repr | Result.Err[DecodeError] =
+  ): Result[Unit, DecodeError] =
     inline def added[E](inline decoded: Result[Unit, E])(inline add: => Repr) =
       decoded match
         case err: Result.Err[?] => err.asInstanceOf[Result.Err[DecodeError]]
-        case _                  => add
+        case _                  => Result.task { pushRef(add) }
     (plan: @scala.annotation.switch) match
       case RawSchema.FieldPlan.IntV =>
         added(decodeInt())(read.addInt(values, pullIntValue()))
@@ -1267,8 +1267,8 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
           decodeElementInto(read)(values, elementPlan, schema.element) match
             case err: Result.Err[DecodeError] =>
               raise(err.error.atPath(s"[$indexInVector]"))
-            case next =>
-              values = next.asInstanceOf[Repr]
+            case _ =>
+              values = pullAny().asInstanceOf[Repr]
           indexInVector += 1
 
           tryReadSeparatorChar(closingChar) match
