@@ -529,14 +529,13 @@ in the nested structure — through records, optional values (`.some`) and seque
 ```scala
 import scalanotation.*
 
-case class Worker(id: Int, retries: Int)
-case class Db(host: String, port: Int)
-case class Config(name: String, db: Option[Db], workers: Vector[Worker])
+type Config = (
+  name: String,
+  db: Option[(host: String, port: Int)],
+  workers: Vector[(id: Int, retries: Int)]
+)
 
-given Reader[Db]     = Reader.derived
-given Reader[Worker] = Reader.derived
-
-given DefaultValues[Config] = DefaultValues.of[Config] { c =>
+given DefaultValues[Config] = DefaultValues.of { c =>
   Seq(
     c.name := "app",
     c.db.some.port := 5432,
