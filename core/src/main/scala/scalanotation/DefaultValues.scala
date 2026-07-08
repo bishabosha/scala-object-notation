@@ -3,9 +3,9 @@ package scalanotation
 import scala.annotation.publicInBinary
 
 /** Field default values for `T`, consumed by [[Configured.withDefaultValues]]: a field omitted from
-  * the input decodes to its default instead of failing. Evidence is gathered from `T`'s definition
-  * by `Defaults.derived` in the macros module (case-class and enum-case constructor defaults), or
-  * assembled manually.
+  * the input decodes to its default instead of failing. Evidence is assembled with
+  * [[DefaultValues.of]], or gathered from `T`'s definition by `Defaults.derived` in the macros
+  * module (case-class and enum-case constructor defaults).
   *
   * Every default shares one representation: a path of [[DefaultValues.Segment]]s to the value it
   * binds. A case-class constructor default is a single-field path, an enum-case default steps
