@@ -143,15 +143,20 @@ private[scalanotation] object TokenDecoder:
       case e: TokenizeException =>
         Result.Err(DecodeError.TokenFormat(e.message).atToken(Tokenizer.spanAt(input, e.offset)))
 
-  /** [[catchingTokenErrors]] for byte inputs: the span decodes the bytes only on the error path */
+  /** [[catchingTokenErrors]] for byte inputs: the error offset is a byte offset into the input, so
+    * the span is computed over the bytes directly (no decode)
+    */
   private inline def catchingTokenErrorsBytes[A](input: Array[Byte])(
       inline body: => Result[A, DecodeError]
   ): Result[A, DecodeError] =
     try body
     catch
       case e: TokenizeException =>
-        val decoded = new String(input, java.nio.charset.StandardCharsets.UTF_8)
-        Result.Err(DecodeError.TokenFormat(e.message).atToken(Tokenizer.spanAt(decoded, e.offset)))
+        Result.Err(
+          DecodeError
+            .TokenFormat(e.message)
+            .atToken(Tokenizer.spanAt(input, input.length, e.offset))
+        )
 
   private[scalanotation] def isNullable(schema: RawSchema[?]): Boolean =
     schema match
