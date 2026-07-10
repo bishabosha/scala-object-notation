@@ -147,6 +147,22 @@ object core extends ScalaObjectNotationModule, CorePublishedModule, Mima, TastyM
     tastymima.intf.ProblemMatcher.make(
       tastymima.intf.ProblemKind.RestrictedVisibilityChange,
       "scalanotation.schema.RawSchema.mapDoubleTotalAndInput"
+    ),
+    tastymima.intf.ProblemMatcher.make(
+      tastymima.intf.ProblemKind.RestrictedVisibilityChange,
+      "scalanotation.ReadWriter.int"
+    ),
+    tastymima.intf.ProblemMatcher.make(
+      tastymima.intf.ProblemKind.RestrictedVisibilityChange,
+      "scalanotation.ReadWriter.long"
+    ),
+    tastymima.intf.ProblemMatcher.make(
+      tastymima.intf.ProblemKind.RestrictedVisibilityChange,
+      "scalanotation.ReadWriter.float"
+    ),
+    tastymima.intf.ProblemMatcher.make(
+      tastymima.intf.ProblemKind.RestrictedVisibilityChange,
+      "scalanotation.ReadWriter.double"
     )
   )
 

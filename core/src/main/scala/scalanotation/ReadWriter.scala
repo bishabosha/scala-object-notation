@@ -93,22 +93,22 @@ object ReadWriter extends CommonTypeClassCompanion[ReadWriter]:
   // the typed SAM for lambda arguments) but kept public in binary for compatibility, delegating
   // to the typed variants.
 
-  @deprecated("bincompat only — pass a Writer.IntMap for an unboxed write", "0.5.0")
+  @deprecated("bincompat only — pass a Writer.IntMap for an unboxed write", "0.4.4")
   @annotation.publicInBinary
   private[ReadWriter] def int[A](read: Reader.IntMap[A])(write: A => Int): ReadWriter[A] =
     int(read)((write(_)): Writer.IntMap[A])
 
-  @deprecated("bincompat only — pass a Writer.LongMap for an unboxed write", "0.5.0")
+  @deprecated("bincompat only — pass a Writer.LongMap for an unboxed write", "0.4.4")
   @annotation.publicInBinary
   private[ReadWriter] def long[A](read: Reader.LongMap[A])(write: A => Long): ReadWriter[A] =
     long(read)((write(_)): Writer.LongMap[A])
 
-  @deprecated("bincompat only — pass a Writer.FloatMap for an unboxed write", "0.5.0")
+  @deprecated("bincompat only — pass a Writer.FloatMap for an unboxed write", "0.4.4")
   @annotation.publicInBinary
   private[ReadWriter] def float[A](read: Reader.FloatMap[A])(write: A => Float): ReadWriter[A] =
     float(read)((write(_)): Writer.FloatMap[A])
 
-  @deprecated("bincompat only — pass a Writer.DoubleMap for an unboxed write", "0.5.0")
+  @deprecated("bincompat only — pass a Writer.DoubleMap for an unboxed write", "0.4.4")
   @annotation.publicInBinary
   private[ReadWriter] def double[A](read: Reader.DoubleMap[A])(
       write: A => Double

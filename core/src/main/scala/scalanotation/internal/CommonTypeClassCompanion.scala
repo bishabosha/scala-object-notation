@@ -184,7 +184,7 @@ private[scalanotation] trait CommonTypeClassCompanion[TC[_]]:
 
     @deprecated(
       "the all-Option restriction on skippable derivation was lifted: NamedTuple.Empty spells the all-skipped record",
-      "0.5.0"
+      "0.4.4"
     )
     object HasNonOptionalField:
       inline def validate[Path <: String, Values <: Tuple]: Unit = ()
