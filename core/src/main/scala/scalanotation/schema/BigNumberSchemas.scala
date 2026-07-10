@@ -5,38 +5,21 @@ import scalanotation.RouterSchema
 import steps.result.Result
 
 /** Router schemas for the arbitrary-precision number types: a value reads from either a string
-  * literal or any number literal (routed raw under [[RouterSchema.NumberMode.Raw]], so no range or
-  * precision is lost), and always writes as a string.
+  * literal or a number literal within Scala's bounded literal syntax, and always writes as a
+  * string. Values beyond the bounded literals' range or precision spell as strings.
   */
 private[scalanotation] object BigNumberSchemas:
 
   val BigIntSchema: RawSchema[BigInt] =
-    bigNumberRouter[BigInt]("BigInt")(
-      fromString = BigInt(_),
-      fromNumber = parseRawBigInt,
-      write = _.toString
-    )
-
-  val BigDecimalSchema: RawSchema[BigDecimal] =
-    bigNumberRouter[BigDecimal]("BigDecimal")(
-      fromString = BigDecimal(_),
-      fromNumber = parseRawBigDecimal,
-      write = _.toString
-    )
-
-  private def bigNumberRouter[A](name: String)(
-      fromString: String => A,
-      fromNumber: String => A,
-      write: A => String
-  ): RawSchema[A] =
-    inline val StringCase = 0
-    inline val NumberCase = 1
+    inline val StringCase  = 0
+    inline val IntegerCase = 1
     RawSchema.Router(
-      name = name,
-      selfKind = name,
+      name = "BigInt",
+      selfKind = "BigInt",
       IArray(
-        RawSchema.RouterCase("String", mappedParse(RawSchema.String, name)(fromString, write)),
-        RawSchema.RouterCase("Number", mappedParse(RawSchema.RawNumber, name)(fromNumber, write))
+        RawSchema.RouterCase("String", stringCase("BigInt")(BigInt(_), _.toString)),
+        // the Long decoder accepts int literals too, so one case serves both integer constructs
+        RawSchema.RouterCase("Integer", integerCase[BigInt](BigInt(_), _.toLong))
       ),
       RouterSchema.Router(
         record = RawSchema.UnsupportedRouterCase,
@@ -44,63 +27,87 @@ private[scalanotation] object BigNumberSchemas:
         vector = RawSchema.UnsupportedRouterCase,
         string = StringCase,
         char = RawSchema.UnsupportedRouterCase,
-        int = RawSchema.UnsupportedRouterCase,
-        long = RawSchema.UnsupportedRouterCase,
+        int = IntegerCase,
+        long = IntegerCase,
         float = RawSchema.UnsupportedRouterCase,
         double = RawSchema.UnsupportedRouterCase,
         boolean = RawSchema.UnsupportedRouterCase,
         `null` = RawSchema.UnsupportedRouterCase,
-        rawNumber = NumberCase,
+        rawNumber = RawSchema.UnsupportedRouterCase,
         unsupported = RawSchema.UnsupportedRouterCase
       ),
       WriteAsString,
-      RouterSchema.NumberMode.Raw
+      RouterSchema.NumberMode.Bounded
+    )
+
+  val BigDecimalSchema: RawSchema[BigDecimal] =
+    inline val StringCase  = 0
+    inline val IntegerCase = 1
+    inline val FloatCase   = 2
+    inline val DoubleCase  = 3
+    RawSchema.Router(
+      name = "BigDecimal",
+      selfKind = "BigDecimal",
+      IArray(
+        RawSchema.RouterCase("String", stringCase("BigDecimal")(BigDecimal(_), _.toString)),
+        RawSchema.RouterCase("Integer", integerCase[BigDecimal](BigDecimal(_), _.toLong)),
+        RawSchema.RouterCase(
+          "Float",
+          // through the float's own decimal rendering, so `0.1f` reads as 0.1
+          RawSchema.mapFloatTotalAndInput(RawSchema.Float)(
+            resultMap0 = value => BigDecimal(value.toString),
+            inputMap0 = _.toFloat
+          )
+        ),
+        RawSchema.RouterCase(
+          "Double",
+          // BigDecimal(Double) is decimal (toString-based), so `0.1` reads as 0.1
+          RawSchema.mapDoubleTotalAndInput(RawSchema.Double)(
+            resultMap0 = BigDecimal(_),
+            inputMap0 = _.toDouble
+          )
+        )
+      ),
+      RouterSchema.Router(
+        record = RawSchema.UnsupportedRouterCase,
+        tuple = RawSchema.UnsupportedRouterCase,
+        vector = RawSchema.UnsupportedRouterCase,
+        string = StringCase,
+        char = RawSchema.UnsupportedRouterCase,
+        int = IntegerCase,
+        long = IntegerCase,
+        float = FloatCase,
+        double = DoubleCase,
+        boolean = RawSchema.UnsupportedRouterCase,
+        `null` = RawSchema.UnsupportedRouterCase,
+        rawNumber = RawSchema.UnsupportedRouterCase,
+        unsupported = RawSchema.UnsupportedRouterCase
+      ),
+      WriteAsString,
+      RouterSchema.NumberMode.Bounded
     )
 
   private object WriteAsString extends RouterSchema.Write[Any]:
     def caseIndex(router: RouterSchema.Router, value: Any): RouterSchema.Index =
       router.stringIndex
 
-  private def mappedParse[A](base: RawSchema[String], typeName: String)(
+  private def stringCase[A](typeName: String)(
       parse: String => A,
       write: A => String
   ): RawSchema[A] =
-    RawSchema.mapResultAndInput(base)(
+    RawSchema.mapResultAndInput(RawSchema.String)(
       resultMap0 = raw =>
         Result.catchException({ case _: NumberFormatException =>
           DecodeError.Custom(s"Invalid $typeName '$raw'")
         }) {
           parse(raw)
         },
-      inputMap0 = value => write(value.asInstanceOf[A])
+      inputMap0 = value => write(value)
     )
 
-  // The raw-number parses accept everything the tokenizer classifies as a number literal —
-  // including the `0x`/`0b` prefixed forms, which the plain constructors reject.
-
-  private def parseRawBigInt(raw: String): BigInt =
-    val negative = raw.charAt(0) == '-'
-    val start    = if negative then 1 else 0
-    val radix    = prefixedRadix(raw, start)
-    if radix == 0 then BigInt(raw)
-    else
-      val magnitude = BigInt(raw.substring(start + 2), radix)
-      if negative then -magnitude else magnitude
-
-  private def parseRawBigDecimal(raw: String): BigDecimal =
-    val negative = raw.charAt(0) == '-'
-    val start    = if negative then 1 else 0
-    val radix    = prefixedRadix(raw, start)
-    if radix == 0 then BigDecimal(raw)
-    else
-      val magnitude = BigDecimal(BigInt(raw.substring(start + 2), radix))
-      if negative then -magnitude else magnitude
-
-  /** 16 or 2 for a `0x`/`0b` prefix at `start`, 0 for a plain decimal literal */
-  private def prefixedRadix(raw: String, start: Int): Int =
-    if raw.length > start + 1 && raw.charAt(start) == '0' then
-      raw.charAt(start + 1) match
-        case 'x' | 'X' => 16
-        case 'b' | 'B' => 2
-        case _         => 0
-    else 0
+  private def integerCase[A](fromLong: Long => A, toLong: A => Long): RawSchema[A] =
+    RawSchema.mapLongTotalAndInput(RawSchema.Long)(
+      resultMap0 = fromLong(_),
+      // the write side always selects the string case, so the input maps stay unreached
+      inputMap0 = toLong
+    )

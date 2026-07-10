@@ -83,13 +83,6 @@ enum RawSchema[A]:
   case Boolean extends RawSchema[scala.Boolean] with RawSchema.Atomic
   case Null    extends RawSchema[scala.Null] with RawSchema.Atomic
 
-  /** Any number literal, decoded as its raw text (sign applied, numeric separators and type suffix
-    * stripped) rather than through a bounded primitive — so arbitrary-precision consumers like
-    * `BigInt` and `BigDecimal` lose neither range nor precision. Selected by a
-    * [[RouterSchema.RouterConstruct.RawNumber]] route under [[RouterSchema.NumberMode.Raw]].
-    */
-  case RawNumber extends RawSchema[scala.Predef.String] with RawSchema.Atomic
-
   private[scalanotation] final def withMapping(
       f: [Base] => SchemaMapping[Base, A] => SchemaMapping[Base, A]
   ): RawSchema[A] =
@@ -265,7 +258,6 @@ enum RawSchema[A]:
       case RawSchema.Double              => "Double"
       case RawSchema.Boolean             => "Boolean"
       case RawSchema.Null                => "Null"
-      case RawSchema.RawNumber           => "Number"
       case option: RawSchema.Option[?]   =>
         option.inner match
           case _: RawSchema.Option[?] => "... | Null"

@@ -166,15 +166,6 @@ private[scalanotation] class ExprDecoder() extends PushSlots with SharedHelpers:
               pushRef(null)
             case other => raise(expectedType(RawSchema.Null, other))
         }
-      case RawSchema.RawNumber =>
-        Result.task {
-          expr match
-            case Expr.IntConstant(value)    => pushString(value.toString)
-            case Expr.LongConstant(value)   => pushString(value.toString)
-            case Expr.FloatConstant(value)  => pushString(value.toString)
-            case Expr.DoubleConstant(value) => pushString(value.toString)
-            case other                      => raise(expectedType(RawSchema.RawNumber, other))
-        }
 
   private def decodeRouter(
       schema: RawSchema.Router[?],

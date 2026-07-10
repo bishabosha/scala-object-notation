@@ -108,8 +108,6 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
         decodeChar()
       case RawSchema.Float =>
         decodeFloat()
-      case RawSchema.RawNumber =>
-        decodeRawNumber()
       case ref: RawSchema.Ref[?] =>
         decodeBase(ref.target(), allowTopLevelArrow)
 
@@ -2040,37 +2038,3 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
       advance()
       pushRef(null)
     else raise(expectedTypeAtCurrent(RawSchema.Null))
-
-  /** Decodes any number literal into its raw text — sign applied, numeric separators and type
-    * suffix stripped, `0x`/`0b` prefixes kept for the mapping's parse — pushing the value into
-    * [[stringSlot]]. The literal is never interpreted, so its digits survive beyond the bounded
-    * primitives' range and precision.
-    */
-  protected final def decodeRawNumber(): Result[Unit, DecodeError] = Result.task:
-    val negative =
-      if currentKind() == TokenKind.Minus then
-        advance()
-        true
-      else false
-    currentKind() match
-      case TokenKind.IntLit | TokenKind.LongLit | TokenKind.FloatLit | TokenKind.DoubleLit =>
-        val text = normalizeRawNumber(currentRawText(), negative)
-        advance()
-        pushString(text)
-      case _ =>
-        raise(expectedTypeAtCurrent(RawSchema.RawNumber))
-
-  private def normalizeRawNumber(raw0: String, negative: Boolean): String =
-    var raw = raw0
-    if raw.indexOf('_') >= 0 then raw = raw.replace("_", "")
-    val prefixed = raw.length > 1 && raw.charAt(0) == '0' && {
-      val marker = raw.charAt(1)
-      marker == 'x' || marker == 'X' || marker == 'b' || marker == 'B'
-    }
-    val last      = raw.charAt(raw.length - 1)
-    val hasSuffix =
-      // 'f'/'F'/'d'/'D' are digits of a prefixed literal, never its suffix
-      if prefixed then last == 'l' || last == 'L'
-      else last == 'l' || last == 'L' || last == 'f' || last == 'F' || last == 'd' || last == 'D'
-    if hasSuffix then raw = raw.substring(0, raw.length - 1)
-    if negative then "-" + raw else raw
