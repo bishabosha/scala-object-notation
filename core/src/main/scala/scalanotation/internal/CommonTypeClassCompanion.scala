@@ -417,30 +417,11 @@ private[scalanotation] trait CommonTypeClassCompanion[TC[_]]:
   given StringSchema: TC[String] =
     fromSchema(RawSchema.String)
 
-  private def invalidMappedStringValue(typeName: String, raw: String): DecodeError =
-    DecodeError.Custom(s"Invalid $typeName '$raw'")
-
   given BigIntSchema: TC[BigInt] =
-    mappedStringTypeClass(
-      read = raw =>
-        Result.catchException({ case _: NumberFormatException =>
-          invalidMappedStringValue("BigInt", raw)
-        }) {
-          BigInt(raw)
-        },
-      write = _.toString
-    )
+    fromSchema(scalanotation.schema.BigNumberSchemas.BigIntSchema)
 
   given BigDecimalSchema: TC[BigDecimal] =
-    mappedStringTypeClass(
-      read = raw =>
-        Result.catchException({ case _: NumberFormatException =>
-          invalidMappedStringValue("BigDecimal", raw)
-        }) {
-          BigDecimal(raw)
-        },
-      write = _.toString
-    )
+    fromSchema(scalanotation.schema.BigNumberSchemas.BigDecimalSchema)
 
   given CharSchema: TC[Char] =
     fromSchema(RawSchema.Char)

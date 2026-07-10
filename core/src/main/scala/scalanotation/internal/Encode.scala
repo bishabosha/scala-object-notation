@@ -124,6 +124,10 @@ private[scalanotation] object Encode:
         Expr.BooleanConstant(value.asInstanceOf[Boolean])
       case RawSchema.Null =>
         Expr.NullConstant
+      case RawSchema.RawNumber =>
+        // Expr has no arbitrary-precision constant; routers over raw numbers must select another
+        // case (e.g. String) on the write side.
+        throw IllegalStateException("a raw number value cannot be written to an Expr tree")
 
   def renderText(
       schema: RawSchema[?],
@@ -233,6 +237,9 @@ private[scalanotation] object Encode:
       out.append(value.asInstanceOf[Boolean])
     case RawSchema.Null =>
       out.append("null")
+    case RawSchema.RawNumber =>
+      // the mapped input is the number's text, rendered bare so it reads back as a number literal
+      out.append(value.asInstanceOf[String])
 
   private def writeDiscriminatorPayload(schema: RawSchema[?], value: Any): IndexedSeq[
     (name: String, value: Expr)

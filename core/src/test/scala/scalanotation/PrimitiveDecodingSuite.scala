@@ -266,17 +266,18 @@ class PrimitiveDecodingSuite extends ScalanotationSuite:
       Result.Err(DecodeError.ExpectedType("Double", "(3.5: Float)"))
     )
 
-  test("BigInt and BigDecimal map through String instances"):
+  test("BigInt and BigDecimal route from string and number literals"):
     val bigIntValue     = BigInt("123456789012345678901234567890")
     val bigDecimalValue = BigDecimal("1234567890.012345678900")
 
-    assertEquals(summon[Reader[BigInt]].schema.describeSelf, "String")
-    assertEquals(summon[Writer[BigInt]].schema.describeSelf, "String")
-    assertEquals(summon[ReadWriter[BigInt]].schema.describeSelf, "String")
-    assertEquals(summon[Reader[BigDecimal]].schema.describeSelf, "String")
-    assertEquals(summon[Writer[BigDecimal]].schema.describeSelf, "String")
-    assertEquals(summon[ReadWriter[BigDecimal]].schema.describeSelf, "String")
+    assertEquals(summon[Reader[BigInt]].schema.describeSelf, "BigInt")
+    assertEquals(summon[Writer[BigInt]].schema.describeSelf, "BigInt")
+    assertEquals(summon[ReadWriter[BigInt]].schema.describeSelf, "BigInt")
+    assertEquals(summon[Reader[BigDecimal]].schema.describeSelf, "BigDecimal")
+    assertEquals(summon[Writer[BigDecimal]].schema.describeSelf, "BigDecimal")
+    assertEquals(summon[ReadWriter[BigDecimal]].schema.describeSelf, "BigDecimal")
 
+    // the string route — the original behavior
     assertEquals(Readers.readAs[BigInt](s""""$bigIntValue""""), Result.Ok(bigIntValue))
     assertEquals(Readers.readAs[BigDecimal](s""""$bigDecimalValue""""), Result.Ok(bigDecimalValue))
     assertEquals(Writers.write(bigIntValue), s""""$bigIntValue"""")
@@ -292,3 +293,66 @@ class PrimitiveDecodingSuite extends ScalanotationSuite:
     val rendered = Writers.write(value)
     assertEquals(rendered, s"""(count = "$bigIntValue", amount = "$bigDecimalValue")""")
     assertEquals(Readers.readAs[Data](rendered), Result.Ok(value))
+
+  test("BigInt and BigDecimal decode raw number literals without range or precision loss"):
+    val bigIntValue     = BigInt("123456789012345678901234567890")
+    val bigDecimalValue = BigDecimal("1234567890.012345678900")
+
+    // number literals route raw: the digits survive beyond the bounded primitives
+    assertEquals(Readers.readAs[BigInt]("123456789012345678901234567890"), Result.Ok(bigIntValue))
+    assertEquals(
+      Readers.readAs[BigInt]("-123_456_789_012_345_678_901_234_567_890"),
+      Result.Ok(-bigIntValue)
+    )
+    assertEquals(Readers.readAs[BigInt]("42"), Result.Ok(BigInt(42)))
+    assertEquals(Readers.readAs[BigInt]("42L"), Result.Ok(BigInt(42)))
+    assertEquals(
+      Readers.readAs[BigInt]("0xFFFF_FFFF_FFFF_FFFF_F"),
+      Result.Ok(BigInt("FFFFFFFFFFFFFFFFF", 16))
+    )
+    assertEquals(Readers.readAs[BigInt]("-0b1010"), Result.Ok(BigInt(-10)))
+
+    assertEquals(
+      Readers.readAs[BigDecimal]("1234567890.012345678900"),
+      Result.Ok(bigDecimalValue)
+    )
+    assertEquals(Readers.readAs[BigDecimal]("0.1"), Result.Ok(BigDecimal("0.1")))
+    assertEquals(Readers.readAs[BigDecimal]("-2.5e10"), Result.Ok(BigDecimal("-2.5e10")))
+    assertEquals(Readers.readAs[BigDecimal]("1.5f"), Result.Ok(BigDecimal("1.5")))
+    assertEquals(Readers.readAs[BigDecimal]("3"), Result.Ok(BigDecimal(3)))
+
+    // record fields accept the bare number spelling of the (string-rendered) round trip
+    type Data = (count: BigInt, amount: BigDecimal)
+    val value: Data =
+      (
+        count = bigIntValue,
+        amount = bigDecimalValue
+      )
+    assertEquals(
+      Readers.readAs[Data](s"(count = $bigIntValue, amount = $bigDecimalValue)"),
+      Result.Ok(value)
+    )
+
+    Readers.readAs[BigInt]("1.5") match
+      case Result.Err(error) =>
+        assertEquals(error.rootCause, DecodeError.Custom("Invalid BigInt '1.5'"))
+      case Result.Ok(decoded) => fail(s"Expected a decode failure, got $decoded")
+
+    Readers.readAs[BigInt]("true") match
+      case Result.Err(error) =>
+        assertEquals(error.rootCause, DecodeError.ExpectedType("BigInt", "'true'"))
+      case Result.Ok(decoded) => fail(s"Expected a decode failure, got $decoded")
+
+  test("BigInt and BigDecimal decode from Expr constants"):
+    assertEquals(Expr.IntConstant(42).decodeAs[BigInt], Result.Ok(BigInt(42)))
+    assertEquals(
+      Expr.LongConstant(Long.MinValue).decodeAs[BigInt],
+      Result.Ok(BigInt(Long.MinValue))
+    )
+    assertEquals(Expr.StringConstant("42").decodeAs[BigInt], Result.Ok(BigInt(42)))
+    assertEquals(Expr.DoubleConstant(2.5d).decodeAs[BigDecimal], Result.Ok(BigDecimal("2.5")))
+    assertEquals(Expr.FloatConstant(1.5f).decodeAs[BigDecimal], Result.Ok(BigDecimal("1.5")))
+    assertEquals(
+      Expr.BooleanConstant(true).decodeAs[BigInt],
+      Result.Err(DecodeError.ExpectedType("BigInt", "(true: Boolean)"))
+    )

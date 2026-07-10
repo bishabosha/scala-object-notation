@@ -166,18 +166,34 @@ private[scalanotation] class ExprDecoder() extends PushSlots with SharedHelpers:
               pushRef(null)
             case other => raise(expectedType(RawSchema.Null, other))
         }
+      case RawSchema.RawNumber =>
+        Result.task {
+          expr match
+            case Expr.IntConstant(value)    => pushString(value.toString)
+            case Expr.LongConstant(value)   => pushString(value.toString)
+            case Expr.FloatConstant(value)  => pushString(value.toString)
+            case Expr.DoubleConstant(value) => pushString(value.toString)
+            case other                      => raise(expectedType(RawSchema.RawNumber, other))
+        }
 
   private def decodeRouter(
       schema: RawSchema.Router[?],
       expr: Expr
   ): Result[Unit, DecodeError] =
     Result.task:
-      val routerCase = RawSchema.routerCase(schema, schema.router.indexFor(routerConstruct(expr)))
+      val routerCase =
+        RawSchema.routerCase(
+          schema,
+          schema.router.indexFor(routerConstruct(expr, schema.numberMode))
+        )
       if routerCase == null then
         raise(DecodeError.ExpectedType(schema.describeSelf, describeExpr(expr)))
       decodeBase(routerCase.schema, expr).check
 
-  private def routerConstruct(expr: Expr): RouterSchema.RouterConstruct =
+  private def routerConstruct(
+      expr: Expr,
+      numberMode: RouterSchema.NumberMode
+  ): RouterSchema.RouterConstruct =
     import RouterSchema.RouterConstruct
 
     expr match
@@ -186,12 +202,20 @@ private[scalanotation] class ExprDecoder() extends PushSlots with SharedHelpers:
       case Expr.VectorExpr(_)      => RouterConstruct.Vector
       case Expr.StringConstant(_)  => RouterConstruct.String
       case Expr.CharConstant(_)    => RouterConstruct.Char
-      case Expr.IntConstant(_)     => RouterConstruct.Int
-      case Expr.LongConstant(_)    => RouterConstruct.Long
-      case Expr.FloatConstant(_)   => RouterConstruct.Float
-      case Expr.DoubleConstant(_)  => RouterConstruct.Double
+      case Expr.IntConstant(_)     => numberConstruct(RouterConstruct.Int, numberMode)
+      case Expr.LongConstant(_)    => numberConstruct(RouterConstruct.Long, numberMode)
+      case Expr.FloatConstant(_)   => numberConstruct(RouterConstruct.Float, numberMode)
+      case Expr.DoubleConstant(_)  => numberConstruct(RouterConstruct.Double, numberMode)
       case Expr.BooleanConstant(_) => RouterConstruct.Boolean
       case Expr.NullConstant       => RouterConstruct.Null
+
+  private def numberConstruct(
+      bounded: RouterSchema.RouterConstruct,
+      numberMode: RouterSchema.NumberMode
+  ): RouterSchema.RouterConstruct =
+    numberMode match
+      case RouterSchema.NumberMode.Bounded => bounded
+      case RouterSchema.NumberMode.Raw     => RouterSchema.RouterConstruct.RawNumber
 
   private def decodeVector(
       schema: RawSchema.Vector[?, ?],
