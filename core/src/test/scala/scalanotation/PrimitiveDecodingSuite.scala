@@ -294,48 +294,45 @@ class PrimitiveDecodingSuite extends ScalanotationSuite:
     assertEquals(rendered, s"""(count = "$bigIntValue", amount = "$bigDecimalValue")""")
     assertEquals(Readers.readAs[Data](rendered), Result.Ok(value))
 
-  test("BigInt and BigDecimal decode raw number literals without range or precision loss"):
-    val bigIntValue     = BigInt("123456789012345678901234567890")
-    val bigDecimalValue = BigDecimal("1234567890.012345678900")
-
-    // number literals route raw: the digits survive beyond the bounded primitives
-    assertEquals(Readers.readAs[BigInt]("123456789012345678901234567890"), Result.Ok(bigIntValue))
-    assertEquals(
-      Readers.readAs[BigInt]("-123_456_789_012_345_678_901_234_567_890"),
-      Result.Ok(-bigIntValue)
-    )
+  test("BigInt and BigDecimal decode number literals within Scala's literal syntax"):
+    // integer literals route through the Long decoder, suffixed or not
     assertEquals(Readers.readAs[BigInt]("42"), Result.Ok(BigInt(42)))
+    assertEquals(Readers.readAs[BigInt]("-42"), Result.Ok(BigInt(-42)))
     assertEquals(Readers.readAs[BigInt]("42L"), Result.Ok(BigInt(42)))
     assertEquals(
-      Readers.readAs[BigInt]("0xFFFF_FFFF_FFFF_FFFF_F"),
-      Result.Ok(BigInt("FFFFFFFFFFFFFFFFF", 16))
+      Readers.readAs[BigInt]("9_223_372_036_854_775_807L"),
+      Result.Ok(BigInt(Long.MaxValue))
     )
-    assertEquals(Readers.readAs[BigInt]("-0b1010"), Result.Ok(BigInt(-10)))
-
     assertEquals(
-      Readers.readAs[BigDecimal]("1234567890.012345678900"),
-      Result.Ok(bigDecimalValue)
+      Readers.readAs[BigInt]("-9_223_372_036_854_775_808L"),
+      Result.Ok(BigInt(Long.MinValue))
     )
+    assertEquals(Readers.readAs[BigInt]("0xFF"), Result.Ok(BigInt(255)))
+
+    assertEquals(Readers.readAs[BigDecimal]("3"), Result.Ok(BigDecimal(3)))
+    assertEquals(Readers.readAs[BigDecimal]("42L"), Result.Ok(BigDecimal(42)))
+    // float and double literals read as their decimal rendering, not their binary expansion
     assertEquals(Readers.readAs[BigDecimal]("0.1"), Result.Ok(BigDecimal("0.1")))
     assertEquals(Readers.readAs[BigDecimal]("-2.5e10"), Result.Ok(BigDecimal("-2.5e10")))
     assertEquals(Readers.readAs[BigDecimal]("1.5f"), Result.Ok(BigDecimal("1.5")))
-    assertEquals(Readers.readAs[BigDecimal]("3"), Result.Ok(BigDecimal(3)))
+    assertEquals(Readers.readAs[BigDecimal]("2.5d"), Result.Ok(BigDecimal("2.5")))
 
-    // record fields accept the bare number spelling of the (string-rendered) round trip
+    // record fields accept the bare number spelling
     type Data = (count: BigInt, amount: BigDecimal)
-    val value: Data =
-      (
-        count = bigIntValue,
-        amount = bigDecimalValue
-      )
     assertEquals(
-      Readers.readAs[Data](s"(count = $bigIntValue, amount = $bigDecimalValue)"),
-      Result.Ok(value)
+      Readers.readAs[Data]("(count = 42, amount = 0.5)"),
+      Result.Ok((count = BigInt(42), amount = BigDecimal("0.5")))
     )
 
+    // beyond Long range the literal must spell as a string
+    val bigIntValue = BigInt("123456789012345678901234567890")
+    assert(Readers.readAs[BigInt](bigIntValue.toString).isInstanceOf[Result.Err[?]])
+    assertEquals(Readers.readAs[BigInt](s""""$bigIntValue""""), Result.Ok(bigIntValue))
+
+    // BigInt takes no fractional literals
     Readers.readAs[BigInt]("1.5") match
       case Result.Err(error) =>
-        assertEquals(error.rootCause, DecodeError.Custom("Invalid BigInt '1.5'"))
+        assertEquals(error.rootCause, DecodeError.ExpectedType("BigInt", "double literal '1.5'"))
       case Result.Ok(decoded) => fail(s"Expected a decode failure, got $decoded")
 
     Readers.readAs[BigInt]("true") match

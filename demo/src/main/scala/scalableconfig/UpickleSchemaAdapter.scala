@@ -71,8 +71,6 @@ private object UpickleSchemaAdapter:
         booleanVisitor(schema)
       case RawSchema.Null =>
         nullVisitor(schema)
-      case RawSchema.RawNumber =>
-        rawNumberVisitor(schema)
 
   private def routerVisitor(schema: RawSchema.Router[?]): Visitor[Any, Any] =
     new BaseVisitor(schema):
@@ -585,22 +583,6 @@ private object UpickleSchemaAdapter:
       ): Any =
         s.toString.toDouble
 
-  private def rawNumberVisitor(schema: RawSchema[?]): Visitor[Any, Any] =
-    new BaseVisitor(schema):
-      override def visitInt32(i: Int, index: Int): Any      = i.toString
-      override def visitInt64(i: Long, index: Int): Any     = i.toString
-      override def visitUInt64(i: Long, index: Int): Any    = java.lang.Long.toUnsignedString(i)
-      override def visitFloat32(d: Float, index: Int): Any  = d.toString
-      override def visitFloat64(d: Double, index: Int): Any = d.toString
-      override def visitFloat64StringParts(
-          s: CharSequence,
-          decIndex: Int,
-          expIndex: Int,
-          index: Int
-      ): Any =
-        s.toString
-      override def visitFloat64String(s: String, index: Int): Any = s
-
   private def booleanVisitor(schema: RawSchema[?]): Visitor[Any, Any] =
     new BaseVisitor(schema):
       override def visitTrue(index: Int): Any  = true
@@ -726,8 +708,6 @@ private object UpickleSchemaAdapter:
         if value.asInstanceOf[Boolean] then out.visitTrue(-1) else out.visitFalse(-1)
       case RawSchema.Null =>
         out.visitNull(-1)
-      case RawSchema.RawNumber =>
-        out.visitFloat64String(value.asInstanceOf[String], -1)
 
   private def writeVector(
       element: RawSchema[?],
