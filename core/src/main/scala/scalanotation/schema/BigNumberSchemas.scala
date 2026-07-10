@@ -57,7 +57,7 @@ private[scalanotation] object BigNumberSchemas:
           // through the float's own decimal rendering, so `0.1f` reads as 0.1
           RawSchema.mapFloatTotalAndInput(RawSchema.Float)(
             resultMap0 = value => BigDecimal(value.toString),
-            inputMap0 = _.toFloat
+            inputMap0 = (_.toFloat): Writer.FloatMap[BigDecimal]
           )
         ),
         RawSchema.RouterCase(
@@ -65,7 +65,7 @@ private[scalanotation] object BigNumberSchemas:
           // BigDecimal(Double) is decimal (toString-based), so `0.1` reads as 0.1
           RawSchema.mapDoubleTotalAndInput(RawSchema.Double)(
             resultMap0 = BigDecimal(_),
-            inputMap0 = _.toDouble
+            inputMap0 = (_.toDouble): Writer.DoubleMap[BigDecimal]
           )
         )
       ),

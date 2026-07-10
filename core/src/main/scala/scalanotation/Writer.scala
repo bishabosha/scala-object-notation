@@ -23,23 +23,21 @@ private[scalanotation] trait WriterLowPriority:
 
 object Writer extends WriterLowPriority, CommonTypeClassCompanion[Writer]:
   // The write-side duals of Reader.IntMap and friends: total functions into a primitive with an
-  // unboxed return. Each extends the plain function type so instances slot into
-  // [[schema.SchemaMapping.inputMap]] unchanged; the typed apply is what the renderer's
-  // specialized dispatch calls.
+  // unboxed return, called by the renderer's specialized dispatch.
   @FunctionalInterface
-  trait IntMap[-A] extends (A => Int):
+  trait IntMap[-A]:
     def apply(value: A): Int
 
   @FunctionalInterface
-  trait LongMap[-A] extends (A => Long):
+  trait LongMap[-A]:
     def apply(value: A): Long
 
   @FunctionalInterface
-  trait FloatMap[-A] extends (A => Float):
+  trait FloatMap[-A]:
     def apply(value: A): Float
 
   @FunctionalInterface
-  trait DoubleMap[-A] extends (A => Double):
+  trait DoubleMap[-A]:
     def apply(value: A): Double
 
   private final class Instance[T](val schema: RawSchema[T]) extends Writer[T]
@@ -96,16 +94,16 @@ object Writer extends WriterLowPriority, CommonTypeClassCompanion[Writer]:
   export Builders.{derived, ofFields, singleton, ofCases}
 
   def int[A](write: IntMap[A]): Writer[A] =
-    fromSchema(RawSchema.mapInput(RawSchema.Int)(write))
+    fromSchema(RawSchema.mapInput(RawSchema.Int)(schema.SchemaMapping.IntInput(write)))
 
   def long[A](write: LongMap[A]): Writer[A] =
-    fromSchema(RawSchema.mapInput(RawSchema.Long)(write))
+    fromSchema(RawSchema.mapInput(RawSchema.Long)(schema.SchemaMapping.LongInput(write)))
 
   def float[A](write: FloatMap[A]): Writer[A] =
-    fromSchema(RawSchema.mapInput(RawSchema.Float)(write))
+    fromSchema(RawSchema.mapInput(RawSchema.Float)(schema.SchemaMapping.FloatInput(write)))
 
   def double[A](write: DoubleMap[A]): Writer[A] =
-    fromSchema(RawSchema.mapInput(RawSchema.Double)(write))
+    fromSchema(RawSchema.mapInput(RawSchema.Double)(schema.SchemaMapping.DoubleInput(write)))
 
   def forNull[T]: Writer[T] =
     summon[Writer[Null]].contramap(_ => null)
