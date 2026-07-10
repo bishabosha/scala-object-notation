@@ -925,7 +925,7 @@ object RawSchema:
   // source (a plain function would win overload resolution against the typed SAM for lambda
   // arguments) but kept public in binary for compatibility, delegating to the typed variants.
 
-  @deprecated("bincompat only — pass a Writer.IntMap for an unboxed write", "0.5.0")
+  @deprecated("bincompat only — pass a Writer.IntMap for an unboxed write", "0.4.4")
   @annotation.publicInBinary
   private[RawSchema] def mapIntTotalAndInput[A](
       base: RawSchema[Int]
@@ -935,7 +935,7 @@ object RawSchema:
   ): RawSchema[A] =
     mapIntTotalAndInput(base)(resultMap0, (inputMap0(_)): Writer.IntMap[A])
 
-  @deprecated("bincompat only — pass a Writer.LongMap for an unboxed write", "0.5.0")
+  @deprecated("bincompat only — pass a Writer.LongMap for an unboxed write", "0.4.4")
   @annotation.publicInBinary
   private[RawSchema] def mapLongTotalAndInput[A](
       base: RawSchema[Long]
@@ -945,7 +945,7 @@ object RawSchema:
   ): RawSchema[A] =
     mapLongTotalAndInput(base)(resultMap0, (inputMap0(_)): Writer.LongMap[A])
 
-  @deprecated("bincompat only — pass a Writer.FloatMap for an unboxed write", "0.5.0")
+  @deprecated("bincompat only — pass a Writer.FloatMap for an unboxed write", "0.4.4")
   @annotation.publicInBinary
   private[RawSchema] def mapFloatTotalAndInput[A](
       base: RawSchema[Float]
@@ -955,7 +955,7 @@ object RawSchema:
   ): RawSchema[A] =
     mapFloatTotalAndInput(base)(resultMap0, (inputMap0(_)): Writer.FloatMap[A])
 
-  @deprecated("bincompat only — pass a Writer.DoubleMap for an unboxed write", "0.5.0")
+  @deprecated("bincompat only — pass a Writer.DoubleMap for an unboxed write", "0.4.4")
   @annotation.publicInBinary
   private[RawSchema] def mapDoubleTotalAndInput[A](
       base: RawSchema[Double]
