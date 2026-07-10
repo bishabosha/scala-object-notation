@@ -241,6 +241,46 @@ class SchemaSuite extends ScalanotationSuite:
       case other =>
         fail(s"Expected a typed mapped schema, got ${other.describeSelf}")
 
+  test("primitive write maps are specialized and survive composition"):
+    final case class UserId(value: Long)
+
+    val readWriter = ReadWriter.long[UserId](UserId(_))(_.value)
+
+    readWriter.schema match
+      case RawSchema.Mapped(base, mapping) =>
+        assertEquals(base.asInstanceOf[Any], RawSchema.Long)
+        assert(mapping.inputMap.isInstanceOf[Writer.LongMap[?]])
+        assertEquals(
+          mapping.asInstanceOf[schema.SchemaMapping[Any, Any]].mapInputLong(UserId(42L)),
+          42L
+        )
+      case other =>
+        fail(s"Expected a mapped read-writer schema, got ${other.describeSelf}")
+
+    assertEquals(Readers.readAs[UserId]("7L")(using readWriter.reader), Result.Ok(UserId(7L)))
+    assertEquals(Writers.write(UserId(7L))(using readWriter.writer), "7L")
+
+    // contramapping composes into another typed write map instead of a plain function
+    final case class Wrapper(id: UserId)
+    val contramapped = readWriter.writer.contramap[Wrapper](_.id)
+    contramapped.schema match
+      case RawSchema.Mapped(base, mapping) =>
+        assertEquals(base.asInstanceOf[Any], RawSchema.Long)
+        assert(mapping.inputMap.isInstanceOf[Writer.LongMap[?]])
+      case other =>
+        fail(s"Expected a mapped writer schema, got ${other.describeSelf}")
+    assertEquals(Writers.write(Wrapper(UserId(7L)))(using contramapped), "7L")
+
+    // the Writer companion primitive constructors store the typed map directly
+    val intWriter = Writer.int[UserId](_.value.toInt)
+    intWriter.schema match
+      case RawSchema.Mapped(base, mapping) =>
+        assertEquals(base.asInstanceOf[Any], RawSchema.Int)
+        assert(mapping.inputMap.isInstanceOf[Writer.IntMap[?]])
+      case other =>
+        fail(s"Expected a mapped writer schema, got ${other.describeSelf}")
+    assertEquals(Writers.write(UserId(9L))(using intWriter), "9")
+
   test("Null is a primitive schema and decodes to null"):
     assertEquals(summon[Reader[Null]].schema, RawSchema.Null)
     assertEquals(summon[Writer[Null]].schema, RawSchema.Null)

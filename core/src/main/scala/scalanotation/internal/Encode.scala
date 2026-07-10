@@ -32,10 +32,25 @@ private[scalanotation] object Encode:
   private def mappedInput(mapping: schema.SchemaMapping[?, ?], value: Any): Any =
     mapping.asInstanceOf[schema.SchemaMapping[Any, Any]].mapInput(value)
 
+  private def anyMapping(mapping: schema.SchemaMapping[?, ?]): schema.SchemaMapping[Any, Any] =
+    mapping.asInstanceOf[schema.SchemaMapping[Any, Any]]
+
   def writeExpr(schema: RawSchema[?], value: Any): Expr =
     schema match
       case mapped: RawSchema.Mapped[?, ?] =>
-        writeExpr(mapped.base, mappedInput(mapped.mapping, value))
+        // primitive bases pull the input through the mapping's specialized dispatch, the
+        // write-side dual of the decoder's typed slots
+        mapped.base match
+          case RawSchema.Int =>
+            Expr.IntConstant(anyMapping(mapped.mapping).mapInputInt(value))
+          case RawSchema.Long =>
+            Expr.LongConstant(anyMapping(mapped.mapping).mapInputLong(value))
+          case RawSchema.Float =>
+            Expr.FloatConstant(anyMapping(mapped.mapping).mapInputFloat(value))
+          case RawSchema.Double =>
+            Expr.DoubleConstant(anyMapping(mapped.mapping).mapInputDouble(value))
+          case base =>
+            writeExpr(base, mappedInput(mapped.mapping, value))
       case RawSchema.Ref(_, target) =>
         writeExpr(target(), value)
       case router: RawSchema.Router[?] =>
@@ -132,7 +147,19 @@ private[scalanotation] object Encode:
       depth: Int
   )(using format: TextFormat): Unit = schema match
     case mapped: RawSchema.Mapped[?, ?] =>
-      renderText(mapped.base, mappedInput(mapped.mapping, value), out, depth)
+      // primitive bases render straight from the mapping's specialized dispatch — see writeExpr
+      mapped.base match
+        case RawSchema.Int =>
+          out.append(anyMapping(mapped.mapping).mapInputInt(value))
+        case RawSchema.Long =>
+          out.append(anyMapping(mapped.mapping).mapInputLong(value))
+          out.append('L')
+        case RawSchema.Float =>
+          ExprRenderer.renderFloatLiteral(anyMapping(mapped.mapping).mapInputFloat(value), out)
+        case RawSchema.Double =>
+          ExprRenderer.renderDoubleLiteral(anyMapping(mapped.mapping).mapInputDouble(value), out)
+        case base =>
+          renderText(base, mappedInput(mapped.mapping, value), out, depth)
     case RawSchema.Ref(_, target) =>
       renderText(target(), value, out, depth)
     case router: RawSchema.Router[?] =>

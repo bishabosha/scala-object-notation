@@ -2,6 +2,7 @@ package scalanotation.schema
 
 import scalanotation.Expr
 import scalanotation.Reader
+import scalanotation.Writer
 
 import scala.collection.mutable
 import scalanotation.RouterSchema
@@ -157,38 +158,38 @@ object ExprSchema:
 
   private def exprMappedIntPrimitive(
       read: Reader.IntMap[Expr],
-      write: Expr => Int
+      write: Writer.IntMap[Expr]
   ): RawSchema[Expr] =
     RawSchema.mapIntTotalAndInput(RawSchema.Int)(
       resultMap0 = read,
-      inputMap0 = value => write(value.asInstanceOf[Expr])
+      inputMap0 = write
     )
 
   private def exprMappedLongPrimitive(
       read: Reader.LongMap[Expr],
-      write: Expr => Long
+      write: Writer.LongMap[Expr]
   ): RawSchema[Expr] =
     RawSchema.mapLongTotalAndInput(RawSchema.Long)(
       resultMap0 = read,
-      inputMap0 = value => write(value.asInstanceOf[Expr])
+      inputMap0 = write
     )
 
   private def exprMappedFloatPrimitive(
       read: Reader.FloatMap[Expr],
-      write: Expr => Float
+      write: Writer.FloatMap[Expr]
   ): RawSchema[Expr] =
     RawSchema.mapFloatTotalAndInput(RawSchema.Float)(
       resultMap0 = read,
-      inputMap0 = value => write(value.asInstanceOf[Expr])
+      inputMap0 = write
     )
 
   private def exprMappedDoublePrimitive(
       read: Reader.DoubleMap[Expr],
-      write: Expr => Double
+      write: Writer.DoubleMap[Expr]
   ): RawSchema[Expr] =
     RawSchema.mapDoubleTotalAndInput(RawSchema.Double)(
       resultMap0 = read,
-      inputMap0 = value => write(value.asInstanceOf[Expr])
+      inputMap0 = write
     )
 
   private object ExprTupleRead
