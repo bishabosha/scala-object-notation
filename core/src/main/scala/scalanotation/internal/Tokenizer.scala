@@ -1792,6 +1792,10 @@ private[scalanotation] abstract class TokenStream private[internal] (
       else Tokenizer.intValueAt(scanner.chars, cur.start, cur.end, negative) // exact overflow
     else Tokenizer.intValueAt(scanner.chars, cur.start, cur.end, negative)
 
+  /** raw source text of the current token — the raw-number decode's literal capture */
+  protected def currentRawText(): String =
+    new String(scanner.chars, cur.start, cur.end - cur.start)
+
   protected def currentLongValue(negative: Boolean): Long =
     val digits = cur.accDigits
     // up to 18 digits the negated magnitude cannot overflow, so no range check is needed
