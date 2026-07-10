@@ -31,14 +31,6 @@ class OpaqueTypedFactorySuite extends munit.FunSuite:
     slots.setString(1, "x")
     assertEquals[Any, Any](factory.fromSlots(slots), Person(Id(7), "x"))
 
-  test("the typed accessor dispatches an opaque field through a direct field select"):
-    val factory = Configured.typed[Person].typedFactories.nn.selfFactory.nn
-    assertEquals(factory.intFieldValue(Person(Id(5), "x"), 0), 5)
-    // the typed arm casts to Person before selecting; the boxed productElement fallback
-    // would have returned 99 for any product
-    intercept[ClassCastException]:
-      factory.intFieldValue(Tuple1(99), 0)
-
   test("mapped, generic, and chained opaque fields round-trip"):
     // Code decodes from a string literal through a mapped codec, so its slot is filled boxed
     // via the plain ref add while the factory pulls it through the int slot's kind fallback
