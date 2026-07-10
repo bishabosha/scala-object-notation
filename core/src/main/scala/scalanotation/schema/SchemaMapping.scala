@@ -19,33 +19,36 @@ final case class SchemaMapping[Base, A](
     else fn(value)
 
   // Specialized input maps — the write-side duals of [[mapResult]]'s TotalMap dispatch. When the
-  // stored input map is one of the Writer typed functions the primitive comes back unboxed;
-  // otherwise the plain function applies and the result unboxes here, exactly as the generic
-  // [[mapInput]] path would.
+  // stored input map carries a Writer typed function (via the [[SchemaMapping.IntInput]] family
+  // of adapters) the primitive comes back unboxed; otherwise the plain function applies and the
+  // result unboxes here, exactly as the generic [[mapInput]] path would.
 
   def mapInputInt(value: A): Int =
     inputMap match
-      case typed: Writer.IntMap[?] => typed.asInstanceOf[Writer.IntMap[A]](value)
-      case null                    => value.asInstanceOf[Int]
-      case fn                      => fn(value).asInstanceOf[Int]
+      case typed: SchemaMapping.IntInput[?] => typed.asInstanceOf[SchemaMapping.IntInput[A]](value)
+      case null                             => value.asInstanceOf[Int]
+      case fn                               => fn(value).asInstanceOf[Int]
 
   def mapInputLong(value: A): Long =
     inputMap match
-      case typed: Writer.LongMap[?] => typed.asInstanceOf[Writer.LongMap[A]](value)
-      case null                     => value.asInstanceOf[Long]
-      case fn                       => fn(value).asInstanceOf[Long]
+      case typed: SchemaMapping.LongInput[?] =>
+        typed.asInstanceOf[SchemaMapping.LongInput[A]](value)
+      case null => value.asInstanceOf[Long]
+      case fn   => fn(value).asInstanceOf[Long]
 
   def mapInputFloat(value: A): Float =
     inputMap match
-      case typed: Writer.FloatMap[?] => typed.asInstanceOf[Writer.FloatMap[A]](value)
-      case null                      => value.asInstanceOf[Float]
-      case fn                        => fn(value).asInstanceOf[Float]
+      case typed: SchemaMapping.FloatInput[?] =>
+        typed.asInstanceOf[SchemaMapping.FloatInput[A]](value)
+      case null => value.asInstanceOf[Float]
+      case fn   => fn(value).asInstanceOf[Float]
 
   def mapInputDouble(value: A): Double =
     inputMap match
-      case typed: Writer.DoubleMap[?] => typed.asInstanceOf[Writer.DoubleMap[A]](value)
-      case null                       => value.asInstanceOf[Double]
-      case fn                         => fn(value).asInstanceOf[Double]
+      case typed: SchemaMapping.DoubleInput[?] =>
+        typed.asInstanceOf[SchemaMapping.DoubleInput[A]](value)
+      case null => value.asInstanceOf[Double]
+      case fn   => fn(value).asInstanceOf[Double]
 
   /** Composes `f` before this mapping's input map, preserving a Writer typed function — the
     * write-side dual of [[withPureMap]]'s TotalMap composition.
@@ -55,22 +58,18 @@ final case class SchemaMapping[Base, A](
       case null =>
         // no input map means Base =:= A semantically (mapInput is the identity)
         f.asInstanceOf[InputMap[B, Base]]
-      case typed: Writer.IntMap[?] =>
-        val fn                         = typed.asInstanceOf[Writer.IntMap[A]]
-        val composed: Writer.IntMap[B] = value => fn(f(value))
-        composed.asInstanceOf[InputMap[B, Base]]
-      case typed: Writer.LongMap[?] =>
-        val fn                          = typed.asInstanceOf[Writer.LongMap[A]]
-        val composed: Writer.LongMap[B] = value => fn(f(value))
-        composed.asInstanceOf[InputMap[B, Base]]
-      case typed: Writer.FloatMap[?] =>
-        val fn                           = typed.asInstanceOf[Writer.FloatMap[A]]
-        val composed: Writer.FloatMap[B] = value => fn(f(value))
-        composed.asInstanceOf[InputMap[B, Base]]
-      case typed: Writer.DoubleMap[?] =>
-        val fn                            = typed.asInstanceOf[Writer.DoubleMap[A]]
-        val composed: Writer.DoubleMap[B] = value => fn(f(value))
-        composed.asInstanceOf[InputMap[B, Base]]
+      case typed: SchemaMapping.IntInput[?] =>
+        val fn = typed.asInstanceOf[SchemaMapping.IntInput[A]].typed
+        SchemaMapping.IntInput[B](value => fn(f(value))).asInstanceOf[InputMap[B, Base]]
+      case typed: SchemaMapping.LongInput[?] =>
+        val fn = typed.asInstanceOf[SchemaMapping.LongInput[A]].typed
+        SchemaMapping.LongInput[B](value => fn(f(value))).asInstanceOf[InputMap[B, Base]]
+      case typed: SchemaMapping.FloatInput[?] =>
+        val fn = typed.asInstanceOf[SchemaMapping.FloatInput[A]].typed
+        SchemaMapping.FloatInput[B](value => fn(f(value))).asInstanceOf[InputMap[B, Base]]
+      case typed: SchemaMapping.DoubleInput[?] =>
+        val fn = typed.asInstanceOf[SchemaMapping.DoubleInput[A]].typed
+        SchemaMapping.DoubleInput[B](value => fn(f(value))).asInstanceOf[InputMap[B, Base]]
       case fn =>
         value => fn(f(value))
 
@@ -152,6 +151,25 @@ final case class SchemaMapping[Base, A](
     SchemaMapping(totalMaps = SchemaMapping.TotalMap.AnyMap(f))
 
 object SchemaMapping:
+  // Adapters carrying the Writer typed functions through the plain-function-typed
+  // [[SchemaMapping.inputMap]] field: [[SchemaMapping.mapInput]] applies them like any input
+  // function, while the specialized mapInput* dispatch calls `typed` unboxed. The write-side
+  // dual of TotalMap, without changing the published mapping shape.
+
+  private[scalanotation] final class IntInput[A](val typed: Writer.IntMap[A]) extends (A => Int):
+    def apply(value: A): Int = typed(value)
+
+  private[scalanotation] final class LongInput[A](val typed: Writer.LongMap[A]) extends (A => Long):
+    def apply(value: A): Long = typed(value)
+
+  private[scalanotation] final class FloatInput[A](val typed: Writer.FloatMap[A])
+      extends (A => Float):
+    def apply(value: A): Float = typed(value)
+
+  private[scalanotation] final class DoubleInput[A](val typed: Writer.DoubleMap[A])
+      extends (A => Double):
+    def apply(value: A): Double = typed(value)
+
   enum TotalMap[Base, A]:
     case Empty                                  extends TotalMap[Any, Any]
     case IntMap[A](fn: Reader.IntMap[A])        extends TotalMap[Int, A]

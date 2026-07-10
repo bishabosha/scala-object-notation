@@ -249,7 +249,7 @@ class SchemaSuite extends ScalanotationSuite:
     readWriter.schema match
       case RawSchema.Mapped(base, mapping) =>
         assertEquals(base.asInstanceOf[Any], RawSchema.Long)
-        assert(mapping.inputMap.isInstanceOf[Writer.LongMap[?]])
+        assert(mapping.inputMap.isInstanceOf[schema.SchemaMapping.LongInput[?]])
         assertEquals(
           mapping.asInstanceOf[schema.SchemaMapping[Any, Any]].mapInputLong(UserId(42L)),
           42L
@@ -266,7 +266,7 @@ class SchemaSuite extends ScalanotationSuite:
     contramapped.schema match
       case RawSchema.Mapped(base, mapping) =>
         assertEquals(base.asInstanceOf[Any], RawSchema.Long)
-        assert(mapping.inputMap.isInstanceOf[Writer.LongMap[?]])
+        assert(mapping.inputMap.isInstanceOf[schema.SchemaMapping.LongInput[?]])
       case other =>
         fail(s"Expected a mapped writer schema, got ${other.describeSelf}")
     assertEquals(Writers.write(Wrapper(UserId(7L)))(using contramapped), "7L")
@@ -276,7 +276,7 @@ class SchemaSuite extends ScalanotationSuite:
     intWriter.schema match
       case RawSchema.Mapped(base, mapping) =>
         assertEquals(base.asInstanceOf[Any], RawSchema.Int)
-        assert(mapping.inputMap.isInstanceOf[Writer.IntMap[?]])
+        assert(mapping.inputMap.isInstanceOf[schema.SchemaMapping.IntInput[?]])
       case other =>
         fail(s"Expected a mapped writer schema, got ${other.describeSelf}")
     assertEquals(Writers.write(UserId(9L))(using intWriter), "9")

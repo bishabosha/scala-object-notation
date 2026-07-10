@@ -25,7 +25,7 @@ sealed trait ReadWriter[T]:
   final def bimapResult[U](read: T => Result[U, DecodeError])(write: U => T): ReadWriter[U] =
     ReadWriter.mappedResult(this)(read)(write)
 
-object ReadWriter extends ReadWriterPlainPrimitives, CommonTypeClassCompanion[ReadWriter]:
+object ReadWriter extends CommonTypeClassCompanion[ReadWriter]:
   private final class Instance[T](val schema: RawSchema[T]) extends ReadWriter[T]
 
   private[scalanotation] def fromSchema[T](schema0: RawSchema[T]): ReadWriter[T] =
@@ -87,6 +87,33 @@ object ReadWriter extends ReadWriterPlainPrimitives, CommonTypeClassCompanion[Re
         inputMap0 = write
       )
     )
+
+  // The plain-function variants of the primitive constructors, superseded by the Writer typed
+  // variants above. Hidden from source (a plain function would win overload resolution against
+  // the typed SAM for lambda arguments) but kept public in binary for compatibility, delegating
+  // to the typed variants.
+
+  @deprecated("bincompat only — pass a Writer.IntMap for an unboxed write", "0.5.0")
+  @annotation.publicInBinary
+  private[ReadWriter] def int[A](read: Reader.IntMap[A])(write: A => Int): ReadWriter[A] =
+    int(read)((write(_)): Writer.IntMap[A])
+
+  @deprecated("bincompat only — pass a Writer.LongMap for an unboxed write", "0.5.0")
+  @annotation.publicInBinary
+  private[ReadWriter] def long[A](read: Reader.LongMap[A])(write: A => Long): ReadWriter[A] =
+    long(read)((write(_)): Writer.LongMap[A])
+
+  @deprecated("bincompat only — pass a Writer.FloatMap for an unboxed write", "0.5.0")
+  @annotation.publicInBinary
+  private[ReadWriter] def float[A](read: Reader.FloatMap[A])(write: A => Float): ReadWriter[A] =
+    float(read)((write(_)): Writer.FloatMap[A])
+
+  @deprecated("bincompat only — pass a Writer.DoubleMap for an unboxed write", "0.5.0")
+  @annotation.publicInBinary
+  private[ReadWriter] def double[A](read: Reader.DoubleMap[A])(
+      write: A => Double
+  ): ReadWriter[A] =
+    double(read)((write(_)): Writer.DoubleMap[A])
 
   def forNull[T](value: T): ReadWriter[T] =
     summon[ReadWriter[Null]].bimap(_ => value)(_ => null)
@@ -385,45 +412,3 @@ object ReadWriter extends ReadWriterPlainPrimitives, CommonTypeClassCompanion[Re
     override type ThisBuilder = thisBuilder.type
 
     protected def allowSkippedNullableFields: Boolean = false
-
-/** The plain-function primitive constructors, superseded by the Writer typed overloads on
-  * [[ReadWriter]]'s companion. They live in a parent trait rather than beside their replacements
-  * because same-owner SAM/function overloads are ambiguous for lambda arguments — the derived owner
-  * tie-break sends lambdas to the typed variants. Bincompat only.
-  */
-private[scalanotation] trait ReadWriterPlainPrimitives:
-  @deprecated("bincompat only — pass a Writer.IntMap for an unboxed write", "0.5.0")
-  def int[A](read: Reader.IntMap[A])(write: A => Int): ReadWriter[A] =
-    ReadWriter.fromSchema(
-      RawSchema.mapIntTotalAndInput(RawSchema.Int)(
-        resultMap0 = read,
-        inputMap0 = write(_)
-      )
-    )
-
-  @deprecated("bincompat only — pass a Writer.LongMap for an unboxed write", "0.5.0")
-  def long[A](read: Reader.LongMap[A])(write: A => Long): ReadWriter[A] =
-    ReadWriter.fromSchema(
-      RawSchema.mapLongTotalAndInput(RawSchema.Long)(
-        resultMap0 = read,
-        inputMap0 = write(_)
-      )
-    )
-
-  @deprecated("bincompat only — pass a Writer.FloatMap for an unboxed write", "0.5.0")
-  def float[A](read: Reader.FloatMap[A])(write: A => Float): ReadWriter[A] =
-    ReadWriter.fromSchema(
-      RawSchema.mapFloatTotalAndInput(RawSchema.Float)(
-        resultMap0 = read,
-        inputMap0 = write(_)
-      )
-    )
-
-  @deprecated("bincompat only — pass a Writer.DoubleMap for an unboxed write", "0.5.0")
-  def double[A](read: Reader.DoubleMap[A])(write: A => Double): ReadWriter[A] =
-    ReadWriter.fromSchema(
-      RawSchema.mapDoubleTotalAndInput(RawSchema.Double)(
-        resultMap0 = read,
-        inputMap0 = write(_)
-      )
-    )
