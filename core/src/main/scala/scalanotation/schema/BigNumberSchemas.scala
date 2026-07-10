@@ -2,7 +2,7 @@ package scalanotation.schema
 
 import scalanotation.DecodeError
 import scalanotation.RouterSchema
-import scalanotation.Writer
+import scalanotation.{Reader, Writer}
 import steps.result.Result
 
 /** Router schemas for the arbitrary-precision number types: a value reads from either a string
@@ -52,22 +52,8 @@ private[scalanotation] object BigNumberSchemas:
       IArray(
         RawSchema.RouterCase("String", stringCase("BigDecimal")(BigDecimal(_), _.toString)),
         RawSchema.RouterCase("Integer", integerCase[BigDecimal](BigDecimal(_), _.toLong)),
-        RawSchema.RouterCase(
-          "Float",
-          // through the float's own decimal rendering, so `0.1f` reads as 0.1
-          RawSchema.mapFloatTotalAndInput(RawSchema.Float)(
-            resultMap0 = value => BigDecimal(value.toString),
-            inputMap0 = (_.toFloat): Writer.FloatMap[BigDecimal]
-          )
-        ),
-        RawSchema.RouterCase(
-          "Double",
-          // BigDecimal(Double) is decimal (toString-based), so `0.1` reads as 0.1
-          RawSchema.mapDoubleTotalAndInput(RawSchema.Double)(
-            resultMap0 = BigDecimal(_),
-            inputMap0 = (_.toDouble): Writer.DoubleMap[BigDecimal]
-          )
-        )
+        RawSchema.RouterCase("Float", floatCase[BigDecimal](BigDecimal.decimal(_), _.toFloat)),
+        RawSchema.RouterCase("Double", doubleCase[BigDecimal](BigDecimal.decimal(_), _.toDouble))
       ),
       RouterSchema.Router(
         record = RawSchema.UnsupportedRouterCase,
@@ -106,9 +92,30 @@ private[scalanotation] object BigNumberSchemas:
       inputMap0 = value => write(value)
     )
 
-  private def integerCase[A](fromLong: Long => A, toLong: Writer.LongMap[A]): RawSchema[A] =
+  private def integerCase[A](
+      fromLong: Reader.LongMap[A],
+      toLong: Writer.LongMap[A]
+  ): RawSchema[A] =
     RawSchema.mapLongTotalAndInput(RawSchema.Long)(
-      resultMap0 = fromLong(_),
+      resultMap0 = fromLong,
       // the write side always selects the string case, so the input maps stay unreached
       inputMap0 = toLong
+    )
+
+  private def floatCase[A](
+      fromFloat: Reader.FloatMap[A],
+      toFloat: Writer.FloatMap[A]
+  ): RawSchema[A] =
+    RawSchema.mapFloatTotalAndInput(RawSchema.Float)(
+      resultMap0 = fromFloat,
+      inputMap0 = toFloat
+    )
+
+  private def doubleCase[A](
+      fromDouble: Reader.DoubleMap[A],
+      toDouble: Writer.DoubleMap[A]
+  ): RawSchema[A] =
+    RawSchema.mapDoubleTotalAndInput(RawSchema.Double)(
+      resultMap0 = fromDouble,
+      inputMap0 = toDouble
     )
