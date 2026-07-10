@@ -99,19 +99,43 @@ private[scalanotation] object TypedFactoryMacros:
 
     if !isSimpleConstructible then fallback()
     else
+      // Resolves opaque aliases to their underlying type. Outside its defining scope an opaque
+      // type neither dealiases nor compares equal to its underlying, but its erasure — and
+      // therefore the typed slot a field of that type lives in — is decided by the underlying.
+      // Anything unresolvable (e.g. an opaque over an abstract type) stays as is and takes the
+      // ref slot.
+      def dealiasOpaques(tp: TypeRepr): TypeRepr =
+        tp.dealias match
+          case ref: TypeRef if ref.isOpaqueAlias =>
+            dealiasOpaques(ref.translucentSuperType)
+          case AppliedType(ref: TypeRef, args) if ref.isOpaqueAlias =>
+            dealiasOpaques(ref.translucentSuperType.appliedTo(args))
+          case other => other
+
+      // `term.asInstanceOf[target]`: re-types a typed slot pull (or field select) between an
+      // opaque alias and its underlying type; both sides erase identically, so no cast or box
+      // survives into bytecode
+      def castTo(term: Term, target: TypeRepr): Term =
+        TypeApply(Select.unique(term, "asInstanceOf"), List(Inferred(target)))
+
       def pullArg(slots: Expr[BuilderSlots], fieldType: TypeRepr, index: Int): Term =
-        val ft  = fieldType.dealias
-        val idx = Expr(index)
-        if ft =:= TypeRepr.of[Int] then '{ $slots.getInt($idx) }.asTerm
-        else if ft =:= TypeRepr.of[Long] then '{ $slots.getLong($idx) }.asTerm
-        else if ft =:= TypeRepr.of[Float] then '{ $slots.getFloat($idx) }.asTerm
-        else if ft =:= TypeRepr.of[Double] then '{ $slots.getDouble($idx) }.asTerm
-        else if ft =:= TypeRepr.of[Boolean] then '{ $slots.getBoolean($idx) }.asTerm
-        else if ft =:= TypeRepr.of[Char] then '{ $slots.getChar($idx) }.asTerm
-        else if ft =:= TypeRepr.of[String] then '{ $slots.getString($idx) }.asTerm
-        else
+        val ft                     = fieldType.dealias
+        val underlying             = dealiasOpaques(ft)
+        val idx                    = Expr(index)
+        val typedPull: Term | Null =
+          if underlying =:= TypeRepr.of[Int] then '{ $slots.getInt($idx) }.asTerm
+          else if underlying =:= TypeRepr.of[Long] then '{ $slots.getLong($idx) }.asTerm
+          else if underlying =:= TypeRepr.of[Float] then '{ $slots.getFloat($idx) }.asTerm
+          else if underlying =:= TypeRepr.of[Double] then '{ $slots.getDouble($idx) }.asTerm
+          else if underlying =:= TypeRepr.of[Boolean] then '{ $slots.getBoolean($idx) }.asTerm
+          else if underlying =:= TypeRepr.of[Char] then '{ $slots.getChar($idx) }.asTerm
+          else if underlying =:= TypeRepr.of[String] then '{ $slots.getString($idx) }.asTerm
+          else null
+        if typedPull == null then
           ft.asType match
             case '[t] => '{ $slots.getRef($idx).asInstanceOf[t] }.asTerm
+        else if ft =:= underlying then typedPull.nn
+        else castTo(typedPull.nn, ft)
 
       def construct(slots: Expr[BuilderSlots]): Expr[P] =
         val args = fields.zipWithIndex.map { (field, index) =>
@@ -125,16 +149,25 @@ private[scalanotation] object TypedFactoryMacros:
 
       // The write-side dual of `construct`: selects the field at `index` directly off the product
       // with a precise signature, so a primitive field is never boxed on its way to the renderer.
-      // Only fields whose type matches `F` exactly are dispatched; anything else falls back to the
-      // boxing Product path (the renderer never asks for a mismatched kind, this is a safety net).
+      // Only fields whose type matches `F` exactly — or is an opaque alias of it — are dispatched;
+      // anything else falls back to the boxing Product path (the renderer never asks for a
+      // mismatched kind, this is a safety net).
       def typedField[F: Type](value: Expr[Any], index: Expr[Int]): Expr[F] =
         val target            = TypeRepr.of[F]
         val fallback: Expr[F] =
           '{ $value.asInstanceOf[Product].productElement($index).asInstanceOf[F] }
         fields.zipWithIndex
-          .filter((field, _) => tpe.memberType(field).widen.dealias =:= target)
-          .foldRight(fallback) { case ((field, fieldIndex), rest) =>
-            val selected = Select('{ $value.asInstanceOf[P] }.asTerm, field).asExprOf[F]
+          .flatMap { (field, fieldIndex) =>
+            val ft = tpe.memberType(field).widen.dealias
+            if !(dealiasOpaques(ft) =:= target) then None
+            else
+              val selected = Select('{ $value.asInstanceOf[P] }.asTerm, field)
+              val typed    =
+                if ft =:= target then selected.asExprOf[F]
+                else castTo(selected, target).asExprOf[F]
+              Some((fieldIndex, typed))
+          }
+          .foldRight(fallback) { case ((fieldIndex, selected), rest) =>
             '{ if $index == ${ Expr(fieldIndex) } then $selected else $rest }
           }
 
