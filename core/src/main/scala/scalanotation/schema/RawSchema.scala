@@ -927,7 +927,7 @@ object RawSchema:
 
   @deprecated("bincompat only — pass a Writer.IntMap for an unboxed write", "0.5.0")
   @annotation.publicInBinary
-  private[scalanotation] def mapIntTotalAndInput[A](
+  private[RawSchema] def mapIntTotalAndInput[A](
       base: RawSchema[Int]
   )(
       resultMap0: Reader.IntMap[A],
@@ -937,7 +937,7 @@ object RawSchema:
 
   @deprecated("bincompat only — pass a Writer.LongMap for an unboxed write", "0.5.0")
   @annotation.publicInBinary
-  private[scalanotation] def mapLongTotalAndInput[A](
+  private[RawSchema] def mapLongTotalAndInput[A](
       base: RawSchema[Long]
   )(
       resultMap0: Reader.LongMap[A],
@@ -947,7 +947,7 @@ object RawSchema:
 
   @deprecated("bincompat only — pass a Writer.FloatMap for an unboxed write", "0.5.0")
   @annotation.publicInBinary
-  private[scalanotation] def mapFloatTotalAndInput[A](
+  private[RawSchema] def mapFloatTotalAndInput[A](
       base: RawSchema[Float]
   )(
       resultMap0: Reader.FloatMap[A],
@@ -957,7 +957,7 @@ object RawSchema:
 
   @deprecated("bincompat only — pass a Writer.DoubleMap for an unboxed write", "0.5.0")
   @annotation.publicInBinary
-  private[scalanotation] def mapDoubleTotalAndInput[A](
+  private[RawSchema] def mapDoubleTotalAndInput[A](
       base: RawSchema[Double]
   )(
       resultMap0: Reader.DoubleMap[A],
