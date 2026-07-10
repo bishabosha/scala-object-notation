@@ -128,6 +128,25 @@ object core extends ScalaObjectNotationModule, CorePublishedModule, Mima, TastyM
     tastymima.intf.ProblemMatcher.make(
       tastymima.intf.ProblemKind.MissingTermMember,
       "scalanotation.internal.PushSlots.fillSkippedNullableFields"
+    ),
+    // the plain-function total-map constructors are superseded by Writer typed-map overloads and
+    // hidden from source so lambda arguments resolve to the typed variants; they stay public in
+    // binary via @publicInBinary, so the visibility restriction cannot break compiled callers
+    tastymima.intf.ProblemMatcher.make(
+      tastymima.intf.ProblemKind.RestrictedVisibilityChange,
+      "scalanotation.schema.RawSchema.mapIntTotalAndInput"
+    ),
+    tastymima.intf.ProblemMatcher.make(
+      tastymima.intf.ProblemKind.RestrictedVisibilityChange,
+      "scalanotation.schema.RawSchema.mapLongTotalAndInput"
+    ),
+    tastymima.intf.ProblemMatcher.make(
+      tastymima.intf.ProblemKind.RestrictedVisibilityChange,
+      "scalanotation.schema.RawSchema.mapFloatTotalAndInput"
+    ),
+    tastymima.intf.ProblemMatcher.make(
+      tastymima.intf.ProblemKind.RestrictedVisibilityChange,
+      "scalanotation.schema.RawSchema.mapDoubleTotalAndInput"
     )
   )
 
