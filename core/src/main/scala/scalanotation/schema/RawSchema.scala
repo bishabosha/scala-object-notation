@@ -265,7 +265,7 @@ enum RawSchema[A]:
       case RawSchema.Mapped(base, _) =>
         base.describeSelf
 
-object RawSchema:
+object RawSchema extends RawSchemaPlainInputMaps:
   sealed trait Atomic     { self: RawSchema[?] => }
   sealed trait Collection { self: RawSchema[?] => }
 
@@ -865,6 +865,63 @@ object RawSchema:
       case _ =>
         RawSchema.Mapped(base, SchemaMapping[A, A]().withPureAndInput(resultMap0, inputMap0))
 
+  // The total-map constructors take the Writer typed functions so writes stay unboxed — the
+  // write-side mirror of the specialized Reader maps. The plain-function variants live in
+  // [[RawSchemaPlainInputMaps]] for binary compatibility only.
+
+  private[scalanotation] def mapIntTotalAndInput[A](
+      base: RawSchema[Int]
+  )(
+      resultMap0: Reader.IntMap[A],
+      inputMap0: Writer.IntMap[A]
+  ): RawSchema[A] =
+    RawSchema.Mapped(
+      base,
+      SchemaMapping[Int, Int]().withIntMap(resultMap0).copy(inputMap = inputMap0)
+    )
+
+  private[scalanotation] def mapLongTotalAndInput[A](
+      base: RawSchema[Long]
+  )(
+      resultMap0: Reader.LongMap[A],
+      inputMap0: Writer.LongMap[A]
+  ): RawSchema[A] =
+    RawSchema.Mapped(
+      base,
+      SchemaMapping[Long, Long]().withLongMap(resultMap0).copy(inputMap = inputMap0)
+    )
+
+  private[scalanotation] def mapFloatTotalAndInput[A](
+      base: RawSchema[Float]
+  )(
+      resultMap0: Reader.FloatMap[A],
+      inputMap0: Writer.FloatMap[A]
+  ): RawSchema[A] =
+    RawSchema.Mapped(
+      base,
+      SchemaMapping[Float, Float]().withFloatMap(resultMap0).copy(inputMap = inputMap0)
+    )
+
+  private[scalanotation] def mapDoubleTotalAndInput[A](
+      base: RawSchema[Double]
+  )(
+      resultMap0: Reader.DoubleMap[A],
+      inputMap0: Writer.DoubleMap[A]
+  ): RawSchema[A] =
+    RawSchema.Mapped(
+      base,
+      SchemaMapping[Double, Double]().withDoubleMap(resultMap0).copy(inputMap = inputMap0)
+    )
+
+/** The plain-function variants of the total-map constructors, superseded by the Writer typed
+  * overloads on [[RawSchema]]'s companion. They live in a parent trait rather than beside their
+  * replacements because same-owner SAM/function overloads are ambiguous for lambda arguments — the
+  * derived owner tie-break sends lambdas to the typed variants. Bincompat only.
+  */
+private[scalanotation] trait RawSchemaPlainInputMaps:
+  import RawSchema.InputMap
+
+  @deprecated("bincompat only — pass a Writer.IntMap for an unboxed write", "0.5.0")
   private[scalanotation] def mapIntTotalAndInput[A](
       base: RawSchema[Int]
   )(
@@ -876,6 +933,7 @@ object RawSchema:
       SchemaMapping[Int, Int]().withIntMap(resultMap0).copy(inputMap = inputMap0)
     )
 
+  @deprecated("bincompat only — pass a Writer.LongMap for an unboxed write", "0.5.0")
   private[scalanotation] def mapLongTotalAndInput[A](
       base: RawSchema[Long]
   )(
@@ -887,6 +945,7 @@ object RawSchema:
       SchemaMapping[Long, Long]().withLongMap(resultMap0).copy(inputMap = inputMap0)
     )
 
+  @deprecated("bincompat only — pass a Writer.FloatMap for an unboxed write", "0.5.0")
   private[scalanotation] def mapFloatTotalAndInput[A](
       base: RawSchema[Float]
   )(
@@ -898,6 +957,7 @@ object RawSchema:
       SchemaMapping[Float, Float]().withFloatMap(resultMap0).copy(inputMap = inputMap0)
     )
 
+  @deprecated("bincompat only — pass a Writer.DoubleMap for an unboxed write", "0.5.0")
   private[scalanotation] def mapDoubleTotalAndInput[A](
       base: RawSchema[Double]
   )(

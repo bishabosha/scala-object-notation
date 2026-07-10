@@ -613,7 +613,13 @@ private object UpickleSchemaAdapter:
     schema match
       case mapped: RawSchema.Mapped[?, ?] =>
         val mapping = mapped.mapping.asInstanceOf[SchemaMapping[Any, Any]]
-        writeAny(mapped.base, mapping.mapInput(value), out)
+        // primitive bases go through the mapping's specialized dispatch straight to the visitor
+        mapped.base match
+          case RawSchema.Int    => out.visitInt32(mapping.mapInputInt(value), -1)
+          case RawSchema.Long   => out.visitInt64(mapping.mapInputLong(value), -1)
+          case RawSchema.Float  => out.visitFloat32(mapping.mapInputFloat(value), -1)
+          case RawSchema.Double => out.visitFloat64(mapping.mapInputDouble(value), -1)
+          case base             => writeAny(base, mapping.mapInput(value), out)
       case RawSchema.Ref(_, target) =>
         writeAny(target(), value, out)
       case router: RawSchema.Router[?] =>

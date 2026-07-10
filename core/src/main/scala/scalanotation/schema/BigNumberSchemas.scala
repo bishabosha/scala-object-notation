@@ -2,6 +2,7 @@ package scalanotation.schema
 
 import scalanotation.DecodeError
 import scalanotation.RouterSchema
+import scalanotation.Writer
 import steps.result.Result
 
 /** Router schemas for the arbitrary-precision number types: a value reads from either a string
@@ -105,7 +106,7 @@ private[scalanotation] object BigNumberSchemas:
       inputMap0 = value => write(value)
     )
 
-  private def integerCase[A](fromLong: Long => A, toLong: A => Long): RawSchema[A] =
+  private def integerCase[A](fromLong: Long => A, toLong: Writer.LongMap[A]): RawSchema[A] =
     RawSchema.mapLongTotalAndInput(RawSchema.Long)(
       resultMap0 = fromLong(_),
       // the write side always selects the string case, so the input maps stay unreached

@@ -4,6 +4,7 @@ import scalanotation.DecodeError
 import steps.result.Result, Result.eval.{ok}
 import RawSchema.{InputMap, ResultMap}
 import scalanotation.Reader
+import scalanotation.Writer
 
 final case class SchemaMapping[Base, A](
     resultMap: ResultMap[Base, A] | Null = null,
@@ -16,6 +17,62 @@ final case class SchemaMapping[Base, A](
     val fn = inputMap
     if fn == null then value.asInstanceOf[Base]
     else fn(value)
+
+  // Specialized input maps — the write-side duals of [[mapResult]]'s TotalMap dispatch. When the
+  // stored input map is one of the Writer typed functions the primitive comes back unboxed;
+  // otherwise the plain function applies and the result unboxes here, exactly as the generic
+  // [[mapInput]] path would.
+
+  def mapInputInt(value: A): Int =
+    inputMap match
+      case typed: Writer.IntMap[?] => typed.asInstanceOf[Writer.IntMap[A]](value)
+      case null                    => value.asInstanceOf[Int]
+      case fn                      => fn(value).asInstanceOf[Int]
+
+  def mapInputLong(value: A): Long =
+    inputMap match
+      case typed: Writer.LongMap[?] => typed.asInstanceOf[Writer.LongMap[A]](value)
+      case null                     => value.asInstanceOf[Long]
+      case fn                       => fn(value).asInstanceOf[Long]
+
+  def mapInputFloat(value: A): Float =
+    inputMap match
+      case typed: Writer.FloatMap[?] => typed.asInstanceOf[Writer.FloatMap[A]](value)
+      case null                      => value.asInstanceOf[Float]
+      case fn                        => fn(value).asInstanceOf[Float]
+
+  def mapInputDouble(value: A): Double =
+    inputMap match
+      case typed: Writer.DoubleMap[?] => typed.asInstanceOf[Writer.DoubleMap[A]](value)
+      case null                       => value.asInstanceOf[Double]
+      case fn                         => fn(value).asInstanceOf[Double]
+
+  /** Composes `f` before this mapping's input map, preserving a Writer typed function — the
+    * write-side dual of [[withPureMap]]'s TotalMap composition.
+    */
+  private def composedInputMap[B](f: InputMap[B, A]): InputMap[B, Base] =
+    inputMap match
+      case null =>
+        // no input map means Base =:= A semantically (mapInput is the identity)
+        f.asInstanceOf[InputMap[B, Base]]
+      case typed: Writer.IntMap[?] =>
+        val fn                         = typed.asInstanceOf[Writer.IntMap[A]]
+        val composed: Writer.IntMap[B] = value => fn(f(value))
+        composed.asInstanceOf[InputMap[B, Base]]
+      case typed: Writer.LongMap[?] =>
+        val fn                          = typed.asInstanceOf[Writer.LongMap[A]]
+        val composed: Writer.LongMap[B] = value => fn(f(value))
+        composed.asInstanceOf[InputMap[B, Base]]
+      case typed: Writer.FloatMap[?] =>
+        val fn                           = typed.asInstanceOf[Writer.FloatMap[A]]
+        val composed: Writer.FloatMap[B] = value => fn(f(value))
+        composed.asInstanceOf[InputMap[B, Base]]
+      case typed: Writer.DoubleMap[?] =>
+        val fn                            = typed.asInstanceOf[Writer.DoubleMap[A]]
+        val composed: Writer.DoubleMap[B] = value => fn(f(value))
+        composed.asInstanceOf[InputMap[B, Base]]
+      case fn =>
+        value => fn(f(value))
 
   def mapResult(value: Base): Result[A, DecodeError] =
     totalMaps match
@@ -41,7 +98,7 @@ final case class SchemaMapping[Base, A](
 
   def withInputMap[B](f: InputMap[B, A]): SchemaMapping[Base, B] =
     SchemaMapping(
-      inputMap = value => mapInput(f(value))
+      inputMap = composedInputMap(f)
     )
 
   def withMapped[B](
@@ -50,14 +107,14 @@ final case class SchemaMapping[Base, A](
   ): SchemaMapping[Base, B] =
     SchemaMapping(
       resultMap = value => mapResult(value).flatMap(resultMap0),
-      inputMap = value => mapInput(inputMap0(value))
+      inputMap = composedInputMap(inputMap0)
     )
 
   def withPureAndInput[B](
       resultMap0: InputMap[A, B],
       inputMap0: InputMap[B, A]
   ): SchemaMapping[Base, B] =
-    withPureMap(resultMap0).copy(inputMap = value => mapInput(inputMap0(value)))
+    withPureMap(resultMap0).copy(inputMap = composedInputMap(inputMap0))
 
   def withPureMap[B](f: InputMap[A, B]): SchemaMapping[Base, B] =
     if resultMap == null then
