@@ -9,8 +9,8 @@ import java.nio.charset.StandardCharsets
   * (`"name":` — quote, escaped name, quote, colon), the escape-free name content bytes for the
   * out-of-order slice compare (null when the name needs escapes), and the shared fill values.
   *
-  * Cached once per schema instance in [[RawSchema.externalPlans]], so a record decode pays one
-  * volatile read for the whole plan.
+  * Cached once per schema instance in the node's [[RawSchema.PlanSlot]] storage, so a record decode
+  * pays one volatile read for the whole plan.
   */
 private[json] final class JsonFieldPlans(
     val kinds: Array[Byte],
@@ -68,8 +68,12 @@ private[json] object JsonFieldPlans:
   val Empty: JsonFieldPlans =
     JsonFieldPlans(Array.emptyByteArray, Array.empty, Array.empty, Array.empty, null, false)
 
+  /** the JSON decoder's slot in every schema node's plan storage — allocated once */
+  private val Slot: RawSchema.PlanSlot[JsonFieldPlans] =
+    RawSchema.PlanSlot.allocate[JsonFieldPlans]()
+
   def of(schema: RawSchema[?]): JsonFieldPlans =
-    schema.externalPlans(compute)
+    schema.externalPlan(Slot)(compute)
 
   private val compute: RawSchema[?] => JsonFieldPlans =
     case namedTuple: RawSchema.NamedTuple[?] =>

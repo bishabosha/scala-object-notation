@@ -133,19 +133,43 @@ enum RawSchema[A]:
   // idempotent under races.
   @volatile private var fieldPlansCache: RawSchema.FieldPlans | Null = null
 
-  // Per-schema decode-plan slot for format modules outside the core notation (the JSON module
-  // caches its byte-level field plans here). Checked once per decoded record, so it must be a
-  // plain volatile read like fieldPlansCache; the computation is idempotent, so a racing
-  // recompute stores an equivalent value. One slot: a single external format module owns it.
-  @volatile private var externalPlansCache: AnyRef | Null = null
+  // Per-decoder plan storage for format modules outside the core notation: a growable array
+  // indexed by a process-wide PlanSlot, so any number of decoders can attach per-schema plans.
+  // The hot path is one volatile read plus an index; stores copy-on-write under the node lock,
+  // so a plan object is only ever reachable through an array published after it was written.
+  @volatile private var externalPlanArray: Array[AnyRef | Null] = RawSchema.EmptyPlanArray
 
-  private[scalanotation] def externalPlans[T <: AnyRef](compute: RawSchema[A] => T): T =
-    val cached = externalPlansCache
-    if cached != null then cached.asInstanceOf[T]
-    else
-      val computed = compute(this)
-      externalPlansCache = computed
-      computed
+  /** The plan a decoder cached on this schema node under `slot`, computing and caching it on first
+    * use. This is how a format module (e.g. the JSON artifact) attaches per-schema decode plans
+    * without touching the schema type: allocate one [[RawSchema.PlanSlot]] per decoder and call
+    * this once per decoded composite — it costs a volatile read and an array index.
+    *
+    * `compute` must be a pure function of the schema node: racing first uses may run it more than
+    * once, and exactly one result is cached (the others are discarded).
+    */
+  final def externalPlan[T <: AnyRef](slot: RawSchema.PlanSlot[T])(
+      compute: RawSchema[A] => T
+  ): T =
+    val plans = externalPlanArray
+    val index = RawSchema.PlanSlot.toInt(slot)
+    if index < plans.length then
+      val cached = plans(index)
+      if cached != null then return cached.asInstanceOf[T]
+    storeExternalPlan(index, compute)
+
+  private def storeExternalPlan[T <: AnyRef](index: Int, compute: RawSchema[A] => T): T =
+    // the plan may be expensive to build: compute outside the lock, discard on a lost race
+    val computed = compute(this)
+    synchronized {
+      val plans    = externalPlanArray
+      val existing = if index < plans.length then plans(index) else null
+      if existing != null then existing.asInstanceOf[T]
+      else
+        val grown = java.util.Arrays.copyOf(plans, math.max(plans.length, index + 1))
+        grown(index) = computed
+        externalPlanArray = grown
+        computed
+    }
 
   private[scalanotation] def fieldPlans: RawSchema.FieldPlans =
     val cached = fieldPlansCache
@@ -293,6 +317,23 @@ enum RawSchema[A]:
 object RawSchema:
   sealed trait Atomic     { self: RawSchema[?] => }
   sealed trait Collection { self: RawSchema[?] => }
+
+  private[schema] val EmptyPlanArray: Array[AnyRef | Null] = new Array[AnyRef | Null](0)
+
+  /** A process-wide identity for one decoder's per-schema plans — the index into every schema
+    * node's plan storage, resolved by [[RawSchema.externalPlan]]. Allocate exactly one slot per
+    * decoder (in a top-level `val`): each schema node's storage grows to the largest slot that
+    * touches it, so allocating per use would leak.
+    */
+  opaque type PlanSlot[T <: AnyRef] = Int
+
+  object PlanSlot:
+    private val allocated = new java.util.concurrent.atomic.AtomicInteger(0)
+
+    /** allocates a fresh slot — once per decoder, never per decode */
+    def allocate[T <: AnyRef](): PlanSlot[T] = allocated.getAndIncrement()
+
+    private[schema] def toInt[T <: AnyRef](slot: PlanSlot[T]): Int = slot
 
   type ResultMap[-In, +Out]               = In => Result[Out, DecodeError]
   type InputMap[-In, +Out]                = In => Out
