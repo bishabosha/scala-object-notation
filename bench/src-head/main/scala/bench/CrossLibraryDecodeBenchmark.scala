@@ -155,6 +155,29 @@ class CrossLibraryDecodeBenchmark:
     s"""{"orders":[${(1 to 100).map(jsonOrder).mkString(",")}]}"""
   private val jsonOrdersBytes = jsonOrdersInput.getBytes(StandardCharsets.UTF_8)
 
+  // The same order batch with each record's fields in a seeded-random order — JSON objects are
+  // unordered, so this exercises every library's out-of-schema-order field resolution on
+  // identical payloads. The reversed variant is the worst case for expected-order probing.
+  private def jsonOrderFields(i: Int): List[String] =
+    List(
+      s""""id":${i * 1000L}""",
+      s""""sku":"sku-$i"""",
+      s""""qty":${i % 10 + 1}""",
+      s""""price":${i * 100}.99""",
+      s""""active":${i % 2 == 0}"""
+    )
+  private def jsonOrderShuffled(i: Int): String =
+    new scala.util.Random(i * 31337).shuffle(jsonOrderFields(i)).mkString("{", ",", "}")
+  private def jsonOrderReversed(i: Int): String =
+    jsonOrderFields(i).reverse.mkString("{", ",", "}")
+
+  private val jsonOrdersShuffledInput =
+    s"""{"orders":[${(1 to 100).map(jsonOrderShuffled).mkString(",")}]}"""
+  private val jsonOrdersShuffledBytes = jsonOrdersShuffledInput.getBytes(StandardCharsets.UTF_8)
+  private val jsonOrdersReversedInput =
+    s"""{"orders":[${(1 to 100).map(jsonOrderReversed).mkString(",")}]}"""
+  private val jsonOrdersReversedBytes = jsonOrdersReversedInput.getBytes(StandardCharsets.UTF_8)
+
   // Each record carries its own seeded-random subset of the five optional/defaulted extras —
   // real sparse data omits fields at random, so no two records share a skip pattern. Every extra
   // draws independently AND with its own frequency (near-always, common, occasional, rare), so
@@ -424,7 +447,40 @@ class CrossLibraryDecodeBenchmark:
     requireOk("sonJsonDefaulted100", Json.batched.readAs[DefaultedBatch](jsonSparseInput))
     requireOk("sonJsonShapes100", Json.batched.readAs[ShapeBatch](sonJsonShapesInput))
     requireOk("sonJsonShapesDisc100", Json.batched.readAs[ShapeKBatch](sonJsonShapesKInput))
+
+    // the shuffled and reversed forms must decode to exactly the ordered batch
+    val orderedBatch = Json.batched.readAs[OrderBatch](jsonOrdersInput)
+    for (name, input) <- List(
+        "sonJsonOrdersShuffled100" -> jsonOrdersShuffledInput,
+        "sonJsonOrdersReversed100" -> jsonOrdersReversedInput
+      )
+    do
+      val decoded = Json.batched.readAs[OrderBatch](input)
+      requireOk(name, decoded)
+      if decoded != orderedBatch then
+        throw new IllegalStateException(s"$name decodes different values than the ordered form")
   }
+
+  @Benchmark def sonJsonOrdersShuffled100: Any =
+    scalanotation.json.Json.batched.readAs[OrderBatch](jsonOrdersShuffledInput)
+  @Benchmark def sonJsonOrdersShuffled100Bytes: Any =
+    scalanotation.json.Json.batched.readAs[OrderBatch](jsonOrdersShuffledBytes)
+  @Benchmark def sonJsonOrdersReversed100Bytes: Any =
+    scalanotation.json.Json.batched.readAs[OrderBatch](jsonOrdersReversedBytes)
+  @Benchmark def jsoniterOrdersShuffled100String: Any =
+    readFromString[OrderBatch](jsonOrdersShuffledInput)
+  @Benchmark def jsoniterOrdersShuffled100Bytes: Any =
+    readFromArray[OrderBatch](jsonOrdersShuffledBytes)
+  @Benchmark def jsoniterOrdersReversed100Bytes: Any =
+    readFromArray[OrderBatch](jsonOrdersReversedBytes)
+  @Benchmark def zioBlocksOrdersShuffled100String: Any =
+    zioOrdersCodec.decode(jsonOrdersShuffledInput)
+  @Benchmark def zioBlocksOrdersShuffled100Bytes: Any =
+    zioOrdersCodec.decode(jsonOrdersShuffledBytes)
+  @Benchmark def zioBlocksOrdersReversed100Bytes: Any =
+    zioOrdersCodec.decode(jsonOrdersReversedBytes)
+  @Benchmark def upickleOrdersShuffled100String: Any =
+    upickle.default.read[OrderBatch](jsonOrdersShuffledInput)
 
   @Benchmark def sonJsonFlat: Any =
     scalanotation.json.Json.batched.readAs[TypedFlatClass](jsonFlatInput)
