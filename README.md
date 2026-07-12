@@ -152,6 +152,38 @@ leave them to the garbage collector.
 For completeness, `BatchContext.garbageCollected` is the no-pooling context. The plain `Readers`
 API is equivalent to using it.
 
+## JSON
+
+The `scala-object-notation-json` artifact reads and writes JSON through the same type classes:
+any `Reader`, `Writer`, or `ReadWriter` — derived or hand-built — works for both the Scala
+notation and JSON, since both decoders drive the same underlying schema.
+
+```scala
+import scalanotation.ReadWriter
+import scalanotation.json.Json
+
+case class Order(id: Long, sku: String, qty: Int) derives ReadWriter
+
+Json.readAs[Order]("""{"id":1,"sku":"a","qty":2}""") // Result.Ok(Order(1L, "a", 2))
+Json.write(Order(1L, "a", 2))                        // {"id":1,"sku":"a","qty":2}
+```
+
+The JSON decoder is byte-native: `Json.readAs` accepts UTF-8 `Array[Byte]` input directly, and
+String input transcodes into a pooled buffer. `Json.batched.readAs` mirrors `Readers.batched`
+with a `JsonBatchContext`. Mappings are the natural ones — records and `Map[String, _]` are
+objects, collections and tuples are arrays, sums are `{"CaseName": ...}` (or a discriminator
+field via `Configured.discriminator`), `Option` uses `null`.
+
+For dynamic JSON there is `scalanotation.json.JsonValue`, a small AST whose numbers keep their
+exact source text (`JsonValue.Num(raw: String)`) so values of any precision round-trip losslessly:
+
+```scala
+import scalanotation.json.{Json, JsonValue}
+
+Json.readAs[JsonValue]("""{"pi": 3.14159265358979323846264338327950288}""")
+// Ok(Obj(Vector(("pi", Num("3.14159265358979323846264338327950288")))))
+```
+
 ## Experimental Features
 
 Experimental syntax lives behind `Readers.experimental`, so the normal readers stay predictable.
