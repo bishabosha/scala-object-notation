@@ -169,8 +169,11 @@ Json.write(Order(1L, "a", 2))                        // {"id":1,"sku":"a","qty":
 ```
 
 The JSON decoder is byte-native: `Json.readAs` accepts UTF-8 `Array[Byte]` input directly, and
-String input transcodes into a pooled buffer. `Json.batched.readAs` mirrors `Readers.batched`
-with a `JsonBatchContext`. Mappings are the natural ones — records and `Map[String, _]` are
+String input transcodes into a pooled buffer. For the typical HTTP-body case, `Json.readAs`
+also accepts a `java.io.InputStream`: the decoder pulls bytes through a fixed 16 KB refill
+buffer as it scans, so a body of any size decodes without being materialized whole (the buffer
+grows transiently only when a single token exceeds it). `Json.batched.readAs` mirrors
+`Readers.batched` with a `JsonBatchContext`. Mappings are the natural ones — records and `Map[String, _]` are
 objects, collections and tuples are arrays, sums are `{"CaseName": ...}` (or a discriminator
 field via `Configured.discriminator`), `Option` uses `null`.
 

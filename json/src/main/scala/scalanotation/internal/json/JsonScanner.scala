@@ -6,9 +6,10 @@ import java.nio.charset.StandardCharsets
 
 /** Lexical error in the JSON input, converted to a [[scalanotation.DecodeError]] at the decode
   * entry point (mirrors the core TokenizeException protocol). Stackless: the exception is control
-  * flow for the cold error path.
+  * flow for the cold error path. The offset is absolute in the whole input (buffer-relative
+  * positions shift in streaming mode).
   */
-private[json] final class JsonParseException(val message: String, val offset: Int)
+private[json] final class JsonParseException(val message: String, val offset: Long)
     extends RuntimeException(message, null, false, false)
 
 private[json] object JsonScanner:
@@ -22,8 +23,8 @@ private[json] object JsonScanner:
   inline val BooleanFalse = 0
   inline val BooleanNone  = -1
 
-  /** Hard cap on the pooled String-input transcoding buffer: a pooled scanner retains at most 16
-    * KB; larger (or non-ASCII) inputs transcode into a transient array discarded after use.
+  /** Hard cap on the pooled buffer (String-input transcoding and stream refills): a pooled scanner
+    * retains at most 16 KB; larger inputs or tokens use a transient array discarded after use.
     */
   inline val MaxPooledInputBytes = 16384
 
@@ -35,11 +36,19 @@ private[json] object JsonScanner:
   private[json] val Pow10F: Array[Float] =
     Array.tabulate(11)(i => math.pow(10d, i.toDouble).toFloat)
 
-/** Byte-level scanning kernel for the JSON decoder: the input is always a UTF-8 byte array (a
-  * String input transcodes on reset), the cursor is a plain Int, and every scan primitive is
-  * probe-first — the expected byte is checked directly at the cursor before any whitespace
-  * machinery, and a miss backs out to the whitespace skip and re-probes once. There is exactly one
-  * decode path: values are scanned where the schema expects them, with no token objects.
+/** Byte-level scanning kernel for the JSON decoder: the input is a UTF-8 byte window (the whole
+  * input, a pooled String transcode, or a streaming refill buffer), the cursor is a plain Int, and
+  * every scan primitive is probe-first — the expected byte is checked directly at the cursor before
+  * any whitespace machinery, and a miss backs out to the whitespace skip and re-probes once. There
+  * is exactly one decode path: values are scanned where the schema expects them, with no token
+  * objects.
+  *
+  * Streaming: with an attached [[java.io.InputStream]], the `pos >= limit` exhaustion branches —
+  * and only they — attempt [[refillKeeping]], which discards consumed bytes, shifts the in-progress
+  * token to the buffer start (adjusting the cursor and the slice/number span state), and reads
+  * more. Whole-input modes have no stream, so every refill answers "no more" and the scan shapes
+  * behave exactly as before. Error offsets are absolute ([[bufferBase]] plus a buffer position);
+  * line/column accounting for discarded bytes happens at compaction time.
   */
 private[json] abstract class JsonScanner extends PushSlots:
   import JsonScanner.*
@@ -48,13 +57,28 @@ private[json] abstract class JsonScanner extends PushSlots:
   protected var limit: Int         = 0
   protected var pos: Int           = 0
 
-  /** pooled transcode buffer for String inputs — see [[JsonScanner.MaxPooledInputBytes]] */
+  /** the streaming source, or null in whole-input modes (and once a stream is exhausted) */
+  private var stream: java.io.InputStream | Null = null
+
+  /** absolute offset of `input(0)` in the whole input — 0 until stream compaction discards */
+  protected var bufferBase: Long = 0L
+
+  // line/column accounting for the discarded prefix, so error spans stay exact after compaction:
+  // full newlines before bufferBase, and the 1-based code-point column AT bufferBase
+  private var discardedLines: Int  = 0
+  private var discardedColumn: Int = 1
+
+  /** pooled buffer for String transcoding and stream refills — see [[MaxPooledInputBytes]] */
   private var pooledInputBytes: Array[Byte] = Array.emptyByteArray
 
   protected final def resetScanner(bytes: Array[Byte]): Unit =
     input = bytes
     limit = bytes.length
     pos = 0
+    stream = null
+    bufferBase = 0L
+    discardedLines = 0
+    discardedColumn = 1
 
   /** Re-aims the scanner at a String input without materializing a byte copy for ASCII inputs that
     * fit the pooled buffer: one fused pass probes and widens chars into the pooled bytes (portable
@@ -74,32 +98,112 @@ private[json] abstract class JsonScanner extends PushSlots:
         buffer(i) = ch.toByte
         i += 1
       if i == length then
-        input = buffer
+        resetScanner(buffer)
         limit = length
-        pos = 0
       else resetScanner(text.getBytes(StandardCharsets.UTF_8))
     else resetScanner(text.getBytes(StandardCharsets.UTF_8))
 
+  /** Re-aims the scanner at a streaming input: scanning refills the pooled buffer on demand, so a
+    * body larger than the buffer decodes without ever being materialized whole.
+    */
+  protected final def resetScannerStream(in: java.io.InputStream): Unit =
+    var buffer = pooledInputBytes
+    if buffer.length < MaxPooledInputBytes then
+      buffer = new Array[Byte](MaxPooledInputBytes)
+      pooledInputBytes = buffer
+    resetScanner(buffer)
+    limit = 0
+    stream = in
+
+  /** Discards consumed bytes before `protect`, shifts the retained span to the buffer start, and
+    * reads more from the stream (growing the buffer when the protected span fills it). Returns the
+    * shift distance — callers subtract it from any live buffer positions; the cursor and the
+    * slice/number span state are adjusted here. New data is signalled by `limit` growing; at end of
+    * stream (or in whole-input modes) `limit` is unchanged.
+    */
+  protected final def refillKeeping(protect: Int): Int =
+    val in = stream
+    if in == null then 0
+    else
+      var shift = 0
+      if protect > 0 then
+        accountDiscarded(protect)
+        val retained = limit - protect
+        System.arraycopy(input, protect, input, 0, retained)
+        bufferBase += protect
+        limit = retained
+        pos = math.max(pos - protect, 0)
+        sliceStart -= protect
+        sliceEnd -= protect
+        sliceQuoteOffset -= protect
+        numStart -= protect
+        numEnd -= protect
+        shift = protect
+      else if limit == input.length then
+        // the protected span fills the whole buffer: grow (transient beyond the pooled cap)
+        val grown = java.util.Arrays.copyOf(input, math.max(input.length * 2, MaxPooledInputBytes))
+        input = grown
+        if grown.length <= MaxPooledInputBytes then pooledInputBytes = grown
+      var n = 0
+      while n == 0 do n = in.read(input, limit, input.length - limit)
+      if n < 0 then stream = null
+      else limit += n
+      shift
+
+  /** [[refillKeeping]] from the cursor — for scan points with no token in progress. True when a
+    * byte is available at the (possibly shifted) cursor.
+    */
+  private def refillAtPos(): Boolean =
+    refillKeeping(pos)
+    pos < limit
+
+  /** line/column accounting for a discarded `[0, until)` prefix — see [[spanAt]] */
+  private def accountDiscarded(until: Int): Unit =
+    var i = 0
+    while i < until do
+      val b = input(i)
+      if b == '\n' then
+        discardedLines += 1
+        discardedColumn = 1
+      else if b >= 0 || (b & 0xc0) == 0xc0 then
+        // count code-point starts only, so multi-byte UTF-8 advances the column once
+        discardedColumn += 1
+      i += 1
+
   // --- whitespace ---
 
+  /** Consumes whitespace; afterwards either a content byte is at the cursor or the input is
+    * exhausted (streams refill as needed, so `pos >= limit` after this means true end of input).
+    */
   protected final def skipWs(): Unit =
-    var p   = pos
-    val in  = input
-    val lim = limit
-    while p < lim && {
-        val b = in(p)
-        b == ' ' || b == '\t' || b == '\n' || b == '\r'
-      }
-    do p += 1
+    var p        = pos
+    var scanning = true
+    while scanning do
+      val in  = input
+      val lim = limit
+      while p < lim && {
+          val b = in(p)
+          b == ' ' || b == '\t' || b == '\n' || b == '\r'
+        }
+      do p += 1
+      if p < lim then scanning = false
+      else
+        pos = p
+        if !refillAtPos() then scanning = false
+        p = pos
     pos = p
 
   private inline def isWsByte(b: Byte): Boolean =
     b == ' ' || b == '\t' || b == '\n' || b == '\r'
 
-  /** the offset of the next content byte (whitespace consumed) — for error spans */
-  protected final def currentOffset(): Int =
+  /** the absolute offset of the next content byte (whitespace consumed) — for error spans */
+  protected final def currentOffset(): Long =
     skipWs()
-    pos
+    bufferBase + pos
+
+  /** the absolute offset of buffer position `local` */
+  protected final def absoluteOffset(local: Int): Long =
+    bufferBase + local
 
   // --- punctuation ---
 
@@ -122,24 +226,24 @@ private[json] abstract class JsonScanner extends PushSlots:
   protected final def tryReadSeparator(closing: Byte): Int =
     var p = pos
     if p < limit then
-      var b = input(p)
+      val b = input(p)
       if b == ',' then
         pos = p + 1
         return SeparatorComma
       if b == closing then
         pos = p + 1
         return SeparatorClosing
-      if isWsByte(b) then
-        skipWs()
-        p = pos
-        if p < limit then
-          b = input(p)
-          if b == ',' then
-            pos = p + 1
-            return SeparatorComma
-          if b == closing then
-            pos = p + 1
-            return SeparatorClosing
+      if !isWsByte(b) then return SeparatorNone
+    skipWs()
+    p = pos
+    if p < limit then
+      val b = input(p)
+      if b == ',' then
+        pos = p + 1
+        return SeparatorComma
+      if b == closing then
+        pos = p + 1
+        return SeparatorClosing
     SeparatorNone
 
   // --- fused field header ---
@@ -149,25 +253,31 @@ private[json] abstract class JsonScanner extends PushSlots:
     * bytes.
     */
   protected final def expectFieldHeader(header: Array[Byte]): Boolean =
-    val in = input
-    var p  = pos
-    if p >= limit || in(p) != '"' then
+    var p = pos
+    if p >= limit || input(p) != '"' then
       skipWs()
       p = pos
-      if p >= limit || in(p) != '"' then return false
-    val end = p + header.length
-    if end > limit then return false
+      if p >= limit || input(p) != '"' then return false
+    // the header must be visible whole; streams refill (keeping the unconsumed name) until it
+    // is, or until the input can no longer contain it
+    while p + header.length > limit do
+      val available = limit - p
+      p -= refillKeeping(p)
+      if limit - p == available then return false
+    val in = input
     // the leading quote was just probed; compare the name bytes and colon
     var i = 1
     while i < header.length && in(p + i) == header(i) do i += 1
     if i == header.length then
-      pos = end
+      pos = p + header.length
       true
-    else false
+    else
+      pos = p
+      false
 
   // --- strings ---
 
-  /** content span of the most recent [[scanStringSlice]] */
+  /** content span of the most recent [[tryScanStringSlice]] */
   protected var sliceStart: Int = 0
   protected var sliceEnd: Int   = 0
 
@@ -177,44 +287,61 @@ private[json] abstract class JsonScanner extends PushSlots:
   /** whether the most recent slice contains non-ASCII bytes */
   protected var sliceNonAscii: Boolean = false
 
-  /** offset of the opening quote of the most recent slice — for error spans */
+  /** buffer offset of the opening quote of the most recent slice — capture [[sliceQuoteAbsolute]]
+    * before any further scanning when saving it for error spans
+    */
   protected var sliceQuoteOffset: Int = 0
 
+  protected final def sliceQuoteAbsolute(): Long =
+    bufferBase + sliceQuoteOffset
+
   /** True when a string literal starts at the cursor (after whitespace): scans it, recording the
-    * content span and its escape/ASCII flags without materializing. False consumes nothing.
+    * content span and its escape/ASCII flags without materializing. False consumes nothing. A
+    * streaming refill keeps the whole literal in the buffer (growing it for oversized strings).
     */
   protected final def tryScanStringSlice(): Boolean =
-    var p = pos
-    if p >= limit || input(p) != '"' then
+    var quoteAt = pos
+    if quoteAt >= limit || input(quoteAt) != '"' then
       skipWs()
-      p = pos
-      if p >= limit || input(p) != '"' then return false
-    sliceQuoteOffset = p
-    p += 1
-    val in       = input
-    val lim      = limit
-    val start    = p
+      quoteAt = pos
+      if quoteAt >= limit || input(quoteAt) != '"' then return false
+    var p        = quoteAt + 1
+    var start    = p
     var escaped  = false
     var nonAscii = false
     var done     = false
     while !done do
-      if p >= lim then throw JsonParseException("Unterminated string literal", sliceQuoteOffset)
-      val b = in(p)
-      if b == '"' then done = true
-      else if b == '\\' then
-        escaped = true
-        p += 1
-        if p >= lim then throw JsonParseException("Unterminated string literal", sliceQuoteOffset)
-        p += 1 // skip the escaped byte; \uXXXX hex bytes are all non-quote ASCII, scanned plainly
-      else if (b & 0xff) < 0x20 then
-        throw JsonParseException("Unescaped control character in string literal", p)
-      else
-        if b < 0 then nonAscii = true
-        p += 1
+      val in       = input
+      val lim      = limit
+      var scanning = true
+      while scanning && p < lim do
+        val b = in(p)
+        if b == '"' then
+          done = true
+          scanning = false
+        else if b == '\\' then
+          escaped = true
+          if p + 1 < lim then p += 2
+          else scanning = false // boundary mid-escape: leave p at the backslash and refill
+        else if (b & 0xff) < 0x20 then
+          throw JsonParseException("Unescaped control character in string literal", bufferBase + p)
+        else
+          if b < 0 then nonAscii = true
+          p += 1
+      if !done then
+        // the literal touches the window end: refill keeping it (streams only), else fail
+        val before = limit - quoteAt
+        val shift  = refillKeeping(quoteAt)
+        quoteAt -= shift
+        start -= shift
+        p -= shift
+        if limit - quoteAt == before then
+          throw JsonParseException("Unterminated string literal", bufferBase + quoteAt)
     sliceStart = start
     sliceEnd = p
     sliceEscaped = escaped
     sliceNonAscii = nonAscii
+    sliceQuoteOffset = quoteAt
     pos = p + 1 // past the closing quote
     true
 
@@ -282,9 +409,11 @@ private[json] abstract class JsonScanner extends PushSlots:
     else builder.append(new String(input, from, until - from, StandardCharsets.UTF_8))
 
   /** appends the escape starting at `p` (the byte after the backslash), returning the next position
+    * — the whole slice is in the buffer, so no bounds can be exceeded before the closing quote that
+    * follows it
     */
   private def appendEscape(builder: java.lang.StringBuilder, p: Int): Int =
-    if p >= limit then throw JsonParseException("Unterminated string literal", sliceQuoteOffset)
+    if p >= limit then throw JsonParseException("Unterminated string literal", sliceQuoteAbsolute())
     (input(p): @annotation.switch) match
       case '"' =>
         builder.append('"'); p + 1
@@ -303,11 +432,15 @@ private[json] abstract class JsonScanner extends PushSlots:
       case 't' =>
         builder.append('\t'); p + 1
       case 'u' =>
-        if p + 4 >= limit then throw JsonParseException("Unterminated unicode escape", p - 1)
+        if p + 4 >= limit then
+          throw JsonParseException("Unterminated unicode escape", bufferBase + p - 1)
         builder.append(parseHex4(p + 1).toChar)
         p + 5
       case other =>
-        throw JsonParseException(s"Invalid escape character '${(other & 0xff).toChar}'", p - 1)
+        throw JsonParseException(
+          s"Invalid escape character '${(other & 0xff).toChar}'",
+          bufferBase + p - 1
+        )
 
   private def parseHex4(p: Int): Int =
     var value = 0
@@ -318,12 +451,14 @@ private[json] abstract class JsonScanner extends PushSlots:
         if b >= '0' && b <= '9' then b - '0'
         else if b >= 'a' && b <= 'f' then b - 'a' + 10
         else if b >= 'A' && b <= 'F' then b - 'A' + 10
-        else throw JsonParseException(s"Invalid hex digit '${(b & 0xff).toChar}'", p + i)
+        else
+          throw JsonParseException(s"Invalid hex digit '${(b & 0xff).toChar}'", bufferBase + p + i)
       value = (value << 4) | digit
       i += 1
     value
 
-  /** re-scans the most recent slice as a Char value; -1 when the content is not exactly one char */
+  /** re-scans the most recent slice as a Char value; -1 when the content is not exactly one char
+    */
   protected final def sliceAsChar(): Int =
     if !sliceEscaped && !sliceNonAscii then
       if sliceEnd - sliceStart == 1 then input(sliceStart) & 0xff
@@ -348,6 +483,9 @@ private[json] abstract class JsonScanner extends PushSlots:
   protected var numStart: Int        = 0
   protected var numEnd: Int          = 0
 
+  protected final def numberStartAbsolute(): Long =
+    bufferBase + numStart
+
   /** True when a number starts at the cursor (after whitespace): scans one JSON number into the
     * number state. False consumes nothing. Malformed numbers throw [[JsonParseException]].
     */
@@ -357,23 +495,45 @@ private[json] abstract class JsonScanner extends PushSlots:
       skipWs()
       p = pos
       if p >= limit || !isNumberStart(input(p)) then return false
-    scanNumberAt(p)
+    // whole-input decodes always take the direct scan; a stream retries on a refilled window
+    if scanNumberAt(p, atInputEnd = stream == null) < 0 then scanNumberRetry(p)
     true
 
   private inline def isNumberStart(b: Byte): Boolean =
     (b >= '0' && b <= '9') || b == '-'
 
-  private def scanNumberAt(startPos: Int): Unit =
+  /** Cold continuation when a number literal touches the window end while more input may exist: a
+    * number is a short token, so each refill simply retries the whole scan on the (shifted,
+    * extended) window.
+    */
+  private def scanNumberRetry(startPos: Int): Unit =
+    var s        = startPos
+    var scanning = true
+    while scanning do
+      val available = limit - s
+      s -= refillKeeping(s)
+      if limit - s == available then
+        // the window end is the true end of input: the literal may end there
+        scanNumberAt(s, atInputEnd = true)
+        scanning = false
+      else if scanNumberAt(s, atInputEnd = stream == null) >= 0 then scanning = false
+
+  /** the single-window number scan: returns the end position, or -1 when the literal touches the
+    * window end while more input may exist (the caller refills and retries)
+    */
+  private def scanNumberAt(startPos: Int, atInputEnd: Boolean): Int =
     val in  = input
     val lim = limit
     var p   = startPos
-    numStart = p
     var neg = false
     if in(p) == '-' then
       neg = true
       p += 1
-      if p >= lim || in(p) < '0' || in(p) > '9' then
-        throw JsonParseException("Expected a digit after '-'", p)
+      if p >= lim then
+        if !atInputEnd then return -1
+        throw JsonParseException("Expected a digit after '-'", bufferBase + p)
+      if in(p) < '0' || in(p) > '9' then
+        throw JsonParseException("Expected a digit after '-'", bufferBase + p)
     var acc      = 0L
     var digits   = 0
     var fracLen  = 0
@@ -381,20 +541,25 @@ private[json] abstract class JsonScanner extends PushSlots:
     // integer part: 0 | [1-9][0-9]*
     if in(p) == '0' then
       p += 1
+      if p >= lim && !atInputEnd then return -1
       if p < lim && in(p) >= '0' && in(p) <= '9' then
-        throw JsonParseException("Leading zeros are not allowed", numStart)
+        throw JsonParseException("Leading zeros are not allowed", bufferBase + startPos)
     else
       var b: Byte = 0
       while p < lim && { b = in(p); b >= '0' && b <= '9' } do
         if digits < 18 then acc = acc * 10 - (b - '0')
         digits += 1
         p += 1
+      if p >= lim && !atInputEnd then return -1
     // fraction
     if p < lim && in(p) == '.' then
       integral = false
       p += 1
-      if p >= lim || in(p) < '0' || in(p) > '9' then
-        throw JsonParseException("Expected a digit after '.'", p)
+      if p >= lim then
+        if !atInputEnd then return -1
+        throw JsonParseException("Expected a digit after '.'", bufferBase + p)
+      if in(p) < '0' || in(p) > '9' then
+        throw JsonParseException("Expected a digit after '.'", bufferBase + p)
       var fb: Byte = 0
       while p < lim && { fb = in(p); fb >= '0' && fb <= '9' } do
         val d = fb - '0'
@@ -410,22 +575,26 @@ private[json] abstract class JsonScanner extends PushSlots:
           digits += 1
           fracLen += 1
         p += 1
+      if p >= lim && !atInputEnd then return -1
     val dirty = digits > 17
     // exponent
     var expValue = 0
     if p < lim && (in(p) == 'e' || in(p) == 'E') then
       integral = false
       p += 1
+      if p >= lim && !atInputEnd then return -1
       var expNeg = false
       if p < lim && (in(p) == '+' || in(p) == '-') then
         expNeg = in(p) == '-'
         p += 1
+        if p >= lim && !atInputEnd then return -1
       if p >= lim || in(p) < '0' || in(p) > '9' then
-        throw JsonParseException("Expected a digit in the exponent", p)
+        throw JsonParseException("Expected a digit in the exponent", bufferBase + p)
       var eb: Byte = 0
       while p < lim && { eb = in(p); eb >= '0' && eb <= '9' } do
         if expValue < 100000 then expValue = expValue * 10 + (eb - '0')
         p += 1
+      if p >= lim && !atInputEnd then return -1
       if expNeg then expValue = -expValue
     numNegAcc = acc
     numDigits = digits
@@ -433,8 +602,10 @@ private[json] abstract class JsonScanner extends PushSlots:
     numE10 = expValue - fracLen
     numDirty = dirty
     numNeg = neg
+    numStart = startPos
     numEnd = p
     pos = p
+    p
 
   /** the raw text of the most recent number literal (ASCII by construction) */
   protected final def rawNumberString(): String =
@@ -499,43 +670,42 @@ private[json] abstract class JsonScanner extends PushSlots:
     */
   protected final def tryReadBoolean(): Int =
     var p = pos
-    if p < limit then
-      var b = input(p)
-      if isWsByte(b) then
-        skipWs()
-        p = pos
-        if p >= limit then return BooleanNone
-        b = input(p)
-      if b == 't' then
-        expectLiteral(p, "true")
-        return BooleanTrue
-      if b == 'f' then
-        expectLiteral(p, "false")
-        return BooleanFalse
-    BooleanNone
+    if p >= limit || isWsByte(input(p)) then
+      skipWs()
+      p = pos
+      if p >= limit then return BooleanNone
+    val b = input(p)
+    if b == 't' then
+      expectLiteral(p, "true")
+      BooleanTrue
+    else if b == 'f' then
+      expectLiteral(p, "false")
+      BooleanFalse
+    else BooleanNone
 
   /** consumes `null` (whitespace-skipping, probe-first); false consumes nothing */
   protected final def tryReadNull(): Boolean =
     var p = pos
-    if p < limit then
-      var b = input(p)
-      if isWsByte(b) then
-        skipWs()
-        p = pos
-        if p >= limit then return false
-        b = input(p)
-      if b == 'n' then
-        expectLiteral(p, "null")
-        return true
-    false
+    if p >= limit || isWsByte(input(p)) then
+      skipWs()
+      p = pos
+      if p >= limit then return false
+    if input(p) == 'n' then
+      expectLiteral(p, "null")
+      true
+    else false
 
-  private def expectLiteral(start: Int, literal: String): Unit =
-    if start + literal.length > limit then
-      throw JsonParseException(s"Invalid literal, expected '$literal'", start)
+  private def expectLiteral(start0: Int, literal: String): Unit =
+    var start = start0
+    while start + literal.length > limit do
+      val available = limit - start
+      start -= refillKeeping(start)
+      if limit - start == available then
+        throw JsonParseException(s"Invalid literal, expected '$literal'", bufferBase + start)
     var i = 1
     while i < literal.length do
       if input(start + i) != literal.charAt(i) then
-        throw JsonParseException(s"Invalid literal, expected '$literal'", start)
+        throw JsonParseException(s"Invalid literal, expected '$literal'", bufferBase + start)
       i += 1
     pos = start + literal.length
 
@@ -545,42 +715,43 @@ private[json] abstract class JsonScanner extends PushSlots:
     skipWs()
     pos >= limit
 
+  /** the byte starting the next value (whitespace consumed, streams refilled), or -1 at end of
+    * input
+    */
+  protected final def peekByteOrEof(): Int =
+    skipWs()
+    if pos < limit then input(pos) & 0xff else -1
+
   /** describes the value starting at the cursor, for ExpectedType errors */
   protected final def describeCurrent(): String =
-    skipWs()
-    if pos >= limit then "end of input"
-    else
-      (input(pos): @annotation.switch) match
-        case '{'                                                             => "an object"
-        case '['                                                             => "an array"
-        case '"'                                                             => "a string"
-        case 't' | 'f'                                                       => "a boolean"
-        case 'n'                                                             => "null"
-        case '-' | '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' => "a number"
-        case other => s"'${(other & 0xff).toChar}'"
+    (peekByteOrEof(): @annotation.switch) match
+      case -1                                                              => "end of input"
+      case '{'                                                             => "an object"
+      case '['                                                             => "an array"
+      case '"'                                                             => "a string"
+      case 't' | 'f'                                                       => "a boolean"
+      case 'n'                                                             => "null"
+      case '-' | '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' => "a number"
+      case other                                                           => s"'${other.toChar}'"
 
   protected final def currentSpan(): scalanotation.DecodeError.Span =
     spanAt(currentOffset())
 
-  /** Line/column for `offset`, computed by decoding the input on this cold error path only. The
-    * column counts chars of the decoded text, matching the core decoder's byte-input spans.
+  /** Line/column for the absolute `offset`, computed on this cold error path only. The column
+    * counts code points, matching the core decoder's byte-input spans. Positions that scrolled out
+    * of a streaming buffer report the buffer-start position (best effort).
     */
-  protected final def spanAt(offset: Int): scalanotation.DecodeError.Span =
-    JsonSpans.spanAt(input, limit, offset)
-
-private[json] object JsonSpans:
-  def spanAt(input: Array[Byte], limit: Int, offset: Int): scalanotation.DecodeError.Span =
-    val bounded = math.min(math.max(offset, 0), limit)
-    var line    = 1
-    var column  = 1
-    var i       = 0
-    while i < bounded do
+  protected final def spanAt(offset: Long): scalanotation.DecodeError.Span =
+    val local  = math.min(math.max(offset - bufferBase, 0L), limit.toLong).toInt
+    var line   = 1 + discardedLines
+    var column = discardedColumn
+    var i      = 0
+    while i < local do
       val b = input(i)
       if b == '\n' then
         line += 1
         column = 1
-      else if b >= 0 || (b & 0xc0) == 0xc0 then
-        // count code-point starts only, so multi-byte UTF-8 advances the column once
-        column += 1
+      else if b >= 0 || (b & 0xc0) == 0xc0 then column += 1
       i += 1
-    scalanotation.DecodeError.Span(bounded, line, column)
+    val absolute = math.min(bufferBase + local, Int.MaxValue.toLong).toInt
+    scalanotation.DecodeError.Span(absolute, line, column)

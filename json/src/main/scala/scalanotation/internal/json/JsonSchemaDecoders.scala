@@ -188,21 +188,21 @@ private[json] trait JsonSchemaDecoders extends JsonScanner, SharedHelpers:
       if openBrace && !tryReadPunct('{') then raise(expectedTypeAtCurrent(schema))
 
       var fieldIndex    = 0 // the next expected schema field (a hint, not a requirement)
-      var closingOffset = 0
+      var closingOffset = 0L
 
       if tryReadPunct('}') then
         // `{}` provides no fields: the closing walk below fills or reports every field
-        closingOffset = pos - 1
+        closingOffset = absoluteOffset(pos - 1)
       else
         var done = false
         while !done do
           // --- field name (+ ':'): fused header bytes against the expected field, else the
           // cold resolver ---
           var decodedIndex = -1
-          var nameOffset   = 0
+          var nameOffset   = 0L
           if fieldIndex < fields.length && expectFieldHeader(headers(fieldIndex)) then
             decodedIndex = fieldIndex
-            nameOffset = pos - headers(fieldIndex).length
+            nameOffset = absoluteOffset(pos - headers(fieldIndex).length)
             if seen != null then
               // engaged only after a deviation (or a pre-marked discriminator): the expected
               // field can then already be decoded
@@ -241,7 +241,7 @@ private[json] trait JsonSchemaDecoders extends JsonScanner, SharedHelpers:
           tryReadSeparator('}') match
             case SeparatorComma   => ()
             case SeparatorClosing =>
-              closingOffset = pos - 1
+              closingOffset = absoluteOffset(pos - 1)
               done = true
             case _ =>
               raise(expectedObjectEndError())
@@ -278,7 +278,7 @@ private[json] trait JsonSchemaDecoders extends JsonScanner, SharedHelpers:
       index += 1
     set
 
-  private def missingFieldError(name: String, closingOffset: Int): DecodeError =
+  private def missingFieldError(name: String, closingOffset: Long): DecodeError =
     DecodeError.MissingField(name).atPath(s".$name").atToken(spanAt(closingOffset))
 
   /** Resolves the current escape-free name slice to its plan entry: wide plans probe the name
@@ -332,7 +332,7 @@ private[json] trait JsonSchemaDecoders extends JsonScanner, SharedHelpers:
       alreadySeenField: String | Null
   ): Result[Unit, DecodeError] = Result.task {
     if !tryScanStringSlice() then raise(expectedFieldNameError())
-    val nameOffset = sliceQuoteOffset
+    val nameOffset = sliceQuoteAbsolute()
     var resolved   = -1
     if !sliceEscaped then resolved = dispatchSlice(plans)
     else
@@ -368,14 +368,14 @@ private[json] trait JsonSchemaDecoders extends JsonScanner, SharedHelpers:
       pushControl(SkippedUnknownField)
   }
 
-  private def makeDuplicateKnownFieldError(name: String, nameOffset: Int): DecodeError =
+  private def makeDuplicateKnownFieldError(name: String, nameOffset: Long): DecodeError =
     DecodeError.DuplicateField(name).atPath(s".$name").atToken(spanAt(nameOffset))
 
   /** cold decoration of a field value's decode error */
   private def recordFieldValueError(
       error: DecodeError,
       field: Field,
-      nameOffset: Int
+      nameOffset: Long
   ): DecodeError =
     error.atPath(s".${field.name}").atToken(spanAt(nameOffset))
 
@@ -384,10 +384,10 @@ private[json] trait JsonSchemaDecoders extends JsonScanner, SharedHelpers:
     */
   private def skipValue(): Result[Unit, DecodeError] =
     Result.task:
-      skipWs()
-      if pos >= limit then
+      val next = peekByteOrEof()
+      if next < 0 then
         raise(DecodeError.ExpectedExpression(describeCurrent()).atToken(currentSpan()))
-      (input(pos): @annotation.switch) match
+      (next: @annotation.switch) match
         case '"' =>
           tryScanStringSlice()
           ()
@@ -580,13 +580,14 @@ private[json] trait JsonSchemaDecoders extends JsonScanner, SharedHelpers:
   protected final def decodeSum(schema: RawSchema.Sum[?]): Result[Unit, DecodeError] =
     Result.task:
       if !tryReadPunct('{') then raise(expectedTypeAtCurrent(schema))
-      if tryReadPunct('}') then raise(DecodeError.FieldCountMismatch(1, 0).atToken(spanAt(pos - 1)))
+      if tryReadPunct('}') then
+        raise(DecodeError.FieldCountMismatch(1, 0).atToken(spanAt(absoluteOffset(pos - 1))))
 
       val cases     = schema.cases
       val plans     = JsonFieldPlans.of(schema)
       var caseIndex = -1
       if !tryScanStringSlice() then raise(expectedFieldNameError())
-      val nameOffset = sliceQuoteOffset
+      val nameOffset = sliceQuoteAbsolute()
       if !sliceEscaped then caseIndex = dispatchSlice(plans)
       if caseIndex < 0 then
         // a non-plain or unknown name: compare decoded (only errors materialize otherwise)
@@ -642,7 +643,7 @@ private[json] trait JsonSchemaDecoders extends JsonScanner, SharedHelpers:
     if !tryReadPunct('{') then return Result.Err(expectedTypeAtCurrent(schema))
     if tryReadPunct('}') then
       return Result.Err(
-        DecodeError.MissingField(schema.discriminatorField).atToken(spanAt(pos - 1))
+        DecodeError.MissingField(schema.discriminatorField).atToken(spanAt(absoluteOffset(pos - 1)))
       )
 
     val discriminatorField = schema.discriminatorField
@@ -690,9 +691,9 @@ private[json] trait JsonSchemaDecoders extends JsonScanner, SharedHelpers:
 
     // payload start: a comma leaves the cursor at the first payload field; the closing brace is
     // left for the partial record loop to consume
-    skipWs()
-    if pos < limit && input(pos) == ',' then pos += 1
-    else if pos < limit && input(pos) == '}' then ()
+    val payloadStart = peekByteOrEof()
+    if payloadStart == ',' then pos += 1
+    else if payloadStart == '}' then ()
     else return Result.Err(expectedObjectEndError())
     sumCase.nn
 
@@ -825,7 +826,11 @@ private[json] trait JsonSchemaDecoders extends JsonScanner, SharedHelpers:
               case SeparatorClosing => done = true
               case _                => raise(expectedArrayEndError())
           if count != expected then
-            raise(DecodeError.FieldCountMismatch(expected, count).atToken(spanAt(pos - 1)))
+            raise(
+              DecodeError
+                .FieldCountMismatch(expected, count)
+                .atToken(spanAt(absoluteOffset(pos - 1)))
+            )
         pushRef(read.finish(state))
     }
 
@@ -867,7 +872,9 @@ private[json] trait JsonSchemaDecoders extends JsonScanner, SharedHelpers:
           .atToken(currentSpan())
       )
     if tryReadPunct(']') then
-      return Result.Err(DecodeError.FieldCountMismatch(2, 0).atToken(spanAt(pos - 1)))
+      return Result.Err(
+        DecodeError.FieldCountMismatch(2, 0).atToken(spanAt(absoluteOffset(pos - 1)))
+      )
 
     decodeBase(schema.key) match
       case Result.Err(error) => return Result.Err(error.atPath(s"[$index][0]"))
@@ -876,7 +883,8 @@ private[json] trait JsonSchemaDecoders extends JsonScanner, SharedHelpers:
     var state = addPairKeySlot(read)(state0)
     if !tryReadPunct(',') then
       return Result.Err(
-        if tryReadPunct(']') then DecodeError.FieldCountMismatch(2, 1).atToken(spanAt(pos - 1))
+        if tryReadPunct(']') then
+          DecodeError.FieldCountMismatch(2, 1).atToken(spanAt(absoluteOffset(pos - 1)))
         else expectedArrayEndError()
       )
 
@@ -912,7 +920,7 @@ private[json] trait JsonSchemaDecoders extends JsonScanner, SharedHelpers:
         val elementPlan = RawSchema.valuePlanOf(schema.element)
         while !done do
           if !tryScanStringSlice() then raise(expectedFieldNameError())
-          val nameOffset = sliceQuoteOffset
+          val nameOffset = sliceQuoteAbsolute()
           val name       = materializeSlice()
           if !tryReadPunct(':') then raise(expectedColonError())
           if seenNames.alreadySeen(name) then
@@ -941,11 +949,11 @@ private[json] trait JsonSchemaDecoders extends JsonScanner, SharedHelpers:
 
   protected final def decodeRouter(schema: RawSchema.Router[?]): Result[Unit, DecodeError] =
     Result.task:
-      skipWs()
-      if pos >= limit then
+      val next = peekByteOrEof()
+      if next < 0 then
         raise(DecodeError.ExpectedExpression(describeCurrent()).atToken(currentSpan()))
       val router = schema.router
-      (input(pos): @annotation.switch) match
+      (next: @annotation.switch) match
         case '{' =>
           decodeRouterCase(schema, router.recordIndex).check
         case '[' =>
@@ -987,7 +995,7 @@ private[json] trait JsonSchemaDecoders extends JsonScanner, SharedHelpers:
     */
   private def decodeRouterNumber(schema: RawSchema.Router[?]): Result[Unit, DecodeError] =
     Result.task:
-      val numberOffset = pos
+      val numberOffset = absoluteOffset(pos)
       tryScanNumber() // start byte was probed by the caller; malformed numbers throw
       val router = schema.router
       val index  =
@@ -1016,7 +1024,7 @@ private[json] trait JsonSchemaDecoders extends JsonScanner, SharedHelpers:
     */
   private def decodeScannedNumberValue(
       schema: RawSchema[?],
-      numberOffset: Int
+      numberOffset: Long
   ): Result[Unit, DecodeError] =
     schema match
       case mapped: RawSchema.Mapped[?, ?] =>
@@ -1046,7 +1054,7 @@ private[json] trait JsonSchemaDecoders extends JsonScanner, SharedHelpers:
           DecodeError.ExpectedType(other.describeSelf, "a number").atToken(spanAt(numberOffset))
         )
 
-  private def scannedNumberTypeError(schema: RawSchema[?], numberOffset: Int): DecodeError =
+  private def scannedNumberTypeError(schema: RawSchema[?], numberOffset: Long): DecodeError =
     DecodeError
       .ExpectedType(schema.describeSelf, s"the number ${rawNumberString()}")
       .atToken(spanAt(numberOffset))
@@ -1066,19 +1074,19 @@ private[json] trait JsonSchemaDecoders extends JsonScanner, SharedHelpers:
         raise(
           DecodeError
             .ExpectedType(RawSchema.Char.describeSelf, "a string")
-            .atToken(spanAt(sliceQuoteOffset))
+            .atToken(spanAt(sliceQuoteAbsolute()))
         )
       pushChar(value.toChar)
     else raise(expectedTypeAtCurrent(RawSchema.Char))
 
   protected final def decodeInt(): Result[Unit, DecodeError] = Result.task:
     if tryScanNumber() then
-      if !numberAsInt() then raise(scannedNumberTypeError(RawSchema.Int, numStart))
+      if !numberAsInt() then raise(scannedNumberTypeError(RawSchema.Int, numberStartAbsolute()))
     else raise(expectedTypeAtCurrent(RawSchema.Int))
 
   protected final def decodeLong(): Result[Unit, DecodeError] = Result.task:
     if tryScanNumber() then
-      if !numberAsLong() then raise(scannedNumberTypeError(RawSchema.Long, numStart))
+      if !numberAsLong() then raise(scannedNumberTypeError(RawSchema.Long, numberStartAbsolute()))
     else raise(expectedTypeAtCurrent(RawSchema.Long))
 
   protected final def decodeDouble(): Result[Unit, DecodeError] = Result.task:

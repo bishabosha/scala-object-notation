@@ -24,6 +24,14 @@ object Json:
   def readAs[T: Reader as reader](input: Array[Byte]): Result[T, DecodeError] =
     JsonDecoder.decodeBytes(input, reader)(using JsonDecoder.gcContext)
 
+  /** Reads a value from a streaming UTF-8 JSON input — the typical HTTP body: the decoder pulls
+    * bytes through a fixed refill buffer as it scans, so a body of any size decodes without being
+    * materialized whole. The stream is read up to the end of the JSON value (plus trailing
+    * whitespace) and is not closed.
+    */
+  def readAs[T: Reader as reader](input: java.io.InputStream): Result[T, DecodeError] =
+    JsonDecoder.decodeStream(input, reader)(using JsonDecoder.gcContext)
+
   /** Variants of the read methods that reuse decoder machinery across calls, as configured by the
     * given [[JsonBatchContext]] — see its factories for the pooling options. Results are identical
     * to the plain methods; only the allocation behaviour differs.
@@ -40,6 +48,12 @@ object Json:
         ctx: JsonBatchContext
     ): Result[T, DecodeError] =
       JsonDecoder.decodeBytes(input, reader)(using ctx.holder)
+
+    def readAs[T](input: java.io.InputStream)(
+        using reader: Reader[T],
+        ctx: JsonBatchContext
+    ): Result[T, DecodeError] =
+      JsonDecoder.decodeStream(input, reader)(using ctx.holder)
 
   /** The default output format: standard compact JSON — no whitespace. */
   val compact: TextFormat = TextFormat.compact(spacing = 0)

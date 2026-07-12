@@ -538,6 +538,17 @@ class CrossLibraryDecodeBenchmark:
   @Benchmark def sonJsonWideShuffled100Bytes: Any =
     scalanotation.json.Json.batched.readAs[WideBatch](jsonWideShuffledBytes)
 
+  // streaming decode — the typical HTTP-body path: each library pulls the same bytes through
+  // its InputStream entry point (the fresh ByteArrayInputStream costs the same for every side)
+  @Benchmark def sonJsonOrders100Stream: Any =
+    scalanotation.json.Json.batched.readAs[OrderBatch](
+      new java.io.ByteArrayInputStream(jsonOrdersBytes)
+    )
+  @Benchmark def jsoniterOrders100Stream: Any =
+    readFromStream[OrderBatch](new java.io.ByteArrayInputStream(jsonOrdersBytes))
+  @Benchmark def zioBlocksOrders100Stream: Any =
+    zioOrdersCodec.decode(new java.io.ByteArrayInputStream(jsonOrdersBytes))
+
   @Benchmark def sonJsonOrdersShuffled100: Any =
     scalanotation.json.Json.batched.readAs[OrderBatch](jsonOrdersShuffledInput)
   @Benchmark def sonJsonOrdersShuffled100Bytes: Any =

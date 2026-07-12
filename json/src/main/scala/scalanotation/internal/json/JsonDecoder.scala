@@ -25,6 +25,14 @@ private[scalanotation] final class JsonDecoder private (
     resetSlots()
     this
 
+  /** [[reset]] over a streaming UTF-8 input: the decoder refills its pooled buffer from the stream
+    * on demand, so the body never materializes whole
+    */
+  def resetStream(input: java.io.InputStream): this.type =
+    resetScannerStream(input)
+    resetSlots()
+    this
+
   def decodeValue[T](reader: Reader[T]): Result[T, DecodeError] =
     try
       Result:
@@ -79,3 +87,13 @@ private[scalanotation] object JsonDecoder:
         pool.withBorrowed(decoder => decoder.resetBytes(input).decodeValue(reader))
       case PoolHolder.NoPoolHolder =>
         new JsonDecoder(slotsPooling = false).resetBytes(input).decodeValue(reader)
+
+  private[scalanotation] def decodeStream[T](
+      input: java.io.InputStream,
+      reader: Reader[T]
+  )(using ctx: PoolHolder): Result[T, DecodeError] =
+    ctx match
+      case PoolHolder.RealPoolHolder(pool) =>
+        pool.withBorrowed(decoder => decoder.resetStream(input).decodeValue(reader))
+      case PoolHolder.NoPoolHolder =>
+        new JsonDecoder(slotsPooling = false).resetStream(input).decodeValue(reader)
