@@ -160,7 +160,8 @@ private[json] abstract class JsonScanner extends PushSlots:
       if p >= limit || in(p) != '"' then return false
     val end = p + header.length
     if end > limit then return false
-    var i = 0
+    // the leading quote was just probed; compare the name bytes and colon
+    var i = 1
     while i < header.length && in(p + i) == header(i) do i += 1
     if i == header.length then
       pos = end

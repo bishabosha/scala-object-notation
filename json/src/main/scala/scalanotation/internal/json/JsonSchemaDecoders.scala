@@ -186,10 +186,10 @@ private[json] trait JsonSchemaDecoders extends JsonScanner, SharedHelpers:
 
       if openBrace && !tryReadPunct('{') then raise(expectedTypeAtCurrent(schema))
 
-      var fieldIndex                   = 0 // the next expected schema field
-      var decodedCount                 = 0 // fields actually present in the input
-      var lastFieldName: String | Null = null
-      var closingOffset                = 0
+      var fieldIndex     = 0  // the next expected schema field
+      var decodedCount   = 0  // fields actually present in the input
+      var lastFieldIndex = -1 // for the count-mismatch error's path segment
+      var closingOffset  = 0
 
       if tryReadPunct('}') then
         // `{}` provides no fields: the trailing fill below provides every fill value, and the
@@ -229,18 +229,17 @@ private[json] trait JsonSchemaDecoders extends JsonScanner, SharedHelpers:
                 fieldIndex += 1
 
           // --- value: decode and append in one plan dispatch ---
-          val expectedField = fields(decodedIndex)
           decodeValueInto(read)(
             state,
             decodedIndex,
             kinds(decodedIndex),
-            expectedField.schema
+            fields(decodedIndex).schema
           ) match
             case err: Result.Err[?] =>
               raise(
                 recordFieldValueError(
                   err.asInstanceOf[Result.Err[DecodeError]].error,
-                  expectedField,
+                  fields(decodedIndex),
                   nameOffset
                 )
               )
@@ -249,7 +248,7 @@ private[json] trait JsonSchemaDecoders extends JsonScanner, SharedHelpers:
               if seenFields != null then seenFields.mark(decodedIndex)
               fieldIndex = decodedIndex + 1
               decodedCount += 1
-              lastFieldName = expectedField.name
+              lastFieldIndex = decodedIndex
 
           // --- separator ---
           tryReadSeparator('}') match
@@ -266,6 +265,7 @@ private[json] trait JsonSchemaDecoders extends JsonScanner, SharedHelpers:
 
       val decodedFieldCount = if allowSkip then fieldIndex else decodedCount
       if decodedFieldCount != fields.length then
+        val lastFieldName = if lastFieldIndex >= 0 then fields(lastFieldIndex).name else null
         raise(fieldCountMismatchAtClosing(fields, decodedCount, lastFieldName, closingOffset))
       else pushRef(read.finish(state))
     }
