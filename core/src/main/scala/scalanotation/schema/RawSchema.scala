@@ -111,6 +111,17 @@ enum RawSchema[A]:
       case null  => null
       case value => value.asInstanceOf[IArray[AnyRef | Null]]
 
+  /** Marks this record as rejecting unknown field names in format modules that skip them by default
+    * (the JSON module) — installed by [[Configured.withRejectUnknownFields]] on freshly copied
+    * nodes. The core notation decoder always rejects unknown fields and never consults this
+    * property.
+    */
+  private[scalanotation] def installRejectUnknownFields(): Unit =
+    properties.put(RawSchema.RejectUnknownFields, java.lang.Boolean.TRUE)
+
+  private[scalanotation] def rejectsUnknownFields: Boolean =
+    properties.get(RawSchema.RejectUnknownFields) != null
+
   // Cached named-tuple validation: checked once per decoded record, so it must be a plain volatile
   // read rather than a properties-map lookup. Validation is idempotent — a racing recompute stores
   // the same value.
@@ -352,6 +363,9 @@ object RawSchema:
 
   /** property carrying a [[NamedTuple]]'s decode-time field defaults — see installFieldDefaults */
   private val FieldDefaults: Key[AnyRef] = Key()
+
+  /** property marking a record as strict about unknown fields — see installRejectUnknownFields */
+  private val RejectUnknownFields: Key[AnyRef] = Key()
 
   final case class Field(name: String, schema: RawSchema[?])
   final case class SumCase(name: String, schema: RawSchema[?])

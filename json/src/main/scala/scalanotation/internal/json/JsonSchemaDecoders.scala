@@ -128,11 +128,9 @@ private[json] trait JsonSchemaDecoders extends JsonScanner, SharedHelpers:
   ): Result[Unit, DecodeError] =
     withRead(schema, _.read) { read =>
       withBorrowSlots(read.slotsFactory) { slots =>
-        // the seen-field bitset only matters when fields can be skipped (out-of-schema-order
-        // duplicates); in ordered mode the decoded set is always the contiguous prefix
-        if JsonFieldPlans.of(schema).fills != null then
-          decodeRecordFields(schema, read, slots, seenFieldSetForDepth(), null, openBrace = true)
-        else decodeRecordFields(schema, read, slots, null, null, openBrace = true)
+        // the seen-field bitset engages lazily on the first out-of-order arrival — while every
+        // field arrives in schema order, the decoded set is always the contiguous prefix
+        decodeRecordFields(schema, read, slots, null, null, openBrace = true)
       }
     }
 
@@ -153,13 +151,16 @@ private[json] trait JsonSchemaDecoders extends JsonScanner, SharedHelpers:
       sets(depth) = created
       created
 
-  /** Decodes one JSON object as a named-tuple record with a single loop covering ordered and
-    * skipped-field schemas. The happy path matches the plan-cached header bytes (`"name":`) of the
-    * expected field, decodes the value straight into the builder through its plan code, and
-    * consumes the `,`/`}` separator — a primitive field materializes nothing but its value. Any
-    * deviation (whitespace before the colon, out-of-order names, escapes, mismatches) drops to the
-    * cold resolver, which re-reads the same bytes generically and preserves the loop's semantics
-    * and errors.
+  /** Decodes one JSON object as a named-tuple record with a single loop covering every field order.
+    * The happy path matches the plan-cached header bytes (`"name":`) of the next expected field
+    * (writer output arrives in schema order), decodes the value straight into the builder through
+    * its plan code, and consumes the `,`/`}` separator — a primitive field materializes nothing but
+    * its value, and no bitset is touched. Any deviation (whitespace before the colon, out-of-order
+    * names, escapes, unknown fields) engages the seen-field bitset and drops to the cold resolver,
+    * which re-reads the same bytes generically: JSON objects are unordered, so an arriving name
+    * resolves against ALL fields, and unknown names are skipped (or rejected in strict mode).
+    * Omitted fields fill from their fill values at the closing brace; a missing field without one
+    * is an error.
     */
   private def decodeRecordFields(
       schema: RawSchema.NamedTuple[?],
@@ -170,15 +171,15 @@ private[json] trait JsonSchemaDecoders extends JsonScanner, SharedHelpers:
       openBrace: Boolean
   ): Result[Unit, DecodeError] =
     Result.task {
-      val fields    = schema.fields
-      val plans     = JsonFieldPlans.of(schema)
-      val fills     = plans.fills
-      val allowSkip = fills != null
-      if seenFields != null then
-        seenFields.reset(fields.length)
+      val fields = schema.fields
+      val plans  = JsonFieldPlans.of(schema)
+      val fills  = plans.fills
+      var seen   = seenFields
+      if seen != null then
+        seen.reset(fields.length)
         if alreadySeenField != null then
           val alreadySeenIndex = indexOfField(fields, alreadySeenField)
-          if alreadySeenIndex >= 0 then seenFields.mark(alreadySeenIndex)
+          if alreadySeenIndex >= 0 then seen.mark(alreadySeenIndex)
       schema.isValidNamedTuple(namesPool).check
       val kinds             = plans.kinds
       val headers           = plans.headerBytes
@@ -186,14 +187,11 @@ private[json] trait JsonSchemaDecoders extends JsonScanner, SharedHelpers:
 
       if openBrace && !tryReadPunct('{') then raise(expectedTypeAtCurrent(schema))
 
-      var fieldIndex     = 0  // the next expected schema field
-      var decodedCount   = 0  // fields actually present in the input
-      var lastFieldIndex = -1 // for the count-mismatch error's path segment
-      var closingOffset  = 0
+      var fieldIndex    = 0 // the next expected schema field (a hint, not a requirement)
+      var closingOffset = 0
 
       if tryReadPunct('}') then
-        // `{}` provides no fields: the trailing fill below provides every fill value, and the
-        // count check reports precisely when some field has none
+        // `{}` provides no fields: the closing walk below fills or reports every field
         closingOffset = pos - 1
       else
         var done = false
@@ -205,50 +203,39 @@ private[json] trait JsonSchemaDecoders extends JsonScanner, SharedHelpers:
           if fieldIndex < fields.length && expectFieldHeader(headers(fieldIndex)) then
             decodedIndex = fieldIndex
             nameOffset = pos - headers(fieldIndex).length
-            // only pre-marking (an already-seen field such as a sum discriminator) can make an
-            // exact-order match a duplicate
-            if seenFields != null && seenFields.contains(decodedIndex) then
-              raise(makeDuplicateKnownFieldError(fields(decodedIndex).name, nameOffset))
+            if seen != null then
+              // engaged only after a deviation (or a pre-marked discriminator): the expected
+              // field can then already be decoded
+              if seen.contains(decodedIndex) then
+                raise(makeDuplicateKnownFieldError(fields(decodedIndex).name, nameOffset))
+              seen.mark(decodedIndex)
           else
             nameOffset = currentOffset()
-            resolveRecordFieldSlow(
-              fields,
-              plans,
-              seenFields,
-              alreadySeenField,
-              allowSkip,
-              fieldIndex
-            ).check
+            if seen == null then seen = engagePrefixSeenSet(fields.length, fieldIndex)
+            resolveRecordFieldSlow(fields, plans, seen, alreadySeenField).check
             decodedIndex = pullControl()
+            if decodedIndex >= 0 then seen.mark(decodedIndex)
 
-            if decodedIndex > fieldIndex then
-              // fill the skipped range — the resolver validated every field in it is fillable
-              val fillValues = fills.nn
-              while fieldIndex < decodedIndex do
-                state = read.add(state, fieldIndex, fillValues(fieldIndex))
-                fieldIndex += 1
-
-          // --- value: decode and append in one plan dispatch ---
-          decodeValueInto(read)(
-            state,
-            decodedIndex,
-            kinds(decodedIndex),
-            fields(decodedIndex).schema
-          ) match
-            case err: Result.Err[?] =>
-              raise(
-                recordFieldValueError(
-                  err.asInstanceOf[Result.Err[DecodeError]].error,
-                  fields(decodedIndex),
-                  nameOffset
+          // --- value: decode and append in one plan dispatch (unknown fields were consumed
+          // whole by the resolver) ---
+          if decodedIndex >= 0 then
+            decodeValueInto(read)(
+              state,
+              decodedIndex,
+              kinds(decodedIndex),
+              fields(decodedIndex).schema
+            ) match
+              case err: Result.Err[?] =>
+                raise(
+                  recordFieldValueError(
+                    err.asInstanceOf[Result.Err[DecodeError]].error,
+                    fields(decodedIndex),
+                    nameOffset
+                  )
                 )
-              )
-            case nextState =>
-              state = nextState.asInstanceOf[read.State]
-              if seenFields != null then seenFields.mark(decodedIndex)
-              fieldIndex = decodedIndex + 1
-              decodedCount += 1
-              lastFieldIndex = decodedIndex
+              case nextState =>
+                state = nextState.asInstanceOf[read.State]
+                fieldIndex = decodedIndex + 1
 
           // --- separator ---
           tryReadSeparator('}') match
@@ -259,151 +246,101 @@ private[json] trait JsonSchemaDecoders extends JsonScanner, SharedHelpers:
             case _ =>
               raise(expectedObjectEndError())
 
-      if allowSkip then
-        state = fillTrailingSkippedFields(read)(fields, fills.nn, state, fieldIndex)
-        fieldIndex = pullSkipFillIndex()
-
-      val decodedFieldCount = if allowSkip then fieldIndex else decodedCount
-      if decodedFieldCount != fields.length then
-        val lastFieldName = if lastFieldIndex >= 0 then fields(lastFieldIndex).name else null
-        raise(fieldCountMismatchAtClosing(fields, decodedCount, lastFieldName, closingOffset))
-      else pushRef(read.finish(state))
+      // --- omitted fields: fill the fillable ones, report the first missing required field ---
+      if seen == null then
+        // every decoded field was the expected one, so the unseen set is the trailing range
+        var index = fieldIndex
+        while index < fields.length do
+          val fill = if fills != null then fills(index) else null
+          if fill == null then raise(missingFieldError(fields(index).name, closingOffset))
+          state = read.add(state, index, fill)
+          index += 1
+      else
+        var index = 0
+        while index < fields.length do
+          if !seen.contains(index) then
+            val fill = if fills != null then fills(index) else null
+            if fill == null then raise(missingFieldError(fields(index).name, closingOffset))
+            state = read.add(state, index, fill)
+          index += 1
+      pushRef(read.finish(state))
     }
 
+  /** engages the per-depth seen-field set mid-record: fields decoded so far are exactly the
+    * contiguous prefix
+    */
+  private def engagePrefixSeenSet(fieldCount: Int, prefix: Int): Internal.FieldIndexSet =
+    val set = seenFieldSetForDepth()
+    set.reset(fieldCount)
+    var index = 0
+    while index < prefix do
+      set.mark(index)
+      index += 1
+    set
+
+  private def missingFieldError(name: String, closingOffset: Int): DecodeError =
+    DecodeError.MissingField(name).atPath(s".$name").atToken(spanAt(closingOffset))
+
+  /** [[resolveRecordFieldSlow]]'s control-slot value when an unknown field name (and its whole
+    * value) was consumed in lenient mode
+    */
+  private inline val SkippedUnknownField = -1
+
   /** Cold path of the record loop's name step: resolves an arriving field name that was not the
-    * exact expected header. Escape-free names slice-compare against the plan-cached content bytes
-    * along the fill walk (nothing materializes on the match path); escaped names compare decoded.
-    * On success the name and colon are consumed and the resolved index is left in the control slot;
-    * the caller fills up to it (the walk only passes fillable fields).
+    * exact expected header against ALL fields — JSON objects are unordered. Escape-free names
+    * slice-compare against the plan-cached content bytes (nothing materializes on the match path);
+    * escaped names compare decoded. On success the name and colon are consumed and the resolved
+    * index is left in the control slot. A name matching no field is an
+    * [[DecodeError.UnexpectedField]] in strict mode; otherwise its value is skipped whole and
+    * [[SkippedUnknownField]] is left in the control slot.
     */
   private def resolveRecordFieldSlow(
       fields: IArray[Field],
       plans: JsonFieldPlans,
-      seenFields: Internal.FieldIndexSet | Null,
-      alreadySeenField: String | Null,
-      allowSkip: Boolean,
-      fieldIndexStart: Int
+      seen: Internal.FieldIndexSet,
+      alreadySeenField: String | Null
   ): Result[Unit, DecodeError] = Result.task {
     if !tryScanStringSlice() then raise(expectedFieldNameError())
     val nameOffset = sliceQuoteOffset
-    val fills      = if allowSkip then plans.fills.nn else null
     var resolved   = -1
     if !sliceEscaped then
       val contents = plans.contentBytes
-      var index    = fieldIndexStart
-      var blocked  = false
-      while !blocked && resolved < 0 && index < fields.length do
+      var index    = 0
+      while resolved < 0 && index < fields.length do
         val content = contents(index)
         if content != null && sliceEquals(content) then resolved = index
-        else if fills != null && fills(index) != null then index += 1
-        else blocked = true
+        else index += 1
     else
-      val name    = materializeSlice()
-      var index   = fieldIndexStart
-      var blocked = false
-      while !blocked && resolved < 0 && index < fields.length do
+      val name  = materializeSlice()
+      var index = 0
+      while resolved < 0 && index < fields.length do
         if name == plans.names(index) then resolved = index
-        else if fills != null && fills(index) != null then index += 1
-        else blocked = true
+        else index += 1
 
     if resolved >= 0 then
-      if seenFields != null && seenFields.contains(resolved) then
+      if seen.contains(resolved) then
         raise(makeDuplicateKnownFieldError(fields(resolved).name, nameOffset))
       if !tryReadPunct(':') then raise(expectedColonError())
       pushControl(resolved)
     else
-      classifyUnresolvedField(
-        fields,
-        plans,
-        seenFields,
-        alreadySeenField,
-        allowSkip,
-        fieldIndexStart,
-        nameOffset
-      ).check
-  }
-
-  /** Error rendering for a field name that did not resolve: the arriving name materializes here
-    * (error path only) and classifies as a duplicate, an order mismatch, or a count overflow — the
-    * same decisions as the core record loop's token path.
-    */
-  private def classifyUnresolvedField(
-      fields: IArray[Field],
-      plans: JsonFieldPlans,
-      seenFields: Internal.FieldIndexSet | Null,
-      alreadySeenField: String | Null,
-      allowSkip: Boolean,
-      fieldIndexStart: Int,
-      nameOffset: Int
-  ): Result[Unit, DecodeError] = Result.task {
-    val actualName         = materializeSlice()
-    val expectedBeforeSkip =
-      if fieldIndexStart < fields.length then fields(fieldIndexStart) else null
-
-    // replay the fill walk to find the field that blocked the resolution
-    val fills = if allowSkip then plans.fills.nn else null
-    var index = fieldIndexStart
-    while fills != null && index < fields.length
-      && actualName != fields(index).name
-      && fills(index) != null
-    do index += 1
-
-    duplicateDecodedFieldError(
-      fields,
-      seenFields,
-      alreadySeenField,
-      fieldIndexStart,
-      actualName,
-      nameOffset
-    ).check
-    if index >= fields.length then
-      if expectedBeforeSkip == null then
-        raise(
-          DecodeError
-            .FieldCountMismatch(fields.length, index + 1)
-            .atPath(s".$actualName")
-            .atToken(spanAt(nameOffset))
-        )
-      else
-        raise(
-          DecodeError
-            .FieldOrderMismatch(expectedBeforeSkip.name, actualName)
-            .atPath(s".$actualName")
-            .atToken(spanAt(nameOffset))
-        )
-    else
-      raise(
-        DecodeError
-          .FieldOrderMismatch(fields(index).name, actualName)
-          .atPath(s".$actualName")
-          .atToken(spanAt(nameOffset))
-      )
-  }
-
-  private def duplicateDecodedFieldError(
-      fields: IArray[Field],
-      seenFields: Internal.FieldIndexSet | Null,
-      alreadySeenField: String | Null,
-      seenCount: Int,
-      actualName: String,
-      nameOffset: Int
-  ): Result[Unit, DecodeError] = Result.task {
-    if seenFields != null then
-      if alreadySeenField != null && actualName == alreadySeenField then
-        raise(makeDuplicateKnownFieldError(alreadySeenField, nameOffset))
-      var index = seenFields.nextMarked(0)
-      while index >= 0 do
-        if actualName == fields(index).name then
-          raise(makeDuplicateKnownFieldError(actualName, nameOffset))
-        index = seenFields.nextMarked(index + 1)
-    else
-      // without a bitset (ordered mode) the decoded set is exactly the contiguous prefix
-      var index = 0
-      val limit = math.min(seenCount, fields.length)
-      while index < limit do
-        if actualName == fields(index).name then
-          raise(makeDuplicateKnownFieldError(actualName, nameOffset))
-        index += 1
+      // not a schema field: a re-sent pre-consumed field (the discriminator) is a duplicate;
+      // anything else is unknown — an error in strict mode, skipped whole otherwise
+      if alreadySeenField != null || plans.rejectUnknown then
+        val actualName = materializeSlice()
+        if actualName == alreadySeenField then
+          raise(makeDuplicateKnownFieldError(alreadySeenField.nn, nameOffset))
+        if plans.rejectUnknown then
+          // ':' is consumed before the unknown field is reported, like the sum decoder
+          if !tryReadPunct(':') then raise(expectedColonError())
+          raise(
+            DecodeError
+              .UnexpectedField(actualName)
+              .atPath(s".$actualName")
+              .atToken(spanAt(nameOffset))
+          )
+      if !tryReadPunct(':') then raise(expectedColonError())
+      skipValue().check
+      pushControl(SkippedUnknownField)
   }
 
   private def makeDuplicateKnownFieldError(name: String, nameOffset: Int): DecodeError =
@@ -417,23 +354,69 @@ private[json] trait JsonSchemaDecoders extends JsonScanner, SharedHelpers:
   ): DecodeError =
     error.atPath(s".${field.name}").atToken(spanAt(nameOffset))
 
-  private def fieldCountMismatchAtClosing(
-      fields: IArray[Field],
-      decodedCount: Int,
-      lastFieldName: String | Null,
-      closingOffset: Int
-  ): DecodeError =
-    var err = DecodeError.FieldCountMismatch(fields.length, decodedCount)
-    if lastFieldName != null then err = err.atPath(s".$lastFieldName")
-    err.atToken(spanAt(closingOffset))
+  /** Skips one JSON value of any shape — the lenient record loop discards an unknown field's value
+    * without materializing anything. Malformed values report the decoders' errors.
+    */
+  private def skipValue(): Result[Unit, DecodeError] =
+    Result.task:
+      skipWs()
+      if pos >= limit then
+        raise(DecodeError.ExpectedExpression(describeCurrent()).atToken(currentSpan()))
+      (input(pos): @annotation.switch) match
+        case '"' =>
+          tryScanStringSlice()
+          ()
+        case 't' | 'f' =>
+          tryReadBoolean()
+          ()
+        case 'n' =>
+          tryReadNull()
+          ()
+        case '{' =>
+          skipObject().check
+        case '[' =>
+          skipArray().check
+        case '-' | '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' =>
+          tryScanNumber()
+          ()
+        case _ =>
+          raise(DecodeError.ExpectedExpression(describeCurrent()).atToken(currentSpan()))
 
-  private def fillTrailingSkippedFields(read: RawSchema.NamedTupleRead)(
-      fields: IArray[Field],
-      fills: Array[AnyRef | Null],
-      state: read.State,
-      fieldIndex: Int
-  ): read.State =
-    fillSkippedFields(read)(fields, fills, state, fieldIndex, "")
+  private def skipObject(): Result[Unit, DecodeError] =
+    if !enterNesting() then Result.Err(nestingLimitError().atToken(currentSpan()))
+    else
+      val result = Result.task:
+        pos += 1 // the '{' probed by skipValue
+        if tryReadPunct('}') then ()
+        else
+          var done = false
+          while !done do
+            if !tryScanStringSlice() then raise(expectedFieldNameError())
+            if !tryReadPunct(':') then raise(expectedColonError())
+            skipValue().check
+            tryReadSeparator('}') match
+              case SeparatorComma   => ()
+              case SeparatorClosing => done = true
+              case _                => raise(expectedObjectEndError())
+      exitNesting()
+      result
+
+  private def skipArray(): Result[Unit, DecodeError] =
+    if !enterNesting() then Result.Err(nestingLimitError().atToken(currentSpan()))
+    else
+      val result = Result.task:
+        pos += 1 // the '[' probed by skipValue
+        if tryReadPunct(']') then ()
+        else
+          var done = false
+          while !done do
+            skipValue().check
+            tryReadSeparator(']') match
+              case SeparatorComma   => ()
+              case SeparatorClosing => done = true
+              case _                => raise(expectedArrayEndError())
+      exitNesting()
+      result
 
   private def indexOfField(fields: IArray[Field], name: String): Int =
     var index = 0

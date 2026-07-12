@@ -24,7 +24,11 @@ private[json] final class JsonFieldPlans(
     /** decode-time fill values shared with the core plans (None in skippable mode, installed
       * defaults in defaults mode), or null when fields may not be omitted
       */
-    val fills: Array[AnyRef | Null] | Null
+    val fills: Array[AnyRef | Null] | Null,
+    /** whether unknown field names are a decode error for this record (the lenient default skips
+      * them) — installed by `Configured.withRejectUnknownFields`
+      */
+    val rejectUnknown: Boolean
 ):
   /** the fused header as text (`"name":`) for the encoder — derived once from the bytes */
   val headerText: Array[String] =
@@ -32,7 +36,7 @@ private[json] final class JsonFieldPlans(
 
 private[json] object JsonFieldPlans:
   val Empty: JsonFieldPlans =
-    JsonFieldPlans(Array.emptyByteArray, Array.empty, Array.empty, Array.empty, null)
+    JsonFieldPlans(Array.emptyByteArray, Array.empty, Array.empty, Array.empty, null, false)
 
   def of(schema: RawSchema[?]): JsonFieldPlans =
     schema.externalPlans(compute)
@@ -54,7 +58,14 @@ private[json] object JsonFieldPlans:
         index += 1
       // the fill values (skippable Nones or installed defaults) are computed once by the core
       // plans; sharing the array keeps the two formats' omission semantics identical
-      JsonFieldPlans(kinds, headers, content, names, namedTuple.fieldPlans.fills)
+      JsonFieldPlans(
+        kinds,
+        headers,
+        content,
+        names,
+        namedTuple.fieldPlans.fills,
+        namedTuple.rejectsUnknownFields
+      )
     case sum: RawSchema.Sum[?] =>
       val cases   = sum.cases
       val kinds   = new Array[Byte](cases.length)
@@ -69,7 +80,7 @@ private[json] object JsonFieldPlans:
         content(index) = contentBytesOf(sumCase.name)
         names(index) = sumCase.name
         index += 1
-      JsonFieldPlans(kinds, headers, content, names, null)
+      JsonFieldPlans(kinds, headers, content, names, null, false)
     case sum: RawSchema.DiscriminatorSum[?] =>
       // entry 0 is the discriminator header; entries 1..n carry the case names, whose values
       // arrive as JSON strings — the header decode slice-matches the string content against
@@ -90,7 +101,7 @@ private[json] object JsonFieldPlans:
         content(index + 1) = contentBytesOf(cases(index).name)
         names(index + 1) = cases(index).name
         index += 1
-      JsonFieldPlans(kinds, headers, content, names, null)
+      JsonFieldPlans(kinds, headers, content, names, null, false)
     case _ => JsonFieldPlans.Empty
 
   /** the exact bytes the fused header probe expects: `"` + JSON-escaped name + `":` */

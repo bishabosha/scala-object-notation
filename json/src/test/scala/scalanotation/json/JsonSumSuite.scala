@@ -99,6 +99,23 @@ class JsonSumSuite extends munit.FunSuite:
   test("missing discriminator is an error"):
     assert(Json.readAs[ShapeK]("{}").isErr)
 
+  test("unknown fields in a discriminator payload are skipped"):
+    assertEquals(
+      Json.readAs[ShapeK]("""{"kind":"Circle","junk":{"a":[1,"x"]},"radius":1.5}"""),
+      Result.Ok(ShapeK.Circle(1.5))
+    )
+
+  test("discriminator payload fields decode in any order"):
+    assertEquals(
+      Json.readAs[ShapeK]("""{"kind":"Rect","height":3.5,"width":2.5}"""),
+      Result.Ok(ShapeK.Rect(2.5, 3.5))
+    )
+
+  test("missing discriminator payload fields are an error"):
+    val result = Json.readAs[ShapeK]("""{"kind":"Circle"}""")
+    assert(result.isErr)
+    assert(errOf(result).format.contains("Missing required field 'radius'"))
+
   test("re-sent discriminator field is a duplicate"):
     assert(Json.readAs[ShapeK]("""{"kind":"Circle","kind":"Circle","radius":1.5}""").isErr)
 

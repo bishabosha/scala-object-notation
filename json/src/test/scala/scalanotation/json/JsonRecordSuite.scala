@@ -21,6 +21,12 @@ object Sparse:
   given Reader[Sparse] = Reader.skippable.derived
   given Writer[Sparse] = Writer.derived
 
+case class StrictOrder(id: Long, sku: String, qty: Int, price: Double, active: Boolean)
+object StrictOrder:
+  given scalanotation.Configured[StrictOrder] =
+    scalanotation.Configured.default[StrictOrder].withRejectUnknownFields
+  given Reader[StrictOrder] = Reader.configured.derived
+
 class JsonRecordSuite extends munit.FunSuite:
 
   private def errOf[T](result: Result[T, scalanotation.DecodeError]): scalanotation.DecodeError =
@@ -71,26 +77,65 @@ class JsonRecordSuite extends munit.FunSuite:
     assertEquals(json, """{"weird \"name\"":1,"日本語":"ok"}""")
     assertEquals(Json.readAs[Data](json), Result.Ok(value))
 
-  test("missing fields are an error for strict schemas"):
+  test("missing required fields are an error"):
     val result = Json.readAs[Order]("""{"id":1,"sku":"s","qty":2}""")
     assert(result.isErr)
-    assert(errOf(result).format.contains("Expected 5 fields but found 3"))
+    assert(errOf(result).format.contains("Missing required field 'price'"))
 
-  test("empty object is an error for strict schemas"):
-    assert(Json.readAs[Order]("{}").isErr)
+  test("empty object is an error when fields are required"):
+    val result = Json.readAs[Order]("{}")
+    assert(result.isErr)
+    assert(errOf(result).format.contains("Missing required field 'id'"))
 
-  test("unknown field is an error"):
-    val result = Json.readAs[Order](
-      """{"id":1,"sku":"s","qty":2,"bogus":true,"price":1.5,"active":false}"""
+  test("unknown fields are skipped by default"):
+    assertEquals(
+      Json.readAs[Order](
+        """{"id":1000,"bogus":true,"sku":"sku-1","qty":3,"price":100.99,"active":true}"""
+      ),
+      Result.Ok(order)
+    )
+
+  test("unknown fields with structured values are skipped whole"):
+    assertEquals(
+      Json.readAs[Order](
+        """{"id":1000,"junk":{"a":[1,{"b":null}],"c":"x\"y","d":1.5e3},"sku":"sku-1",""" +
+          """"qty":3,"trail":[[]],"price":100.99,"active":true}"""
+      ),
+      Result.Ok(order)
+    )
+
+  test("strict configuration rejects unknown fields"):
+    val result = Json.readAs[StrictOrder](
+      """{"id":1,"sku":"s","bogus":true,"qty":2,"price":1.5,"active":false}"""
     )
     assert(result.isErr)
+    assert(errOf(result).format.contains("Unexpected field 'bogus'"), clue = errOf(result).format)
+    assertEquals(
+      Json.readAs[StrictOrder](orderJson),
+      Result.Ok(StrictOrder(1000L, "sku-1", 3, 100.99, active = true))
+    )
 
-  test("out-of-order fields are an error for strict schemas"):
+  test("fields decode in any order"):
+    assertEquals(
+      Json.readAs[Order](
+        """{"sku":"sku-1","active":true,"id":1000,"price":100.99,"qty":3}"""
+      ),
+      Result.Ok(order)
+    )
+    // fully reversed
+    assertEquals(
+      Json.readAs[Order](
+        """{"active":true,"price":100.99,"qty":3,"sku":"sku-1","id":1000}"""
+      ),
+      Result.Ok(order)
+    )
+
+  test("out-of-order duplicate fields are an error"):
     val result = Json.readAs[Order](
-      """{"sku":"s","id":1,"qty":2,"price":1.5,"active":false}"""
+      """{"sku":"s","id":1,"sku":"s2","qty":2,"price":1.5,"active":false}"""
     )
     assert(result.isErr)
-    assert(errOf(result).format.contains("expected to be 'id'"))
+    assert(errOf(result).format.contains("Duplicate field 'sku'"))
 
   test("duplicate field is an error"):
     val result = Json.readAs[Sparse](
@@ -121,6 +166,12 @@ class JsonRecordSuite extends munit.FunSuite:
     assertEquals(
       Json.readAs[Sparse]("""{"id":1,"sku":"s","active":true}"""),
       Result.Ok(Sparse(1L, None, "s", None, active = true))
+    )
+
+  test("skippable schemas accept any field order"):
+    assertEquals(
+      Json.readAs[Sparse]("""{"active":true,"retries":3,"id":1,"sku":"s"}"""),
+      Result.Ok(Sparse(1L, None, "s", Some(3), active = true))
     )
 
   test("error paths and spans point at the offending field"):

@@ -174,6 +174,12 @@ with a `JsonBatchContext`. Mappings are the natural ones — records and `Map[St
 objects, collections and tuples are arrays, sums are `{"CaseName": ...}` (or a discriminator
 field via `Configured.discriminator`), `Option` uses `null`.
 
+JSON objects are unordered, so record fields decode in any order; a missing required field or a
+duplicate field is an error, and unknown field names are skipped. To reject unknown fields
+instead, configure the reader with `Configured.default[T].withRejectUnknownFields`. The Scala
+notation decoder is unaffected by that setting: it always rejects unknown fields (and expects
+schema field order).
+
 For dynamic JSON there is `scalanotation.json.JsonValue`, a small AST whose numbers keep their
 exact source text (`JsonValue.Num(raw: String)`) so values of any precision round-trip losslessly:
 

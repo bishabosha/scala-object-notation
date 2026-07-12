@@ -9,7 +9,8 @@ final class Configured[T] private (
     val discriminatorField: Option[String],
     val skippable: Boolean,
     private[scalanotation] val typedFactories: Configured.TypedFactories | Null,
-    private[scalanotation] val defaultValues: DefaultValues[?] | Null
+    private[scalanotation] val defaultValues: DefaultValues[?] | Null,
+    val rejectUnknownFields: Boolean
 )
 
 object Configured:
@@ -51,7 +52,8 @@ object Configured:
         config.discriminatorField,
         config.skippable,
         typedFactories,
-        config.defaultValues
+        config.defaultValues,
+        config.rejectUnknownFields
       )
 
     /** A copy of this configuration with the contextual [[DefaultValues]] evidence attached: fields
@@ -67,7 +69,21 @@ object Configured:
         config.discriminatorField,
         skippable = false,
         config.typedFactories,
-        defaults
+        defaults,
+        config.rejectUnknownFields
+      )
+
+    /** A copy of this configuration where format modules that skip unknown object fields by default
+      * (the JSON module) instead reject them with a decode error. The core notation decoder always
+      * rejects unknown fields, regardless of this setting.
+      */
+    def withRejectUnknownFields: Configured[T] =
+      new Configured[T](
+        config.discriminatorField,
+        config.skippable,
+        config.typedFactories,
+        config.defaultValues,
+        rejectUnknownFields = true
       )
 
   @publicInBinary
@@ -75,7 +91,7 @@ object Configured:
       discriminatorField: Option[String],
       skippable: Boolean
   ): Configured[T] =
-    new Configured[T](discriminatorField, skippable, null, null)
+    new Configured[T](discriminatorField, skippable, null, null, rejectUnknownFields = false)
 
   @publicInBinary
   private[scalanotation] def createTyped[T](
@@ -88,7 +104,8 @@ object Configured:
       discriminatorField,
       skippable,
       TypedFactories(selfFactory, caseFactories),
-      null
+      null,
+      rejectUnknownFields = false
     )
 
   private[scalanotation] def applyToSchema[T](
@@ -116,11 +133,43 @@ object Configured:
     val typed = config.typedFactories match
       case null      => discriminated
       case factories => attachTypedFactories(discriminated, factories)
-    // defaults install LAST: every attachment above copies record nodes, and the installed
-    // property must live on the node the reader keeps
-    config.defaultValues match
+    // defaults install before the strictness walk: every attachment above copies record nodes,
+    // and the installed property must live on the node the reader keeps
+    val withDefaults = config.defaultValues match
       case null     => typed
       case defaults => installBindingsAt(typed, defaults.bindings)
+    if config.rejectUnknownFields then installRejectUnknown(withDefaults)
+    else withDefaults
+
+  /** Installs the reject-unknown-fields property onto fresh copies of the schema's top-level record
+    * nodes (self, or per sum case), carrying any installed field defaults across to the copy. Only
+    * this configuration's own records are marked — nested field schemas come from their own type
+    * classes and keep their own configuration.
+    */
+  private def installRejectUnknown[T](schema: RawSchema[T]): RawSchema[T] =
+    schema match
+      case namedTuple @ RawSchema.NamedTuple(fields, read, write, allowSkipped) =>
+        val copy     = RawSchema.NamedTuple[T](fields, read, write, allowSkipped)
+        val defaults = namedTuple.installedFieldDefaults
+        if defaults != null then copy.installFieldDefaults(defaults.nn)
+        copy.installRejectUnknownFields()
+        copy
+      case RawSchema.Sum(cases, write) =>
+        RawSchema.Sum(
+          cases.map(sumCase => sumCase.copy(schema = installRejectUnknown(sumCase.schema))),
+          write
+        )
+      case RawSchema.DiscriminatorSum(cases, write, discriminatorField) =>
+        RawSchema.DiscriminatorSum(
+          cases.map(sumCase => sumCase.copy(schema = installRejectUnknown(sumCase.schema))),
+          write,
+          discriminatorField
+        )
+      case RawSchema.PartialNamedTuple(base, alreadySeenField) =>
+        RawSchema.PartialNamedTuple(installRejectUnknown(base), alreadySeenField)
+      case RawSchema.Mapped(base, mapping) =>
+        RawSchema.Mapped(installRejectUnknown(base), mapping)
+      case other => other
 
   /** Installs path bindings onto fresh copies of the schema's record nodes — the decode loop fills
     * omitted fields from them. Every binding recurses along its segments: fields through (possibly
