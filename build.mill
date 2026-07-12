@@ -189,6 +189,22 @@ object macros extends ScalaObjectNotationModule, MacrosPublishedModule, Mima, Ta
   object native extends ScalaObjectNotationNativeModule, MacrosPublishedModule:
     def moduleDeps = Seq(core.native)
 
+trait JsonModuleBase extends ScalaModule:
+  def artifactName = "scala-object-notation-json"
+
+trait JsonPublishedModule extends JsonModuleBase, PublishSettings:
+  def projectDesc = "JSON encoder and decoder over scala-object-notation schemas"
+
+object json extends ScalaObjectNotationModule, JsonPublishedModule:
+  def moduleDeps = Seq(core)
+
+  object js extends ScalaObjectNotationJsModule, JsonPublishedModule:
+    def moduleDeps = Seq(core.js)
+  object jsWasm extends ScalaObjectNotationJsWasmModule, JsonModuleBase:
+    def moduleDeps = Seq(core.jsWasm)
+  object native extends ScalaObjectNotationNativeModule, JsonPublishedModule:
+    def moduleDeps = Seq(core.native)
+
 object demo extends ScalaObjectNotationModule:
   def artifactName = "scala-object-notation-config"
   def moduleDeps   = Seq(core)
@@ -224,7 +240,7 @@ trait BenchModule extends Cross.Module[String], ScalaObjectNotationModule, JmhMo
   val crossVersion = BenchTestVersion(crossValue)
 
   override def moduleDeps =
-    if crossValue == "HEAD" then Seq(core, macros) else Seq.empty
+    if crossValue == "HEAD" then Seq(core, macros, json) else Seq.empty
   override def mvnDeps = super.mvnDeps() ++ (
     if crossValue == "HEAD" then
       // comparison baselines for the HEAD benchmarks: JSON decoding via jsoniter-scala,

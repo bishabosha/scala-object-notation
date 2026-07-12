@@ -122,6 +122,20 @@ enum RawSchema[A]:
   // idempotent under races.
   @volatile private var fieldPlansCache: RawSchema.FieldPlans | Null = null
 
+  // Per-schema decode-plan slot for format modules outside the core notation (the JSON module
+  // caches its byte-level field plans here). Checked once per decoded record, so it must be a
+  // plain volatile read like fieldPlansCache; the computation is idempotent, so a racing
+  // recompute stores an equivalent value. One slot: a single external format module owns it.
+  @volatile private var externalPlansCache: AnyRef | Null = null
+
+  private[scalanotation] def externalPlans[T <: AnyRef](compute: RawSchema[A] => T): T =
+    val cached = externalPlansCache
+    if cached != null then cached.asInstanceOf[T]
+    else
+      val computed = compute(this)
+      externalPlansCache = computed
+      computed
+
   private[scalanotation] def fieldPlans: RawSchema.FieldPlans =
     val cached = fieldPlansCache
     if cached != null then cached
