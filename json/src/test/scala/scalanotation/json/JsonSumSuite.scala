@@ -27,8 +27,8 @@ class JsonSumSuite extends munit.FunSuite:
   test("sum values encode as single-field objects"):
     assertEquals(Json.write[Shape](Shape.Circle(1.5)), """{"Circle":{"radius":1.5}}""")
     assertEquals(
-      Json.write[Shape](Shape.Rect(2.0, 3.0)),
-      """{"Rect":{"width":2.0,"height":3.0}}"""
+      Json.write[Shape](Shape.Rect(2.5, 3.5)),
+      """{"Rect":{"width":2.5,"height":3.5}}"""
     )
     assertEquals(Json.write[Shape](Shape.Origin), """{"Origin":null}""")
 
@@ -66,8 +66,8 @@ class JsonSumSuite extends munit.FunSuite:
       """{"kind":"Circle","radius":1.5}"""
     )
     assertEquals(
-      Json.write[ShapeK](ShapeK.Rect(2.0, 3.0)),
-      """{"kind":"Rect","width":2.0,"height":3.0}"""
+      Json.write[ShapeK](ShapeK.Rect(2.5, 3.5)),
+      """{"kind":"Rect","width":2.5,"height":3.5}"""
     )
     assertEquals(Json.write[ShapeK](ShapeK.Origin), """{"kind":"Origin"}""")
 

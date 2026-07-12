@@ -57,31 +57,28 @@ private[json] abstract class JsonScanner extends PushSlots:
     pos = 0
 
   /** Re-aims the scanner at a String input without materializing a byte copy for ASCII inputs that
-    * fit the pooled buffer. The ASCII probe is a branch-free OR-reduction (vectorizable), and the
-    * copy itself is the deprecated low-byte `String.getBytes`, which for an ASCII string is exactly
-    * the wanted transfer and compiles to an array copy; any non-ASCII char delegates the whole
-    * input to the JDK UTF-8 encoder.
+    * fit the pooled buffer: one fused pass probes and widens chars into the pooled bytes (portable
+    * — the JDK's faster latin-1 transfers do not exist on every platform); the first non-ASCII char
+    * delegates the whole input to the JDK UTF-8 encoder.
     */
   protected final def resetScannerString(text: String): Unit =
     val length = text.length
-    if length <= MaxPooledInputBytes && isAscii(text, length) then
+    if length <= MaxPooledInputBytes then
       var buffer = pooledInputBytes
       if buffer.length < length then
         buffer = new Array[Byte](math.min(math.max(length, 256), MaxPooledInputBytes))
         pooledInputBytes = buffer
-      text.getBytes(0, length, buffer, 0): @annotation.nowarn("cat=deprecation")
-      input = buffer
-      limit = length
-      pos = 0
+      var i        = 0
+      var ch: Char = 0
+      while i < length && { ch = text.charAt(i); ch < 0x80 } do
+        buffer(i) = ch.toByte
+        i += 1
+      if i == length then
+        input = buffer
+        limit = length
+        pos = 0
+      else resetScanner(text.getBytes(StandardCharsets.UTF_8))
     else resetScanner(text.getBytes(StandardCharsets.UTF_8))
-
-  private def isAscii(text: String, length: Int): Boolean =
-    var acc = 0
-    var i   = 0
-    while i < length do
-      acc |= text.charAt(i)
-      i += 1
-    (acc & 0xffffff80) == 0
 
   // --- whitespace ---
 
