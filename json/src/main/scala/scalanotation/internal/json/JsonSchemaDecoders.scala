@@ -236,10 +236,16 @@ private[json] trait JsonSchemaDecoders extends JsonScanner, SharedHelpers:
             kinds(decodedIndex),
             expectedField.schema
           ) match
-            case err: Result.Err[DecodeError] =>
-              raise(recordFieldValueError(err.error, expectedField, nameOffset))
-            case _ =>
-              state = pullAny().asInstanceOf[read.State]
+            case err: Result.Err[?] =>
+              raise(
+                recordFieldValueError(
+                  err.asInstanceOf[Result.Err[DecodeError]].error,
+                  expectedField,
+                  nameOffset
+                )
+              )
+            case nextState =>
+              state = nextState.asInstanceOf[read.State]
               if seenFields != null then seenFields.mark(decodedIndex)
               fieldIndex = decodedIndex + 1
               decodedCount += 1
@@ -437,8 +443,9 @@ private[json] trait JsonSchemaDecoders extends JsonScanner, SharedHelpers:
     -1
 
   /** Decodes a planned field value and appends it into the named-tuple builder state in a single
-    * plan dispatch — the plan already names the live typed slot, so no slot-kind switch runs on the
-    * happy path.
+    * plan dispatch, returning the new state directly (the error otherwise) — the plan already names
+    * the live typed slot, so neither a slot-kind switch nor a state round trip through the Any slot
+    * runs on the happy path.
     */
   private def decodeValueInto(
       read: RawSchema.NamedTupleRead
@@ -447,13 +454,13 @@ private[json] trait JsonSchemaDecoders extends JsonScanner, SharedHelpers:
       index: Int,
       plan: Byte,
       schema: RawSchema[?]
-  ): Result[Unit, DecodeError] = Result.task {
-    inline def added(inline decoded: Result[Unit, DecodeError])(inline add: => read.State)(
-        using scala.util.boundary.Label[Result[Unit, DecodeError]]
-    ) =
+  ): read.State | Result.Err[DecodeError] = {
+    inline def added(inline decoded: Result[Unit, DecodeError])(
+        inline add: => read.State
+    ): read.State | Result.Err[DecodeError] =
       decoded match
-        case err: Result.Err[?] => breakErr(err.asInstanceOf[Result.Err[DecodeError]])
-        case _                  => pushRef(add)
+        case err: Result.Err[?] => err.asInstanceOf[Result.Err[DecodeError]]
+        case _                  => add
     (plan: @scala.annotation.switch) match
       case RawSchema.FieldPlan.IntV =>
         added(decodeInt())(read.addInt(state, index, pullIntValue()))
@@ -486,13 +493,13 @@ private[json] trait JsonSchemaDecoders extends JsonScanner, SharedHelpers:
       values: Repr,
       plan: Byte,
       schema: RawSchema[?]
-  ): Result[Unit, DecodeError] = Result.task {
-    inline def added(inline decoded: Result[Unit, DecodeError])(inline add: => Repr)(
-        using scala.util.boundary.Label[Result[Unit, DecodeError]]
-    ) =
+  ): Repr | Result.Err[DecodeError] = {
+    inline def added(inline decoded: Result[Unit, DecodeError])(
+        inline add: => Repr
+    ): Repr | Result.Err[DecodeError] =
       decoded match
-        case err: Result.Err[?] => breakErr(err.asInstanceOf[Result.Err[DecodeError]])
-        case _                  => pushRef(add)
+        case err: Result.Err[?] => err.asInstanceOf[Result.Err[DecodeError]]
+        case _                  => add
     (plan: @scala.annotation.switch) match
       case RawSchema.FieldPlan.IntV =>
         added(decodeInt())(read.addInt(values, pullIntValue()))
@@ -745,10 +752,10 @@ private[json] trait JsonSchemaDecoders extends JsonScanner, SharedHelpers:
         val elementPlan   = RawSchema.valuePlanOf(schema.element)
         while !done do
           decodeElementInto(read)(values, elementPlan, schema.element) match
-            case err: Result.Err[DecodeError] =>
-              raise(err.error.atPath(s"[$indexInVector]"))
-            case _ =>
-              values = pullAny().asInstanceOf[Repr]
+            case err: Result.Err[?] =>
+              raise(err.asInstanceOf[Result.Err[DecodeError]].error.atPath(s"[$indexInVector]"))
+            case nextValues =>
+              values = nextValues.asInstanceOf[Repr]
           indexInVector += 1
 
           tryReadSeparator(']') match

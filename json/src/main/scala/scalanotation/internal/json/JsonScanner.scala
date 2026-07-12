@@ -51,39 +51,37 @@ private[json] abstract class JsonScanner extends PushSlots:
   /** pooled transcode buffer for String inputs — see [[JsonScanner.MaxPooledInputBytes]] */
   private var pooledInputBytes: Array[Byte] = Array.emptyByteArray
 
-  /** reusable char buffer for decoding escaped string content */
-  private var stringChars: Array[Char] = new Array[Char](64)
-
   protected final def resetScanner(bytes: Array[Byte]): Unit =
     input = bytes
     limit = bytes.length
     pos = 0
 
   /** Re-aims the scanner at a String input without materializing a byte copy for ASCII inputs that
-    * fit the pooled buffer: chars widen scalar into the pooled bytes; the first non-ASCII char
-    * delegates the whole input to the JDK UTF-8 encoder.
+    * fit the pooled buffer. The ASCII probe is a branch-free OR-reduction (vectorizable), and the
+    * copy itself is the deprecated low-byte `String.getBytes`, which for an ASCII string is exactly
+    * the wanted transfer and compiles to an array copy; any non-ASCII char delegates the whole
+    * input to the JDK UTF-8 encoder.
     */
   protected final def resetScannerString(text: String): Unit =
     val length = text.length
-    if length <= MaxPooledInputBytes then
+    if length <= MaxPooledInputBytes && isAscii(text, length) then
       var buffer = pooledInputBytes
       if buffer.length < length then
         buffer = new Array[Byte](math.min(math.max(length, 256), MaxPooledInputBytes))
         pooledInputBytes = buffer
-      var i     = 0
-      var ascii = true
-      while ascii && i < length do
-        val ch = text.charAt(i)
-        if ch < 0x80 then
-          buffer(i) = ch.toByte
-          i += 1
-        else ascii = false
-      if ascii then
-        input = buffer
-        limit = length
-        pos = 0
-      else resetScanner(text.getBytes(StandardCharsets.UTF_8))
+      text.getBytes(0, length, buffer, 0): @annotation.nowarn("cat=deprecation")
+      input = buffer
+      limit = length
+      pos = 0
     else resetScanner(text.getBytes(StandardCharsets.UTF_8))
+
+  private def isAscii(text: String, length: Int): Boolean =
+    var acc = 0
+    var i   = 0
+    while i < length do
+      acc |= text.charAt(i)
+      i += 1
+    (acc & 0xffffff80) == 0
 
   // --- whitespace ---
 
@@ -375,8 +373,9 @@ private[json] abstract class JsonScanner extends PushSlots:
       if p < lim && in(p) >= '0' && in(p) <= '9' then
         throw JsonParseException("Leading zeros are not allowed", numStart)
     else
-      while p < lim && in(p) >= '0' && in(p) <= '9' do
-        if digits < 18 then acc = acc * 10 - (in(p) - '0')
+      var b: Byte = 0
+      while p < lim && { b = in(p); b >= '0' && b <= '9' } do
+        if digits < 18 then acc = acc * 10 - (b - '0')
         digits += 1
         p += 1
     // fraction
@@ -385,8 +384,9 @@ private[json] abstract class JsonScanner extends PushSlots:
       p += 1
       if p >= lim || in(p) < '0' || in(p) > '9' then
         throw JsonParseException("Expected a digit after '.'", p)
-      while p < lim && in(p) >= '0' && in(p) <= '9' do
-        val d = in(p) - '0'
+      var fb: Byte = 0
+      while p < lim && { fb = in(p); fb >= '0' && fb <= '9' } do
+        val d = fb - '0'
         if digits >= 18 then
           // the accumulator is full: dirty below, the slow path re-interprets the raw text
           digits += 1
@@ -411,8 +411,9 @@ private[json] abstract class JsonScanner extends PushSlots:
         p += 1
       if p >= lim || in(p) < '0' || in(p) > '9' then
         throw JsonParseException("Expected a digit in the exponent", p)
-      while p < lim && in(p) >= '0' && in(p) <= '9' do
-        if expValue < 100000 then expValue = expValue * 10 + (in(p) - '0')
+      var eb: Byte = 0
+      while p < lim && { eb = in(p); eb >= '0' && eb <= '9' } do
+        if expValue < 100000 then expValue = expValue * 10 + (eb - '0')
         p += 1
       if expNeg then expValue = -expValue
     numNegAcc = acc

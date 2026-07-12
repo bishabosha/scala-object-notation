@@ -248,8 +248,17 @@ class CrossLibraryDecodeBenchmark:
   private given upickle.default.ReadWriter[DefaultedRecord] = upickle.default.macroRW
   private given upickle.default.ReadWriter[DefaultedBatch]  = upickle.default.macroRW
 
-  // benchmarks are single-threaded per State(Scope.Thread), so the local context is safe
-  private given ctx: BatchContext = BatchContext.local()
+  // benchmarks are single-threaded per State(Scope.Thread), so the local contexts are safe
+  private given ctx: BatchContext                     = BatchContext.local()
+  private given jsonCtx: scalanotation.json.JsonBatchContext =
+    scalanotation.json.JsonBatchContext.local()
+
+  // the JSON-module shape inputs are produced by its own writer, like every other library's
+  private val sonJsonShapesInput       = scalanotation.json.Json.write(shapeBatch)
+  private val sonJsonShapesBytesInput  = sonJsonShapesInput.getBytes(StandardCharsets.UTF_8)
+  private val sonJsonShapesKInput      = scalanotation.json.Json.write(shapeKBatch)
+  private val sonJsonShapesKBytesInput = sonJsonShapesKInput.getBytes(StandardCharsets.UTF_8)
+  private val jsonSparseBytes          = jsonSparseInput.getBytes(StandardCharsets.UTF_8)
 
   @Benchmark def sonFlat: Any =
     Readers.batched.readAs[TypedFlatClass](sonFlatInput)
@@ -398,6 +407,51 @@ class CrossLibraryDecodeBenchmark:
     upickle.default.read[ShapeBatch](upickleShapesInput)
   @Benchmark def zioBlocksShapes100String: Any =
     zioShapesCodec.decode(zioShapesInput)
+
+  // --- the JSON module decoding the same JSON inputs as the reference libraries ---
+  locally {
+    def requireOk(name: String, result: Any): Unit = result match
+      case steps.result.Result.Err(error) =>
+        throw new IllegalStateException(s"benchmark input $name does not decode: $error")
+      case _ => ()
+    import scalanotation.json.Json
+    requireOk("sonJsonFlat", Json.batched.readAs[TypedFlatClass](jsonFlatInput))
+    requireOk("sonJsonFlatBytes", Json.batched.readAs[TypedFlatClass](jsonFlatBytes))
+    requireOk("sonJsonPrimitive10", Json.batched.readAs[TypedPrimitive10Class](jsonPrimitive10Input))
+    requireOk("sonJsonOrders100", Json.batched.readAs[OrderBatch](jsonOrdersInput))
+    requireOk("sonJsonOrders100Bytes", Json.batched.readAs[OrderBatch](jsonOrdersBytes))
+    requireOk("sonJsonSparse100", Json.batched.readAs[SparseBatch](jsonSparseInput))
+    requireOk("sonJsonDefaulted100", Json.batched.readAs[DefaultedBatch](jsonSparseInput))
+    requireOk("sonJsonShapes100", Json.batched.readAs[ShapeBatch](sonJsonShapesInput))
+    requireOk("sonJsonShapesDisc100", Json.batched.readAs[ShapeKBatch](sonJsonShapesKInput))
+  }
+
+  @Benchmark def sonJsonFlat: Any =
+    scalanotation.json.Json.batched.readAs[TypedFlatClass](jsonFlatInput)
+  @Benchmark def sonJsonFlatBytes: Any =
+    scalanotation.json.Json.batched.readAs[TypedFlatClass](jsonFlatBytes)
+  @Benchmark def sonJsonPrimitive10: Any =
+    scalanotation.json.Json.batched.readAs[TypedPrimitive10Class](jsonPrimitive10Input)
+  @Benchmark def sonJsonPrimitive10Bytes: Any =
+    scalanotation.json.Json.batched.readAs[TypedPrimitive10Class](jsonPrimitive10Bytes)
+  @Benchmark def sonJsonOrders100: Any =
+    scalanotation.json.Json.batched.readAs[OrderBatch](jsonOrdersInput)
+  @Benchmark def sonJsonOrders100Bytes: Any =
+    scalanotation.json.Json.batched.readAs[OrderBatch](jsonOrdersBytes)
+  @Benchmark def sonJsonSparse100: Any =
+    scalanotation.json.Json.batched.readAs[SparseBatch](jsonSparseInput)
+  @Benchmark def sonJsonSparse100Bytes: Any =
+    scalanotation.json.Json.batched.readAs[SparseBatch](jsonSparseBytes)
+  @Benchmark def sonJsonDefaulted100: Any =
+    scalanotation.json.Json.batched.readAs[DefaultedBatch](jsonSparseInput)
+  @Benchmark def sonJsonShapes100: Any =
+    scalanotation.json.Json.batched.readAs[ShapeBatch](sonJsonShapesInput)
+  @Benchmark def sonJsonShapes100Bytes: Any =
+    scalanotation.json.Json.batched.readAs[ShapeBatch](sonJsonShapesBytesInput)
+  @Benchmark def sonJsonShapesDisc100: Any =
+    scalanotation.json.Json.batched.readAs[ShapeKBatch](sonJsonShapesKInput)
+  @Benchmark def sonJsonShapesDisc100Bytes: Any =
+    scalanotation.json.Json.batched.readAs[ShapeKBatch](sonJsonShapesKBytesInput)
 
   @Benchmark def sonOrders100: Any =
     Readers.batched.readAs[OrderBatch](sonOrdersInput)
