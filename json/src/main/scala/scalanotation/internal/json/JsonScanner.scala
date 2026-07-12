@@ -218,6 +218,19 @@ private[json] abstract class JsonScanner extends PushSlots:
     pos = p + 1 // past the closing quote
     true
 
+  /** Hash of the most recent (escape-free) slice content, matching [[JsonFieldPlans.contentHash]]
+    * over the plan-cached name bytes — the key into the per-schema name dispatch table.
+    */
+  protected final def sliceHash(): Int =
+    val in  = input
+    val end = sliceEnd
+    var h   = 0
+    var i   = sliceStart
+    while i < end do
+      h = h * 31 + in(i)
+      i += 1
+    h
+
   /** compares the most recent (escape-free) slice content against `content` byte-for-byte */
   protected final def sliceEquals(content: Array[Byte]): Boolean =
     val length = sliceEnd - sliceStart

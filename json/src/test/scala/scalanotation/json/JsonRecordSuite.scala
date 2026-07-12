@@ -27,6 +27,21 @@ object StrictOrder:
     scalanotation.Configured.default[StrictOrder].withRejectUnknownFields
   given Reader[StrictOrder] = Reader.configured.derived
 
+case class Wide(
+    alpha: Int,
+    beta: Int,
+    gamma: Int,
+    delta: Int,
+    epsilon: Int,
+    zeta: Int,
+    eta: Int,
+    theta: Int,
+    iota: Int,
+    kappa: Int,
+    lambda: Int,
+    mu: Int
+) derives ReadWriter
+
 class JsonRecordSuite extends munit.FunSuite:
 
   private def errOf[T](result: Result[T, scalanotation.DecodeError]): scalanotation.DecodeError =
@@ -204,6 +219,33 @@ class JsonRecordSuite extends munit.FunSuite:
         Result.Ok(order)
       )
       i += 1
+
+  test("wide records resolve reversed fields through the dispatch table"):
+    val value = Wide(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12)
+    val names = List(
+      "alpha",
+      "beta",
+      "gamma",
+      "delta",
+      "epsilon",
+      "zeta",
+      "eta",
+      "theta",
+      "iota",
+      "kappa",
+      "lambda",
+      "mu"
+    )
+    val reversed = names.zipWithIndex.reverse
+      .map((name, index) => s"\"$name\":${index + 1}")
+      .mkString("{", ",", "}")
+    assertEquals(Json.readAs[Wide](reversed), Result.Ok(value))
+    // shuffled arrivals, including interleaved unknown fields
+    val shuffled = scala.util
+      .Random(7)
+      .shuffle(names.zipWithIndex.map((name, index) => s"\"$name\":${index + 1}"))
+      .mkString("{", ",\"skipMe\":[{}],", "}")
+    assertEquals(Json.readAs[Wide](shuffled), Result.Ok(value))
 
   test("pretty writing"):
     val pretty = Json.writePretty((a = 1, b = Vector(1, 2)))

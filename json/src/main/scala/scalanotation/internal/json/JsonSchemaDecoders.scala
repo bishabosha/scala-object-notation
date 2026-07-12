@@ -281,6 +281,37 @@ private[json] trait JsonSchemaDecoders extends JsonScanner, SharedHelpers:
   private def missingFieldError(name: String, closingOffset: Int): DecodeError =
     DecodeError.MissingField(name).atPath(s".$name").atToken(spanAt(closingOffset))
 
+  /** Resolves the current escape-free name slice to its plan entry: wide plans probe the name
+    * dispatch table (hash of the slice bytes, linear probe, byte-compare verification), narrow
+    * plans walk their few names directly. -1 = the name matches no entry.
+    */
+  private def dispatchSlice(plans: JsonFieldPlans): Int =
+    val contents = plans.contentBytes
+    val table    = plans.dispatch
+    if table == null then
+      var index  = plans.dispatchStart
+      var result = -1
+      while result < 0 && index < contents.length do
+        val content = contents(index)
+        if content != null && sliceEquals(content) then result = index
+        else index += 1
+      result
+    else
+      val mask    = table.length - 1
+      var slot    = sliceHash() & mask
+      var result  = -1
+      var probing = true
+      while probing do
+        val candidate = table(slot)
+        if candidate < 0 then probing = false
+        else
+          val content = contents(candidate)
+          if content != null && sliceEquals(content) then
+            result = candidate
+            probing = false
+          else slot = (slot + 1) & mask
+      result
+
   /** [[resolveRecordFieldSlow]]'s control-slot value when an unknown field name (and its whole
     * value) was consumed in lenient mode
     */
@@ -303,13 +334,7 @@ private[json] trait JsonSchemaDecoders extends JsonScanner, SharedHelpers:
     if !tryScanStringSlice() then raise(expectedFieldNameError())
     val nameOffset = sliceQuoteOffset
     var resolved   = -1
-    if !sliceEscaped then
-      val contents = plans.contentBytes
-      var index    = 0
-      while resolved < 0 && index < fields.length do
-        val content = contents(index)
-        if content != null && sliceEquals(content) then resolved = index
-        else index += 1
+    if !sliceEscaped then resolved = dispatchSlice(plans)
     else
       val name  = materializeSlice()
       var index = 0
@@ -562,12 +587,7 @@ private[json] trait JsonSchemaDecoders extends JsonScanner, SharedHelpers:
       var caseIndex = -1
       if !tryScanStringSlice() then raise(expectedFieldNameError())
       val nameOffset = sliceQuoteOffset
-      if !sliceEscaped then
-        var index = 0
-        while caseIndex < 0 && index < cases.length do
-          val content = plans.contentBytes(index)
-          if content != null && sliceEquals(content) then caseIndex = index
-          else index += 1
+      if !sliceEscaped then caseIndex = dispatchSlice(plans)
       if caseIndex < 0 then
         // a non-plain or unknown name: compare decoded (only errors materialize otherwise)
         val name  = materializeSlice()
@@ -654,12 +674,9 @@ private[json] trait JsonSchemaDecoders extends JsonScanner, SharedHelpers:
           .atToken(currentSpan())
       )
     if !sliceEscaped then
-      val cases = schema.cases
-      var index = 0
-      while sumCase == null && index < cases.length do
-        val content = plans.contentBytes(index + 1)
-        if content != null && sliceEquals(content) then sumCase = cases(index)
-        else index += 1
+      // the dispatch table covers entries 1..n (entry 0 is the discriminator header)
+      val entry = dispatchSlice(plans)
+      if entry > 0 then sumCase = schema.cases(entry - 1)
     if sumCase == null then
       val caseName = materializeSlice()
       sumCase = RawSchema.findCase(schema, caseName)

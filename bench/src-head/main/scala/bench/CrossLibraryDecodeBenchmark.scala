@@ -25,6 +25,36 @@ object OrderRecord:
   given Configured[OrderRecord]   = Configured.typed
   given Reader[OrderRecord]       = Reader.configured.derived
 
+// wide record: out-of-order field resolution over many names, where a linear name walk is O(n)
+case class WideRecord(
+    f01: Long,
+    f02: String,
+    f03: Int,
+    f04: Double,
+    f05: Boolean,
+    f06: Long,
+    f07: String,
+    f08: Int,
+    f09: Double,
+    f10: Boolean,
+    f11: Long,
+    f12: String,
+    f13: Int,
+    f14: Double,
+    f15: Boolean,
+    f16: String
+)
+object WideRecord:
+  given TypedFactory[WideRecord] = TypedFactories.derived
+  given Configured[WideRecord]   = Configured.typed
+  given Reader[WideRecord]       = Reader.configured.derived
+
+case class WideBatch(records: Vector[WideRecord])
+object WideBatch:
+  given TypedFactory[WideBatch] = TypedFactories.derived
+  given Configured[WideBatch]   = Configured.typed
+  given Reader[WideBatch]       = Reader.configured.derived
+
 case class OrderBatch(orders: Vector[OrderRecord])
 object OrderBatch:
   given TypedFactory[OrderBatch] = TypedFactories.derived
@@ -460,6 +490,53 @@ class CrossLibraryDecodeBenchmark:
       if decoded != orderedBatch then
         throw new IllegalStateException(s"$name decodes different values than the ordered form")
   }
+
+  private def wideFields(i: Int): List[String] =
+    List(
+      s""""f01":${i * 1000L}""",
+      s""""f02":"a-$i"""",
+      s""""f03":${i % 10}""",
+      s""""f04":$i.25""",
+      s""""f05":${i % 2 == 0}""",
+      s""""f06":${i * 7L}""",
+      s""""f07":"b-$i"""",
+      s""""f08":${i % 100}""",
+      s""""f09":$i.75""",
+      s""""f10":${i % 3 == 0}""",
+      s""""f11":${i * 13L}""",
+      s""""f12":"c-$i"""",
+      s""""f13":${i % 1000}""",
+      s""""f14":$i.5""",
+      s""""f15":${i % 5 == 0}""",
+      s""""f16":"d-$i""""
+    )
+  private val jsonWideShuffledInput =
+    s"""{"records":[${(1 to 100)
+        .map(i => new scala.util.Random(i * 271).shuffle(wideFields(i)).mkString("{", ",", "}"))
+        .mkString(",")}]}"""
+  private val jsonWideShuffledBytes  = jsonWideShuffledInput.getBytes(StandardCharsets.UTF_8)
+  private val jsonWideOrderedInput   =
+    s"""{"records":[${(1 to 100).map(i => wideFields(i).mkString("{", ",", "}")).mkString(",")}]}"""
+  private val jsonWideOrderedBytes = jsonWideOrderedInput.getBytes(StandardCharsets.UTF_8)
+
+  locally {
+    def requireOk(name: String, result: Any): Unit = result match
+      case steps.result.Result.Err(error) =>
+        throw new IllegalStateException(s"benchmark input $name does not decode: $error")
+      case _ => ()
+    import scalanotation.json.Json
+    val ordered  = Json.batched.readAs[WideBatch](jsonWideOrderedBytes)
+    val shuffled = Json.batched.readAs[WideBatch](jsonWideShuffledBytes)
+    requireOk("sonJsonWideOrdered100", ordered)
+    requireOk("sonJsonWideShuffled100", shuffled)
+    if ordered != shuffled then
+      throw new IllegalStateException("wide shuffled decode differs from ordered")
+  }
+
+  @Benchmark def sonJsonWideOrdered100Bytes: Any =
+    scalanotation.json.Json.batched.readAs[WideBatch](jsonWideOrderedBytes)
+  @Benchmark def sonJsonWideShuffled100Bytes: Any =
+    scalanotation.json.Json.batched.readAs[WideBatch](jsonWideShuffledBytes)
 
   @Benchmark def sonJsonOrdersShuffled100: Any =
     scalanotation.json.Json.batched.readAs[OrderBatch](jsonOrdersShuffledInput)
