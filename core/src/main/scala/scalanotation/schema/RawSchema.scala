@@ -90,13 +90,13 @@ enum RawSchema[A]:
       case RawSchema.Mapped(base, mapping0) => RawSchema.Mapped(base, f(mapping0))
       case _                                => RawSchema.Mapped(this, f(SchemaMapping.empty[A]))
 
-  private lazy val properties: java.util.concurrent.ConcurrentHashMap[RawSchema.Key[?], AnyRef] =
-    java.util.concurrent.ConcurrentHashMap()
-
-  private def getOrComputeProperty[T <: AnyRef](key: RawSchema.Key[T])(
-      compute: => T
-  ): T =
-    properties.computeIfAbsent(key, _ => compute).asInstanceOf[T]
+  // The node's ONLY cache storage: per-decoder plans in a growable array indexed by a
+  // process-wide PlanSlot — the core text decoder's field plans and validation, decode-time
+  // configuration (field defaults, strictness marks), and any external format module's plans
+  // all live here. The hot path is one volatile read plus an index; stores copy-on-write under
+  // the node lock, so a plan object is only ever reachable through an array published after it
+  // was written.
+  @volatile private var externalPlanArray: Array[AnyRef | Null] = RawSchema.EmptyPlanArray
 
   /** Installs decode-time default values, parallel to this [[RawSchema.NamedTuple]]'s fields (null =
     * the field has no default). [[Configured]] calls this on a freshly copied node, so shared
@@ -104,40 +104,22 @@ enum RawSchema[A]:
     * are mutually exclusive with `allowSkippedNullableFields`.
     */
   private[scalanotation] def installFieldDefaults(defaults: IArray[AnyRef | Null]): Unit =
-    properties.put(RawSchema.FieldDefaults, defaults.asInstanceOf[AnyRef])
+    installExternalPlan(RawSchema.FieldDefaultsSlot, defaults.asInstanceOf[AnyRef])
 
   private[scalanotation] def installedFieldDefaults: IArray[AnyRef | Null] | Null =
-    properties.get(RawSchema.FieldDefaults) match
+    externalPlanOrNull(RawSchema.FieldDefaultsSlot) match
       case null  => null
       case value => value.asInstanceOf[IArray[AnyRef | Null]]
 
   /** Marks this record as rejecting unknown field names in format modules that skip them by default
     * (the JSON module) — installed by [[Configured.withRejectUnknownFields]] on freshly copied
-    * nodes. The core notation decoder always rejects unknown fields and never consults this
-    * property.
+    * nodes. The core notation decoder always rejects unknown fields and never consults this mark.
     */
   private[scalanotation] def installRejectUnknownFields(): Unit =
-    properties.put(RawSchema.RejectUnknownFields, java.lang.Boolean.TRUE)
+    installExternalPlan(RawSchema.RejectUnknownFieldsSlot, java.lang.Boolean.TRUE)
 
   private[scalanotation] def rejectsUnknownFields: Boolean =
-    properties.get(RawSchema.RejectUnknownFields) != null
-
-  // Cached named-tuple validation: checked once per decoded record, so it must be a plain volatile
-  // read rather than a properties-map lookup. Validation is idempotent — a racing recompute stores
-  // the same value.
-  @volatile private var isValidNamedTupleCache: Result[Unit, DecodeError] | Null = null
-
-  // Per-field decode plan: whether the decoder may match the name by char-level slice comparison
-  // (decided once per schema by running the real scanner over each name — parity by construction)
-  // and which primitive decoder the field value dispatches to directly. Plain volatile read;
-  // idempotent under races.
-  @volatile private var fieldPlansCache: RawSchema.FieldPlans | Null = null
-
-  // Per-decoder plan storage for format modules outside the core notation: a growable array
-  // indexed by a process-wide PlanSlot, so any number of decoders can attach per-schema plans.
-  // The hot path is one volatile read plus an index; stores copy-on-write under the node lock,
-  // so a plan object is only ever reachable through an array published after it was written.
-  @volatile private var externalPlanArray: Array[AnyRef | Null] = RawSchema.EmptyPlanArray
+    externalPlanOrNull(RawSchema.RejectUnknownFieldsSlot) != null
 
   /** The plan a decoder cached on this schema node under `slot`, computing and caching it on first
     * use. This is how a format module (e.g. the JSON artifact) attaches per-schema decode plans
@@ -171,84 +153,43 @@ enum RawSchema[A]:
         computed
     }
 
+  /** the plan cached under `slot`, or null when absent — the read side of installed configuration
+    * marks, which have no compute
+    */
+  private[scalanotation] def externalPlanOrNull[T <: AnyRef](slot: RawSchema.PlanSlot[T]): T |
+    Null =
+    val plans = externalPlanArray
+    val index = RawSchema.PlanSlot.toInt(slot)
+    if index < plans.length then plans(index).asInstanceOf[T | Null] else null
+
+  /** Installs `value` under `slot`, replacing any cached plan — for decode-time configuration
+    * placed on freshly copied nodes before their first decode (field defaults, strictness marks).
+    * Cached plans derived from an installed value (e.g. the field plans' fills) must be installed
+    * before anything computes them.
+    */
+  private[scalanotation] def installExternalPlan[T <: AnyRef](
+      slot: RawSchema.PlanSlot[T],
+      value: T
+  ): Unit =
+    synchronized {
+      val plans = externalPlanArray
+      val index = RawSchema.PlanSlot.toInt(slot)
+      val grown = java.util.Arrays.copyOf(plans, math.max(plans.length, index + 1))
+      grown(index) = value
+      externalPlanArray = grown
+    }
+
   private[scalanotation] def fieldPlans: RawSchema.FieldPlans =
-    val cached = fieldPlansCache
-    if cached != null then cached
-    else
-      val computed = this match
-        case namedTuple: RawSchema.NamedTuple[?] =>
-          val fields    = namedTuple.fields
-          val kinds     = new Array[scala.Byte](fields.length)
-          val nameChars = new Array[Array[scala.Char]](fields.length)
-          val nullable  = new Array[scala.Boolean](fields.length)
-          var index     = 0
-          while index < fields.length do
-            val field = fields(index)
-            kinds(index) =
-              if scalanotation.internal.Tokenizer.isPlainFieldName(field.name) then
-                RawSchema.valuePlanOf(field.schema)
-              else RawSchema.FieldPlan.TokenName
-            nameChars(index) = field.name.toCharArray
-            nullable(index) = scalanotation.internal.TokenDecoder.isNullable(field.schema)
-            index += 1
-          val defaults                           = installedFieldDefaults
-          val fills: Array[AnyRef | Null] | Null =
-            if defaults != null then Array.tabulate[AnyRef | Null](fields.length)(defaults.nn.apply)
-            else if namedTuple.allowSkippedNullableFields then
-              Array.tabulate[AnyRef | Null](fields.length)(i => if nullable(i) then None else null)
-            else null
-          RawSchema.FieldPlans(kinds, nameChars, nullable, fills)
-        case sum: RawSchema.Sum[?] =>
-          val cases     = sum.cases
-          val kinds     = new Array[scala.Byte](cases.length)
-          val nameChars = new Array[Array[scala.Char]](cases.length)
-          val nullable  = new Array[scala.Boolean](cases.length)
-          var index     = 0
-          while index < cases.length do
-            val sumCase = cases(index)
-            kinds(index) =
-              if scalanotation.internal.Tokenizer.isPlainFieldName(sumCase.name) then
-                RawSchema.valuePlanOf(sumCase.schema)
-              else RawSchema.FieldPlan.TokenName
-            nameChars(index) = sumCase.name.toCharArray
-            nullable(index) = scalanotation.internal.TokenDecoder.isNullable(sumCase.schema)
-            index += 1
-          RawSchema.FieldPlans(kinds, nameChars, nullable, null)
-        case sum: RawSchema.DiscriminatorSum[?] =>
-          // entry 0 is the discriminator header (its value is always a string); entries 1..n
-          // carry the case names' chars so the header decode slice-matches the discriminator
-          // value without materializing it (their kind/nullable slots are unused: the payload
-          // dispatches through decodeBase)
-          val name             = sum.discriminatorField
-          val kind: scala.Byte =
-            if scalanotation.internal.Tokenizer.isPlainFieldName(name) then
-              RawSchema.FieldPlan.StringV
-            else RawSchema.FieldPlan.TokenName
-          val cases     = sum.cases
-          val kinds     = new Array[scala.Byte](cases.length + 1)
-          val nameChars = new Array[Array[scala.Char]](cases.length + 1)
-          val nullable  = new Array[scala.Boolean](cases.length + 1)
-          kinds(0) = kind
-          nameChars(0) = name.toCharArray
-          var index = 0
-          while index < cases.length do
-            kinds(index + 1) = RawSchema.FieldPlan.Other
-            nameChars(index + 1) = cases(index).name.toCharArray
-            index += 1
-          RawSchema.FieldPlans(kinds, nameChars, nullable, null)
-        case _ => RawSchema.FieldPlans.Empty
-      fieldPlansCache = computed
-      computed
+    externalPlan(RawSchema.FieldPlansSlot)(RawSchema.ComputeFieldPlans)
 
   private[scalanotation] def isValidNamedTuple[T: PublicInternal.NameSet](
       pool: PublicInternal.Pool[T]
   ): Result[Unit, DecodeError] =
-    val cached = isValidNamedTupleCache
+    // the fast path is a plain slot read; the closure over the pool only allocates on the
+    // node's first validation
+    val cached = externalPlanOrNull(RawSchema.NamedTupleValiditySlot)
     if cached != null then cached
-    else
-      val computed = validateNamedTuple(pool)
-      isValidNamedTupleCache = computed
-      computed
+    else externalPlan(RawSchema.NamedTupleValiditySlot)(_ => validateNamedTuple(pool))
 
   private def validateNamedTuple[T: PublicInternal.NameSet](
       pool: PublicInternal.Pool[T]
@@ -399,14 +340,89 @@ object RawSchema:
       case 1 => "Tuple(...)"
       case _ => Iterator.fill(size)("...").mkString("(", ", ", ")")
 
+  // Per-field decode plan for the text decoder: whether a field name may match by char-level
+  // slice comparison (decided once per schema by running the real scanner over each name —
+  // parity by construction) and which primitive decoder the field value dispatches to directly.
+  // A static function so the per-record fieldPlans lookup allocates nothing.
+  private val ComputeFieldPlans: RawSchema[?] => FieldPlans = schema =>
+    schema match
+      case namedTuple: RawSchema.NamedTuple[?] =>
+        val fields    = namedTuple.fields
+        val kinds     = new Array[scala.Byte](fields.length)
+        val nameChars = new Array[Array[scala.Char]](fields.length)
+        val nullable  = new Array[scala.Boolean](fields.length)
+        var index     = 0
+        while index < fields.length do
+          val field = fields(index)
+          kinds(index) =
+            if scalanotation.internal.Tokenizer.isPlainFieldName(field.name) then
+              RawSchema.valuePlanOf(field.schema)
+            else RawSchema.FieldPlan.TokenName
+          nameChars(index) = field.name.toCharArray
+          nullable(index) = scalanotation.internal.TokenDecoder.isNullable(field.schema)
+          index += 1
+        val defaults                           = namedTuple.installedFieldDefaults
+        val fills: Array[AnyRef | Null] | Null =
+          if defaults != null then Array.tabulate[AnyRef | Null](fields.length)(defaults.nn.apply)
+          else if namedTuple.allowSkippedNullableFields then
+            Array.tabulate[AnyRef | Null](fields.length)(i => if nullable(i) then None else null)
+          else null
+        RawSchema.FieldPlans(kinds, nameChars, nullable, fills)
+      case sum: RawSchema.Sum[?] =>
+        val cases     = sum.cases
+        val kinds     = new Array[scala.Byte](cases.length)
+        val nameChars = new Array[Array[scala.Char]](cases.length)
+        val nullable  = new Array[scala.Boolean](cases.length)
+        var index     = 0
+        while index < cases.length do
+          val sumCase = cases(index)
+          kinds(index) =
+            if scalanotation.internal.Tokenizer.isPlainFieldName(sumCase.name) then
+              RawSchema.valuePlanOf(sumCase.schema)
+            else RawSchema.FieldPlan.TokenName
+          nameChars(index) = sumCase.name.toCharArray
+          nullable(index) = scalanotation.internal.TokenDecoder.isNullable(sumCase.schema)
+          index += 1
+        RawSchema.FieldPlans(kinds, nameChars, nullable, null)
+      case sum: RawSchema.DiscriminatorSum[?] =>
+        // entry 0 is the discriminator header (its value is always a string); entries 1..n
+        // carry the case names' chars so the header decode slice-matches the discriminator
+        // value without materializing it (their kind/nullable slots are unused: the payload
+        // dispatches through decodeBase)
+        val name             = sum.discriminatorField
+        val kind: scala.Byte =
+          if scalanotation.internal.Tokenizer.isPlainFieldName(name) then
+            RawSchema.FieldPlan.StringV
+          else RawSchema.FieldPlan.TokenName
+        val cases     = sum.cases
+        val kinds     = new Array[scala.Byte](cases.length + 1)
+        val nameChars = new Array[Array[scala.Char]](cases.length + 1)
+        val nullable  = new Array[scala.Boolean](cases.length + 1)
+        kinds(0) = kind
+        nameChars(0) = name.toCharArray
+        var index = 0
+        while index < cases.length do
+          kinds(index + 1) = RawSchema.FieldPlan.Other
+          nameChars(index + 1) = cases(index).name.toCharArray
+          index += 1
+        RawSchema.FieldPlans(kinds, nameChars, nullable, null)
+      case _ => RawSchema.FieldPlans.Empty
+
+  /** Unused: per-node storage is keyed by [[PlanSlot]] now. Kept for binary compatibility. */
   final class Key[T]()
-  private val SumCaseLookup: Key[Map[String, SumCase]] = Key()
 
-  /** property carrying a [[NamedTuple]]'s decode-time field defaults — see installFieldDefaults */
-  private val FieldDefaults: Key[AnyRef] = Key()
+  // The core decoders' own slots in the per-node plan storage — allocated first, so the text
+  // decoder's per-record lookups sit at the smallest indices.
+  private val FieldPlansSlot: PlanSlot[FieldPlans]                        = PlanSlot.allocate()
+  private val NamedTupleValiditySlot: PlanSlot[Result[Unit, DecodeError]] = PlanSlot.allocate()
+  private val FieldDefaultsSlot: PlanSlot[AnyRef]                         = PlanSlot.allocate()
+  private val RejectUnknownFieldsSlot: PlanSlot[java.lang.Boolean]        = PlanSlot.allocate()
+  private val SumCaseLookupSlot: PlanSlot[Map[String, SumCase]]           = PlanSlot.allocate()
 
-  /** property marking a record as strict about unknown fields — see installRejectUnknownFields */
-  private val RejectUnknownFields: Key[AnyRef] = Key()
+  private val ComputeSumCaseLookup: RawSchema[?] => Map[String, SumCase] =
+    case sum: RawSchema.Sum[?]              => sum.cases.iterator.map(c => c.name -> c).toMap
+    case sum: RawSchema.DiscriminatorSum[?] => sum.cases.iterator.map(c => c.name -> c).toMap
+    case _                                  => Map.empty
 
   final case class Field(name: String, schema: RawSchema[?])
   final case class SumCase(name: String, schema: RawSchema[?])
@@ -422,20 +438,8 @@ object RawSchema:
 
   def findCase[A](cases: RawSchema.Sum[A] | RawSchema.DiscriminatorSum[A], name: String): SumCase |
     Null =
-    val caseMap = cases.getOrComputeProperty(SumCaseLookup) {
-      cases match
-        case sum: RawSchema.Sum[?] =>
-          sum.cases.iterator.map(c => c.name -> c).toMap
-        case sum: RawSchema.DiscriminatorSum[?] =>
-          sum.cases.iterator.map(c => c.name -> c).toMap
-    }
+    val caseMap = cases.externalPlan(SumCaseLookupSlot)(ComputeSumCaseLookup)
     caseMap.getOrElse(name, null)
-    // var i = 0
-    // while i < cases.length do
-    //   val sumCase = cases(i)
-    //   if sumCase.name == name then return sumCase
-    //   i += 1
-    // null
 
   private[scalanotation] def routerReader[A](
       name: String,
