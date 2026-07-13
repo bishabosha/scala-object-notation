@@ -635,3 +635,23 @@ class CollectionDecodingSuite extends ScalanotationSuite:
           Some((1, 13))
         )
       case Result.Ok(value) => fail(s"Expected a decode failure, got $value")
+
+  test("empty pair sequence nested in a vector leaves the outer closing intact"):
+    type Data = Vector[ListMap[String, Int]]
+    given dataReader: Reader[Data] =
+      Reader.fromSchema(
+        RawSchema.Vector(
+          Reader.pairSeqAsDict[Int, ListMap].schema,
+          PublicInternal.BuildVector[ListMap[String, Int]](),
+          null
+        )
+      )
+
+    assertEquals(
+      Readers.readAs[Data]("Vector(Vector())"),
+      Result.Ok(Vector(ListMap.empty[String, Int]))
+    )
+    assertEquals(
+      Readers.readAs[Data]("""Vector(Vector(), Vector(("a", 10)))"""),
+      Result.Ok(Vector(ListMap.empty[String, Int], ListMap("a" -> 10)))
+    )
