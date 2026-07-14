@@ -234,19 +234,15 @@ private[scalanotation] trait CommonTypeClassCompanion[TC[_]]:
         => SumCasesAtPath[Path, A, Label *: Labels, T *: Cases] =
         sumCaseTypeClass[A, T](valueOf.value, caseTypeClass.typeclass) :: rest.cases
 
+    /** Historically rejected `Option[Option[?]]` derivation; nested options are supported now (the
+      * ambiguous levels spell their `Some` as a one-case sum — see
+      * [[CommonTypeClassCompanion.optionSchemaOf]]), so the guard always holds. The shape stays for
+      * compatibility with inlined call sites.
+      */
     opaque type NonNestedOption[Path <: String, T] <: Unit = Unit
 
     object NonNestedOption:
-      inline given [Path <: String, T]: NonNestedOption[Path, T] =
-        compiletime.summonFrom {
-          case _: (T <:< Option[?]) =>
-            compiletime.error(
-              "at path " + formatPath[Path] + ": " + compiletime.constValue[TypeClassName] +
-                "[Option[Option[?]]] is not supported."
-            )
-          case _ =>
-            ()
-        }
+      inline given [Path <: String, T]: NonNestedOption[Path, T] = ()
 
     opaque type AtPath[Path <: String, T] = TC[T] | List[FieldRepr]
 
@@ -405,7 +401,7 @@ private[scalanotation] trait CommonTypeClassCompanion[TC[_]]:
       => AtPath[Path, Option[T]] =
       liftAtPath[Path, Option[T]](
         fromSchema[Option[T]](
-          RawSchema.Option(schemaOf(wrapped.typeclass))
+          CommonTypeClassCompanion.optionSchemaOf(schemaOf(wrapped.typeclass))
         )
       )
 
@@ -480,3 +476,35 @@ private[scalanotation] trait CommonTypeClassCompanion[TC[_]]:
   given NamedTupleSchema: [NT <: NamedTuple.AnyNamedTuple]
     => (atPath: Builders.AtPath["", NT]) => TC[NT] =
     atPath.typeclass
+
+private[scalanotation] object CommonTypeClassCompanion:
+  /** The schema of `Option[T]` from `T`'s schema. Ordinarily a plain option node — `None` is `null`
+    * and `Some` is the bare value. When `T`'s own encoding can itself spell `null` (`T` is an
+    * option, possibly behind mappings), a bare value could not distinguish `None` from
+    * `Some(None)`, so the `Some` side is spelled like a one-case sum instead — `(Some = <value>)`
+    * in the notation, `{"Some": <value>}` in JSON — while `None` stays `null`. Each nested level
+    * applies the same rule independently, so only the ambiguous levels pay the wrapper:
+    * `Some(Some(1)): Option[Option[Int]]` is `(Some = 1)` and `Some(Some(None)): Option^3` is
+    * `(Some = (Some = null))`.
+    */
+  private[scalanotation] def optionSchemaOf[T](inner: RawSchema[T]): RawSchema[Option[T]] =
+    if encodesAsNull(inner) then
+      RawSchema.Option(
+        RawSchema.Sum[T](IArray(RawSchema.SumCase("Some", inner)), SomeCaseWrite)
+      )
+    else RawSchema.Option(inner)
+
+  /** the one-case sum's write side: every value is the `Some` case */
+  private val SomeCaseWrite: RawSchema.SumWrite = RawSchema.SumWrite.from[Any](_ => 0)
+
+  /** Whether a value of `schema` can encode as a bare `null`. Deliberately does not force
+    * [[RawSchema.Ref]] targets: this runs at derivation time, where a recursive schema's ref may
+    * not be constructible yet — and recursion always passes through a record or sum constructor,
+    * never directly through an option.
+    */
+  private def encodesAsNull(schema: RawSchema[?]): Boolean =
+    schema match
+      case _: RawSchema.Option[?]    => true
+      case RawSchema.Null            => true
+      case RawSchema.Mapped(base, _) => encodesAsNull(base)
+      case _                         => false

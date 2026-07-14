@@ -11,18 +11,6 @@ import scala.collection.mutable
 import scala.compiletime.testing.typeCheckErrors
 
 class DerivationFailureSuite extends ScalanotationSuite:
-  test("no writer is derived for nested Option"):
-    val errors = typeCheckErrors(
-      "type Data = (x: Option[Option[Int]])\nsummon[scalanotation.Writer[Data]]"
-    )
-
-    assert(errors.nonEmpty)
-    assert(clue(errors.head.message).contains(".x"))
-    assert(
-      clue(errors.head.message)
-        .contains("Writer[Option[Option[?]]] is not supported")
-    )
-
   test("no decoder is derived for Any"):
     val errors = typeCheckErrors("summon[scalanotation.Reader[Any]]")
     assert(errors.nonEmpty)
@@ -31,30 +19,6 @@ class DerivationFailureSuite extends ScalanotationSuite:
     val errors =
       typeCheckErrors("summon[scalanotation.Reader[Vector[Any]]]")
     assert(errors.nonEmpty)
-
-  test("no decoder is derived for nested Option"):
-    val errors = typeCheckErrors(
-      "type Data = (x: Option[Option[Int]])\nsummon[scalanotation.Reader[Data]]"
-    )
-
-    assert(errors.nonEmpty)
-    assert(clue(errors.head.message).contains(".x"))
-    assert(
-      clue(errors.head.message)
-        .contains("Reader[Option[Option[?]]] is not supported")
-    )
-
-  test("no read-writer is derived for nested Option"):
-    val errors = typeCheckErrors(
-      "type Data = (x: Option[Option[Int]])\nsummon[scalanotation.ReadWriter[Data]]"
-    )
-
-    assert(errors.nonEmpty)
-    assert(clue(errors.head.message).contains(".x"))
-    assert(
-      clue(errors.head.message)
-        .contains("ReadWriter[Option[Option[?]]] is not supported")
-    )
 
   test("compile-time derivation error includes nested field path"):
     class Box[T]
