@@ -50,6 +50,26 @@ private[scalanotation] abstract class PushSlots extends Internal.PoolHolder:
 
   protected final def currentNestingDepth: Int = nestingDepth
 
+  // Per-depth seen-field sets, shared by the format decoders: a nesting level runs at most one
+  // record decode at a time, so a level's set is reusable directly — no pool borrow/release/clear
+  // per record. Sets are created lazily at first use per level; callers reset the set they
+  // receive, and marks never exceed the reset word count, so bits beyond it stay zero across
+  // reuses.
+  private var seenFieldSets = new Array[Internal.FieldIndexSet | Null](8)
+
+  protected final def seenFieldSetForDepth(): Internal.FieldIndexSet =
+    val depth = nestingDepth
+    var sets  = seenFieldSets
+    if depth >= sets.length then
+      sets = java.util.Arrays.copyOf(sets, math.max(sets.length * 2, depth + 1))
+      seenFieldSets = sets
+    val existing = sets(depth)
+    if existing != null then existing
+    else
+      val created = new Internal.FieldIndexSet
+      sets(depth) = created
+      created
+
   protected final def nestingLimitError(): DecodeError =
     DecodeError.Custom(
       s"Nesting depth exceeds the supported maximum of ${PushSlots.MaxNestingDepth}"
