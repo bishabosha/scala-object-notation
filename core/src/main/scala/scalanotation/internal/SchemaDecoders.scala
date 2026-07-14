@@ -13,8 +13,6 @@ import scalanotation.internal.Internal.breakErr
 private[scalanotation] trait SchemaDecoders extends BaseDecoders:
   self: TokenStream =>
 
-  private type StateDecodeResult[Repr] = Repr | Result.Err[DecodeError]
-
   protected final def decodeBase(schema: RawSchema[?]): Result[Unit, DecodeError] =
     decodeBase(schema, allowTopLevelArrow = true)
 
@@ -543,20 +541,16 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
 
           // --- value: decode and append in one plan dispatch ---
           val expectedField = fields(decodedIndex)
-          decodeValueInto(read)(
+          state = decodeValueInto(read)(
             state,
             decodedIndex,
             plans(decodedIndex),
             expectedField.schema
-          ) match
-            case err: Result.Err[DecodeError] =>
-              raise(recordFieldValueError(err.error, expectedField, nameOffset))
-            case _ =>
-              state = pullAny().asInstanceOf[read.State]
-              if seenFields != null then seenFields.mark(decodedIndex)
-              fieldIndex = decodedIndex + 1
-              decodedCount += 1
-              lastFieldName = expectedField.name
+          ).getOrRaise(recordFieldValueError(_, expectedField, nameOffset))
+          if seenFields != null then seenFields.mark(decodedIndex)
+          fieldIndex = decodedIndex + 1
+          decodedCount += 1
+          lastFieldName = expectedField.name
 
           // --- separator ---
           tryReadSeparatorChar(')') match
@@ -774,13 +768,14 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
       index: Int,
       plan: Byte,
       schema: RawSchema[?]
-  ): Result[Unit, DecodeError] = Result.task {
-    inline def added(inline decoded: Result[Unit, DecodeError])(inline add: => read.State)(
-        using scala.util.boundary.Label[Result[Unit, DecodeError]]
-    ) =
+  ): StateResult[read.State] = {
+    inline def added(inline decoded: Result[Unit, DecodeError])(
+        inline add: => read.State
+    ): StateResult[read.State] =
       decoded match
-        case err: Result.Err[?] => breakErr(err.asInstanceOf[Result.Err[DecodeError]])
-        case _                  => pushRef(add)
+        case err: Result.Err[?] =>
+          StateResult.fail(err.asInstanceOf[Result.Err[DecodeError]].error)
+        case _ => StateResult(add)
     (plan: @scala.annotation.switch) match
       case RawSchema.FieldPlan.IntV =>
         added(decodeInt())(read.addInt(state, index, pullIntValue()))
@@ -836,13 +831,14 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
       values: Repr,
       plan: Byte,
       schema: RawSchema[?]
-  ): Result[Unit, DecodeError] = Result.task {
-    inline def added(inline decoded: Result[Unit, DecodeError])(inline add: => Repr)(
-        using scala.util.boundary.Label[Result[Unit, DecodeError]]
-    ) =
+  ): StateResult[Repr] = {
+    inline def added(inline decoded: Result[Unit, DecodeError])(
+        inline add: => Repr
+    ): StateResult[Repr] =
       decoded match
-        case err: Result.Err[?] => breakErr(err.asInstanceOf[Result.Err[DecodeError]])
-        case _                  => pushRef(add)
+        case err: Result.Err[?] =>
+          StateResult.fail(err.asInstanceOf[Result.Err[DecodeError]].error)
+        case _ => StateResult(add)
     (plan: @scala.annotation.switch) match
       case RawSchema.FieldPlan.IntV =>
         added(decodeInt())(read.addInt(values, pullIntValue()))
@@ -1245,11 +1241,8 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
         var done          = false
         val elementPlan   = RawSchema.valuePlanOf(schema.element)
         while !done do
-          decodeElementInto(read)(values, elementPlan, schema.element) match
-            case err: Result.Err[DecodeError] =>
-              raise(err.error.atPath(s"[$indexInVector]"))
-            case _ =>
-              values = pullAny().asInstanceOf[Repr]
+          values = decodeElementInto(read)(values, elementPlan, schema.element)
+            .getOrRaise(_.atPath(s"[$indexInVector]"))
           indexInVector += 1
 
           tryReadSeparatorChar(closingChar) match
@@ -1477,9 +1470,7 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
         var index = 0
         var done  = false
         while !done do
-          decodePairSeqElement(schema, read, state, index, allowArrowPairs) match
-            case err: Result.Err[?] => breakErr(err.asInstanceOf[Result.Err[DecodeError]])
-            case nextState          => state = nextState.asInstanceOf[Repr]
+          state = decodePairSeqElement(schema, read, state, index, allowArrowPairs).getOrRaise
           index += 1
 
           vectorElementSeparator(closingKind) match
@@ -1496,42 +1487,42 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
       state: Repr,
       index: Int,
       allowArrowPairs: Boolean
-  ): StateDecodeResult[Repr] =
+  ): StateResult[Repr] =
     if currentKind() == TokenKind.LParen then decodeTuplePairSeqElement(schema, read, state, index)
     else if allowArrowPairs then decodeArrowPairSeqElement(schema, read, state, index)
-    else Result.Err(expectedPairSeqElementError())
+    else StateResult.fail(expectedPairSeqElementError())
 
   private def decodeTuplePairSeqElement[Key, Elem, Repr, A](
       schema: RawSchema.PairSeq[?, ?, ?],
       read: Reader.PairSeqBuilder[Key, Elem, Repr, A],
       state0: Repr,
       index: Int
-  ): StateDecodeResult[Repr] =
+  ): StateResult[Repr] =
     val tupleOffset = currentOffset()
     advance()
 
     if currentKind() == TokenKind.RParen then
-      return Result.Err(DecodeError.FieldCountMismatch(2, 0).atToken(currentSpan()))
+      return StateResult.fail(DecodeError.FieldCountMismatch(2, 0).atToken(currentSpan()))
 
     decodeBase(schema.key) match
-      case Result.Err(error) => return Result.Err(error.atPath(s"[$index][0]"))
+      case Result.Err(error) => return StateResult.fail(error.atPath(s"[$index][0]"))
       case _                 =>
 
     var state          = addPairKeySlot(read)(state0)
     val separatorError = consumePairSeqTupleSeparator(tupleOffset)
-    if separatorError != null then return Result.Err(separatorError)
+    if separatorError != null then return StateResult.fail(separatorError)
 
     if currentKind() == TokenKind.RParen then
-      return Result.Err(DecodeError.FieldCountMismatch(2, 1).atToken(currentSpan()))
+      return StateResult.fail(DecodeError.FieldCountMismatch(2, 1).atToken(currentSpan()))
 
     decodeBase(schema.value) match
-      case Result.Err(error) => return Result.Err(error.atPath(s"[$index][1]"))
+      case Result.Err(error) => return StateResult.fail(error.atPath(s"[$index][1]"))
       case _                 =>
 
     state = addPairValueSlot(read)(state)
     val endError = consumePairSeqTupleEnd()
-    if endError != null then Result.Err(endError)
-    else state
+    if endError != null then StateResult.fail(endError)
+    else StateResult(state)
 
   private def consumePairSeqTupleSeparator(tupleOffset: Int): DecodeError | Null =
     currentKind() match
@@ -1564,7 +1555,7 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
       read: Reader.PairSeqBuilder[Key, Elem, Repr, A],
       state: Repr,
       index: Int
-  ): StateDecodeResult[Repr] =
+  ): StateResult[Repr] =
     if pairSeqKeyUsesRouterArrowChain(schema.key, schema.value) then
       decodeRouterKeyArrowPair(schema, read, state, index)
     else decodeSimpleArrowPairSeqElement(schema, read, state, index)
@@ -1574,21 +1565,21 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
       read: Reader.PairSeqBuilder[Key, Elem, Repr, A],
       state0: Repr,
       index: Int
-  ): StateDecodeResult[Repr] =
+  ): StateResult[Repr] =
     val allowKeyArrow = !schemaIsRouter(schema.key)
     decodeBase(schema.key, allowTopLevelArrow = allowKeyArrow) match
-      case Result.Err(error) => return Result.Err(error.atPath(s"[$index][0]"))
+      case Result.Err(error) => return StateResult.fail(error.atPath(s"[$index][0]"))
       case _                 =>
 
     var state = addPairKeySlot(read)(state0)
     if currentKind() == TokenKind.Arrow then advance()
-    else return Result.Err(expectedArrowError())
+    else return StateResult.fail(expectedArrowError())
 
     decodeBase(schema.value) match
-      case Result.Err(error) => Result.Err(error.atPath(s"[$index][1]"))
+      case Result.Err(error) => StateResult.fail(error.atPath(s"[$index][1]"))
       case _                 =>
         state = addPairValueSlot(read)(state)
-        state
+        StateResult(state)
 
   private def expectedPairSeqElementError(): DecodeError =
     DecodeError
@@ -1600,9 +1591,9 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
       read: Reader.PairSeqBuilder[Key, Elem, Repr, A],
       state0: Repr,
       index: Int
-  ): StateDecodeResult[Repr] =
+  ): StateResult[Repr] =
     val keyError = decodeRouterKeyArrowPairKey(schema, index)
-    if keyError != null then return Result.Err(keyError)
+    if keyError != null then return StateResult.fail(keyError)
 
     var left  = pullAny()
     var state = state0
@@ -1611,12 +1602,12 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
       val arrowOffset = currentOffset()
       advance()
       val valueError = decodeRouterKeyArrowPairValue(schema, index)
-      if valueError != null then return Result.Err(valueError)
+      if valueError != null then return StateResult.fail(valueError)
 
       val right = pullAny()
       if currentKind() == TokenKind.Arrow then
         val tupleError = finishRouterKeyArrowPairKey(schema, left, right, arrowOffset, index)
-        if tupleError != null then return Result.Err(tupleError)
+        if tupleError != null then return StateResult.fail(tupleError)
         left = pullAny()
       else
         pushRef(left)
@@ -1624,7 +1615,7 @@ private[scalanotation] trait SchemaDecoders extends BaseDecoders:
         pushRef(right)
         state = addPairValueSlot(read)(state)
         done = true
-    state
+    StateResult(state)
 
   private def decodeRouterKeyArrowPairKey(
       schema: RawSchema.PairSeq[?, ?, ?],
