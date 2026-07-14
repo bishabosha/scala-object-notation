@@ -177,6 +177,12 @@ grows transiently only when a single token exceeds it). `Json.batched.readAs` mi
 objects, collections and tuples are arrays, sums are `{"CaseName": ...}` (or a discriminator
 field via `Configured.discriminator`), `Option` uses `null`.
 
+Nested options are supported: whenever the wrapped type could itself encode as `null`, the
+`Some` is spelled like a one-case sum so no information collapses. For an
+`Option[Option[Int]]`, `None` is `null`, `Some(None)` is `{"Some":null}` and `Some(Some(1))` is
+`{"Some":1}` — and in the Scala notation `null`, `(Some = null)` and `(Some = 1)`. Each nesting
+level applies the rule independently, so only the ambiguous levels pay the wrapper.
+
 JSON objects are unordered, so record fields decode in any order; a missing required field or a
 duplicate field is an error, and unknown field names are skipped. To reject unknown fields
 instead, configure the reader with `Configured.default[T].withRejectUnknownFields`. The Scala
