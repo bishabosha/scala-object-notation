@@ -7,6 +7,8 @@ import scalanotation.internal.Internal
 import scalanotation.internal.Internal.breakErr
 import scalanotation.internal.PublicInternal
 import scalanotation.internal.SharedHelpers
+import scalanotation.internal.StateResult
+import scalanotation.internal.getOrRaise
 import scalanotation.schema.RawSchema
 import scalanotation.schema.RawSchema.Field
 import steps.result.Result
@@ -202,23 +204,13 @@ private[json] trait JsonSchemaDecoders extends JsonScanner, SharedHelpers:
           // --- value: decode and append in one plan dispatch (unknown fields were consumed
           // whole by the resolver) ---
           if decodedIndex >= 0 then
-            decodeValueInto(read)(
+            state = decodeValueInto(read)(
               state,
               decodedIndex,
               kinds(decodedIndex),
               fields(decodedIndex).schema
-            ) match
-              case err: Result.Err[?] =>
-                raise(
-                  recordFieldValueError(
-                    err.asInstanceOf[Result.Err[DecodeError]].error,
-                    fields(decodedIndex),
-                    nameOffset
-                  )
-                )
-              case nextState =>
-                state = nextState.asInstanceOf[read.State]
-                fieldIndex = decodedIndex + 1
+            ).getOrRaise(recordFieldValueError(_, fields(decodedIndex), nameOffset))
+            fieldIndex = decodedIndex + 1
 
           // --- separator ---
           tryReadSeparator('}') match
@@ -438,13 +430,14 @@ private[json] trait JsonSchemaDecoders extends JsonScanner, SharedHelpers:
       index: Int,
       plan: Byte,
       schema: RawSchema[?]
-  ): read.State | Result.Err[DecodeError] = {
+  ): StateResult[read.State] = {
     inline def added(inline decoded: Result[Unit, DecodeError])(
         inline add: => read.State
-    ): read.State | Result.Err[DecodeError] =
+    ): StateResult[read.State] =
       decoded match
-        case err: Result.Err[?] => err.asInstanceOf[Result.Err[DecodeError]]
-        case _                  => add
+        case err: Result.Err[?] =>
+          StateResult.fail(err.asInstanceOf[Result.Err[DecodeError]].error)
+        case _ => StateResult(add)
     (plan: @scala.annotation.switch) match
       case RawSchema.FieldPlan.IntV =>
         added(decodeInt())(read.addInt(state, index, pullIntValue()))
@@ -477,13 +470,14 @@ private[json] trait JsonSchemaDecoders extends JsonScanner, SharedHelpers:
       values: Repr,
       plan: Byte,
       schema: RawSchema[?]
-  ): Repr | Result.Err[DecodeError] = {
+  ): StateResult[Repr] = {
     inline def added(inline decoded: Result[Unit, DecodeError])(
         inline add: => Repr
-    ): Repr | Result.Err[DecodeError] =
+    ): StateResult[Repr] =
       decoded match
-        case err: Result.Err[?] => err.asInstanceOf[Result.Err[DecodeError]]
-        case _                  => add
+        case err: Result.Err[?] =>
+          StateResult.fail(err.asInstanceOf[Result.Err[DecodeError]].error)
+        case _ => StateResult(add)
     (plan: @scala.annotation.switch) match
       case RawSchema.FieldPlan.IntV =>
         added(decodeInt())(read.addInt(values, pullIntValue()))
@@ -728,11 +722,8 @@ private[json] trait JsonSchemaDecoders extends JsonScanner, SharedHelpers:
         var done          = false
         val elementPlan   = RawSchema.valuePlanOf(schema.element)
         while !done do
-          decodeElementInto(read)(values, elementPlan, schema.element) match
-            case err: Result.Err[?] =>
-              raise(err.asInstanceOf[Result.Err[DecodeError]].error.atPath(s"[$indexInVector]"))
-            case nextValues =>
-              values = nextValues.asInstanceOf[Repr]
+          values = decodeElementInto(read)(values, elementPlan, schema.element)
+            .getOrRaise(_.atPath(s"[$indexInVector]"))
           indexInVector += 1
 
           tryReadSeparator(']') match
@@ -825,9 +816,7 @@ private[json] trait JsonSchemaDecoders extends JsonScanner, SharedHelpers:
         var index = 0
         var done  = false
         while !done do
-          decodePairSeqElement(schema, read, state, index) match
-            case err: Result.Err[?] => breakErr(err.asInstanceOf[Result.Err[DecodeError]])
-            case nextState          => state = nextState.asInstanceOf[Repr]
+          state = decodePairSeqElement(schema, read, state, index).getOrRaise
           index += 1
           tryReadSeparator(']') match
             case SeparatorComma   => ()
@@ -840,40 +829,40 @@ private[json] trait JsonSchemaDecoders extends JsonScanner, SharedHelpers:
       read: Reader.PairSeqBuilder[Key, Elem, Repr, A],
       state0: Repr,
       index: Int
-  ): Repr | Result.Err[DecodeError] =
+  ): StateResult[Repr] =
     if !tryReadPunct('[') then
-      return Result.Err(
+      return StateResult.fail(
         DecodeError
           .ExpectedType(RawSchema.describeTupleSlots(2), describeCurrent())
           .atToken(currentSpan())
       )
     if tryReadPunct(']') then
-      return Result.Err(
+      return StateResult.fail(
         DecodeError.FieldCountMismatch(2, 0).atToken(spanAt(absoluteOffset(pos - 1)))
       )
 
     decodeBase(schema.key) match
-      case Result.Err(error) => return Result.Err(error.atPath(s"[$index][0]"))
+      case Result.Err(error) => return StateResult.fail(error.atPath(s"[$index][0]"))
       case _                 =>
 
     var state = addPairKeySlot(read)(state0)
     if !tryReadPunct(',') then
-      return Result.Err(
+      return StateResult.fail(
         if tryReadPunct(']') then
           DecodeError.FieldCountMismatch(2, 1).atToken(spanAt(absoluteOffset(pos - 1)))
         else expectedArrayEndError()
       )
 
     decodeBase(schema.value) match
-      case Result.Err(error) => return Result.Err(error.atPath(s"[$index][1]"))
+      case Result.Err(error) => return StateResult.fail(error.atPath(s"[$index][1]"))
       case _                 =>
 
     state = addPairValueSlot(read)(state)
     tryReadSeparator(']') match
-      case SeparatorClosing => state
+      case SeparatorClosing => StateResult(state)
       case SeparatorComma   =>
-        Result.Err(DecodeError.FieldCountMismatch(2, 3).atToken(currentSpan()))
-      case _ => Result.Err(expectedArrayEndError())
+        StateResult.fail(DecodeError.FieldCountMismatch(2, 3).atToken(currentSpan()))
+      case _ => StateResult.fail(expectedArrayEndError())
 
   // --- dicts ---
 
