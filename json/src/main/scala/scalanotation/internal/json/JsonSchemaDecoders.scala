@@ -134,23 +134,6 @@ private[json] trait JsonSchemaDecoders extends JsonScanner, SharedHelpers:
       }
     }
 
-  // Per-depth seen-field sets: a nesting level runs at most one record decode at a time, so a
-  // level's set is reusable directly — no pool borrow/release/clear per record.
-  private var seenFieldSets = new Array[Internal.FieldIndexSet | Null](8)
-
-  private def seenFieldSetForDepth(): Internal.FieldIndexSet =
-    val depth = currentNestingDepth
-    var sets  = seenFieldSets
-    if depth >= sets.length then
-      sets = java.util.Arrays.copyOf(sets, math.max(sets.length * 2, depth + 1))
-      seenFieldSets = sets
-    val existing = sets(depth)
-    if existing != null then existing
-    else
-      val created = new Internal.FieldIndexSet
-      sets(depth) = created
-      created
-
   /** Decodes one JSON object as a named-tuple record with a single loop covering every field order.
     * The happy path matches the plan-cached header bytes (`"name":`) of the next expected field
     * (writer output arrives in schema order), decodes the value straight into the builder through
@@ -442,13 +425,6 @@ private[json] trait JsonSchemaDecoders extends JsonScanner, SharedHelpers:
               case _                => raise(expectedArrayEndError())
       exitNesting()
       result
-
-  private def indexOfField(fields: IArray[Field], name: String): Int =
-    var index = 0
-    while index < fields.length do
-      if fields(index).name == name then return index
-      index += 1
-    -1
 
   /** Decodes a planned field value and appends it into the named-tuple builder state in a single
     * plan dispatch, returning the new state directly (the error otherwise) — the plan already names
