@@ -113,41 +113,17 @@ object core extends ScalaObjectNotationModule, CorePublishedModule, Mima, TastyM
   }
 
   override def tastyMimaArtifactPrivatePackages: T[Seq[String]] = Task {
-    Seq("scalanotation.internal")
+    // Definitions qualified private[scalanotation] are implementation details of this artifact.
+    // TASTy-MiMa matches this setting against the visibility qualifier's package, not the package
+    // containing the definition (many such definitions happen to live in scalanotation.internal).
+    Seq("scalanotation")
   }
 
   override def tastyMimaProblemFilters: Seq[tastymima.intf.ProblemMatcher] = Seq(
-    // the internal token-based named-tuple structure helpers (and their synthetic inline
-    // accessors) were replaced by the kernel record loop; BaseDecoders is private[scalanotation]
-    tastymima.intf.ProblemMatcher.make(
-      tastymima.intf.ProblemKind.MissingTermMember,
-      "scalanotation.internal.BaseDecoders.*"
-    ),
-    // the None-fill walk generalized to the fills array (fillSkippedFields); PushSlots is
-    // private[scalanotation]
-    tastymima.intf.ProblemMatcher.make(
-      tastymima.intf.ProblemKind.MissingTermMember,
-      "scalanotation.internal.PushSlots.fillSkippedNullableFields"
-    ),
-    // the plain-function total-map constructors are superseded by Writer typed-map overloads and
-    // hidden from source so lambda arguments resolve to the typed variants; they stay public in
-    // binary via @publicInBinary, so the visibility restriction cannot break compiled callers
-    tastymima.intf.ProblemMatcher.make(
-      tastymima.intf.ProblemKind.RestrictedVisibilityChange,
-      "scalanotation.schema.RawSchema.mapIntTotalAndInput"
-    ),
-    tastymima.intf.ProblemMatcher.make(
-      tastymima.intf.ProblemKind.RestrictedVisibilityChange,
-      "scalanotation.schema.RawSchema.mapLongTotalAndInput"
-    ),
-    tastymima.intf.ProblemMatcher.make(
-      tastymima.intf.ProblemKind.RestrictedVisibilityChange,
-      "scalanotation.schema.RawSchema.mapFloatTotalAndInput"
-    ),
-    tastymima.intf.ProblemMatcher.make(
-      tastymima.intf.ProblemKind.RestrictedVisibilityChange,
-      "scalanotation.schema.RawSchema.mapDoubleTotalAndInput"
-    ),
+    // @publicInBinary keeps the 0.4.0 Function1 overloads available when an old inline body is
+    // expanded against the current artifact. tastyMimaReinline.compile pins all four overloads by
+    // compiling tastyMimaOldApi against 0.4.0, then expanding its TASTy with only current core on
+    // the consumer classpath. TASTy-MiMa reports their intentionally source-hidden visibility.
     tastymima.intf.ProblemMatcher.make(
       tastymima.intf.ProblemKind.RestrictedVisibilityChange,
       "scalanotation.ReadWriter.int"
@@ -165,6 +141,13 @@ object core extends ScalaObjectNotationModule, CorePublishedModule, Mima, TastyM
       "scalanotation.ReadWriter.double"
     )
   )
+
+  override def checkCompatibility(): Command[Unit] = Task.Command {
+    mimaReportBinaryIssues()()
+    tastyMimaReportIssues()()
+    tastyMimaReinline.compile()
+    ()
+  }
 
   object js     extends ScalaObjectNotationJsModule, CorePublishedModule
   object jsWasm extends ScalaObjectNotationJsWasmModule, CoreModuleBase
@@ -200,6 +183,27 @@ object demo extends ScalaObjectNotationModule:
   )
 
   def mainClass = Some("scalableconfig.Main")
+
+/** First stage of the @publicInBinary TASTy pin. This module compiles inline calls to the public
+  * Function1 primitive ReadWriter constructors from the previous release.
+  */
+object tastyMimaOldApi extends ScalaObjectNotationModule:
+  override def mvnDeps: T[Seq[Dep]] = Task {
+    super.mvnDeps() ++ Seq(
+      mvn"io.github.bishabosha::scala-object-notation:${Versions.previous}"
+    )
+  }
+
+/** Second stage of the @publicInBinary TASTy pin. The old module's jar is added without its
+  * transitive 0.4.0 dependency, while moduleDeps supplies current core. Compiling this module must
+  * therefore re-inline the old calls against the current artifact.
+  */
+object tastyMimaReinline extends ScalaObjectNotationModule:
+  def moduleDeps = Seq(core)
+
+  override def unmanagedClasspath: T[Seq[PathRef]] = Task {
+    super.unmanagedClasspath() ++ Seq(tastyMimaOldApi.jar())
+  }
 
 val benchTestVersions = Seq("HEAD", "0.4.3", "0.4.2", "0.4.1", "0.4.0", "0.3.7", "0.3.6", "0.3.5")
 case class BenchTestVersion(version: String):

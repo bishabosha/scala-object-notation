@@ -88,29 +88,30 @@ object ReadWriter extends CommonTypeClassCompanion[ReadWriter]:
       )
     )
 
-  // The plain-function variants of the primitive constructors, superseded by the Writer typed
-  // variants above. Hidden from source (a plain function would win overload resolution against
-  // the typed SAM for lambda arguments) but kept public in binary for compatibility, delegating
-  // to the typed variants.
+  // Compatibility overloads for inline bodies compiled against 0.4.0. New source calls select the
+  // public Writer.*Map overloads above and retain the unboxed write path end to end;
+  // @publicInBinary keeps old TASTy expansions linkable after these variants become source-hidden.
 
   @deprecated("bincompat only — pass a Writer.IntMap for an unboxed write", "0.4.4")
   @annotation.publicInBinary
-  private[ReadWriter] def int[A](read: Reader.IntMap[A])(write: A => Int): ReadWriter[A] =
+  private[scalanotation] def int[A](read: Reader.IntMap[A])(write: A => Int): ReadWriter[A] =
     int(read)((write(_)): Writer.IntMap[A])
 
   @deprecated("bincompat only — pass a Writer.LongMap for an unboxed write", "0.4.4")
   @annotation.publicInBinary
-  private[ReadWriter] def long[A](read: Reader.LongMap[A])(write: A => Long): ReadWriter[A] =
+  private[scalanotation] def long[A](read: Reader.LongMap[A])(write: A => Long): ReadWriter[A] =
     long(read)((write(_)): Writer.LongMap[A])
 
   @deprecated("bincompat only — pass a Writer.FloatMap for an unboxed write", "0.4.4")
   @annotation.publicInBinary
-  private[ReadWriter] def float[A](read: Reader.FloatMap[A])(write: A => Float): ReadWriter[A] =
+  private[scalanotation] def float[A](read: Reader.FloatMap[A])(
+      write: A => Float
+  ): ReadWriter[A] =
     float(read)((write(_)): Writer.FloatMap[A])
 
   @deprecated("bincompat only — pass a Writer.DoubleMap for an unboxed write", "0.4.4")
   @annotation.publicInBinary
-  private[ReadWriter] def double[A](read: Reader.DoubleMap[A])(
+  private[scalanotation] def double[A](read: Reader.DoubleMap[A])(
       write: A => Double
   ): ReadWriter[A] =
     double(read)((write(_)): Writer.DoubleMap[A])
