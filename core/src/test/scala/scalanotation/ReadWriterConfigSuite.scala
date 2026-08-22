@@ -7,6 +7,7 @@ import scalanotation.internal.PublicInternal
 import scalanotation.schema.RawSchema
 import steps.result.Result
 
+import scala.collection.immutable.SeqMap
 import scala.collection.mutable
 import scala.compiletime.testing.typeCheckErrors
 
@@ -315,3 +316,174 @@ class ReadWriterConfigSuite extends ScalanotationSuite:
     assertEquals(Readers.readAs[Flags]("NamedTuple.Empty"), Result.Ok(Flags(None, None)))
     // the writer keeps explicit nulls, so all-None round-trips without the literal
     assertEquals(Writers.write(Flags(None, None)), """(verbose = null, level = null)""")
+
+  test("withConfig applies a discriminator configuration to existing instances"):
+    enum Mode:
+      case Fast
+      case Scheduled(at: String, retries: Int)
+
+    given Configured[Mode] = Configured.discriminator("type")
+    given ReadWriter[Mode] = ReadWriter.derived[Mode].withConfig
+
+    val scheduled: Mode = Mode.Scheduled("2026-03-15", 2)
+
+    assertEquals(
+      Writers.write(scheduled),
+      """(`type` = "Scheduled", at = "2026-03-15", retries = 2)"""
+    )
+    assertEquals(
+      Readers.readAs[Mode]("""(`type` = "Scheduled", at = "2026-03-15", retries = 2)"""),
+      Result.Ok(scheduled)
+    )
+    assertEquals(
+      summon[ReadWriter[Mode]].schema.describeSelf,
+      ReadWriter.configured.derived[Mode].schema.describeSelf
+    )
+    assertEquals(
+      Reader.derived[Mode].withConfig.schema.describeSelf,
+      summon[ReadWriter[Mode]].schema.describeSelf
+    )
+    assertEquals(
+      Writer.derived[Mode].withConfig.schema.describeSelf,
+      summon[ReadWriter[Mode]].schema.describeSelf
+    )
+
+  test("withConfig applies default values to the implicitly resolved named tuple reader"):
+    type Invoice = (
+        business: String,
+        copyright: Option[String],
+        items: Vector[(desc: String, body: Option[String], qty: Double)]
+    )
+
+    given DefaultValues[Invoice] = DefaultValues.of[Invoice] { c =>
+      Seq(c.copyright := None, c.items.each.body := None)
+    }
+    given Configured[Invoice] = Configured.default.withDefaultValues
+
+    val plain      = summon[Reader[Invoice]]
+    val configured = plain.withConfig
+
+    val input = """(business = "b", items = Vector((desc = "d", qty = 2.5)))"""
+
+    Readers.readAs[Invoice](input)(using plain) match
+      case Result.Err(_)    => ()
+      case Result.Ok(value) => fail(s"Expected the unconfigured reader to fail, got $value")
+
+    assertEquals(
+      Readers.readAs[Invoice](input)(using configured),
+      Result.Ok(
+        (
+          business = "b",
+          copyright = None,
+          items = Vector((desc = "d", body = None, qty = 2.5))
+        ): Invoice
+      )
+    )
+
+  test("configured.derived resolves the exact invoice schema from issue #77"):
+    type InvoiceSchema = (
+        invoice: (
+            id: Int,
+            period: (start: String, days: Int)
+        ),
+        client: (
+            id: Int,
+            name: String,
+            address: String,
+            contactPerson: Option[String]
+        ),
+        listings: (
+            items: Vector[(desc: String, body: Option[String], qty: Double, price: Int)],
+            taxRate: Int,
+            useHours: Boolean
+        ),
+        business: String,
+        copyright: Option[String],
+        currency: (code: String, symbol: String, left: Boolean),
+        bank: SeqMap[String, String],
+        appendices: Vector[
+          (
+              title: String,
+              description: String,
+              sections: Vector[
+                (
+                    title: String,
+                    desc: String,
+                    itemsTitle: String,
+                    items: SeqMap[String, String]
+                )
+              ]
+          )
+        ]
+    )
+
+    given DefaultValues[InvoiceSchema] = DefaultValues.of[InvoiceSchema] { c =>
+      Seq(c.copyright := None, c.listings.items.each.body := None)
+    }
+    given Configured[InvoiceSchema] = Configured.default.withDefaultValues
+
+    // the issue's two entry points: the Mirror-based path that failed to compile, and the
+    // implicit instance its workaround patched reflectively — now via withConfig
+    val mirrorPath: Reader[InvoiceSchema]   = Reader.configured.derived
+    val implicitPath: Reader[InvoiceSchema] = summon[Reader[InvoiceSchema]].withConfig
+
+    val input =
+      """(
+        |  invoice = (id = 1, period = (start = "2026-01-01", days = 30)),
+        |  client = (id = 2, name = "Ada", address = "1 Main St", contactPerson = "Grace"),
+        |  listings = (
+        |    items = Vector((desc = "consulting", qty = 2.5, price = 100)),
+        |    taxRate = 20,
+        |    useHours = true
+        |  ),
+        |  business = "ACME",
+        |  currency = (code = "EUR", symbol = "€", left = false),
+        |  bank = (iban = "DE00", bic = "XXX"),
+        |  appendices = Vector(
+        |    (
+        |      title = "A",
+        |      description = "notes",
+        |      sections = Vector(
+        |        (title = "S", desc = "d", itemsTitle = "items", items = (k1 = "v1", k2 = "v2"))
+        |      )
+        |    )
+        |  )
+        |)""".stripMargin
+
+    val expected: InvoiceSchema = (
+      invoice = (id = 1, period = (start = "2026-01-01", days = 30)),
+      client = (id = 2, name = "Ada", address = "1 Main St", contactPerson = Some("Grace")),
+      listings = (
+        items = Vector((desc = "consulting", body = None, qty = 2.5, price = 100)),
+        taxRate = 20,
+        useHours = true
+      ),
+      business = "ACME",
+      copyright = None,
+      currency = (code = "EUR", symbol = "€", left = false),
+      bank = SeqMap("iban" -> "DE00", "bic" -> "XXX"),
+      appendices = Vector(
+        (
+          title = "A",
+          description = "notes",
+          sections = Vector(
+            (
+              title = "S",
+              desc = "d",
+              itemsTitle = "items",
+              items = SeqMap("k1" -> "v1", "k2" -> "v2")
+            )
+          )
+        )
+      )
+    )
+
+    assertEquals(Readers.readAs[InvoiceSchema](input)(using mirrorPath), Result.Ok(expected))
+    assertEquals(Readers.readAs[InvoiceSchema](input)(using implicitPath), Result.Ok(expected))
+    assertEquals(mirrorPath.schema.describeSelf, implicitPath.schema.describeSelf)
+
+    // the unconfigured reader rejects the same input, exactly as the issue observed
+    Readers.readAs[InvoiceSchema](input) match
+      case Result.Err(error) =>
+        assertEquals(error.rootCause, DecodeError.FieldOrderMismatch("body", "qty"))
+      case Result.Ok(value) => fail(s"Expected the unconfigured reader to fail, got $value")

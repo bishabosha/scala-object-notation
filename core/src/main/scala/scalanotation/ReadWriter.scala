@@ -25,6 +25,13 @@ sealed trait ReadWriter[T]:
   final def bimapResult[U](read: T => Result[U, DecodeError])(write: U => T): ReadWriter[U] =
     ReadWriter.mappedResult(this)(read)(write)
 
+  /** A copy of this read-writer with `config` applied to its schema. The transform is agnostic to
+    * where the schema came from, so any instance can be configured — in particular the implicitly
+    * resolved one, with no Mirror-based derivation involved.
+    */
+  final def withConfig(using config: Configured[T]): ReadWriter[T] =
+    ReadWriter.fromSchema(Configured.applyToSchema(schema, config))
+
 object ReadWriter extends CommonTypeClassCompanion[ReadWriter]:
   private final class Instance[T](val schema: RawSchema[T]) extends ReadWriter[T]
 
