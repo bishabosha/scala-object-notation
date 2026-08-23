@@ -17,6 +17,13 @@ sealed trait Writer[T]:
   final def contramap[U](f: U => T): Writer[U] =
     Writer.contramapped(this)(f)
 
+  /** A copy of this writer with `config` applied to its schema. The transform is agnostic to where
+    * the schema came from, so any instance can be configured — in particular the implicitly
+    * resolved one, with no Mirror-based derivation involved.
+    */
+  final def withConfig(using config: Configured[T]): Writer[T] =
+    Writer.fromSchema(Configured.applyToSchema(schema, config))
+
 private[scalanotation] trait WriterLowPriority:
   given [T](using readWriter: ReadWriter[T]): Writer[T] =
     readWriter.writer

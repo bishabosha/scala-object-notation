@@ -19,6 +19,13 @@ sealed trait Reader[T]:
   final def mapResult[U](f: T => Result[U, DecodeError]): Reader[U] =
     Reader.mappedResult(this)(f)
 
+  /** A copy of this reader with `config` applied to its schema. The transform is agnostic to where
+    * the schema came from, so any instance can be configured — in particular the implicitly
+    * resolved one, with no Mirror-based derivation involved.
+    */
+  final def withConfig(using config: Configured[T]): Reader[T] =
+    Reader.fromSchema(Configured.applyToSchema(schema, config))
+
 private[scalanotation] trait ReaderLowPriority:
   given [T](using readWriter: ReadWriter[T]): Reader[T] =
     readWriter.reader

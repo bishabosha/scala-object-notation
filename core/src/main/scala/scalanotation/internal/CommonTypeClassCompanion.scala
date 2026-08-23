@@ -264,10 +264,32 @@ private[scalanotation] trait CommonTypeClassCompanion[TC[_]]:
         case _ =>
           value.asInstanceOf[TC[T]]
 
-    trait AtPathDefaultLowPriority:
+    trait AtPathMissingLowestPriority:
       import compiletime.ops.string.+
 
-      inline given DefaultAtPath: [Path <: String, T] => AtPath[Path, T] =
+      /** The rock-bottom fallback: succeeds trivially during the search so a structural parent can
+        * still be selected, then reports the missing instance with its full path once the final
+        * tree is inlined. Only reached when [[AtPathDefaultLowPriority.LeafAtPath]] found no
+        * instance.
+        */
+      inline given MissingAtPath: [Path <: String, T] => AtPath[Path, T] =
+        compiletime.error(
+          "at path " + formatPath[Path] + ": Could not find " +
+            compiletime.constValue[TypeClassName] + "[" + showType[T] + "]."
+        )
+
+    trait AtPathDefaultLowPriority extends AtPathMissingLowestPriority:
+      import compiletime.ops.string.+
+
+      /** Bincompat only — inline expansions from 0.4.x call this symbol; it is deliberately no
+        * longer a given. Its old role is split between [[LeafAtPath]] (instance found) and
+        * [[AtPathMissingLowestPriority.MissingAtPath]] (missing-instance error): a trivially
+        * succeeding inline given with a deferred `summonFrom` body is re-elaborated per enclosing
+        * candidate when the search runs during inline expansion (`summonInline` in `derived`),
+        * which compounds exponentially with schema nesting depth and blows the compiler's default
+        * `-Ximplicit-search-limit` — see issue #77.
+        */
+      inline def DefaultAtPath[Path <: String, T]: AtPath[Path, T] =
         compiletime.summonFrom {
           case tc: TC[T] => liftAtPath[Path, T](tc)
           case _         =>
@@ -276,6 +298,17 @@ private[scalanotation] trait CommonTypeClassCompanion[TC[_]]:
                 compiletime.constValue[TypeClassName] + "[" + showType[T] + "]."
             )
         }
+
+      /** Resolves a leaf field from an in-scope typeclass instance. The named-tuple guard keeps
+        * this candidate out of record nodes, where it could never win against the structural givens
+        * but its trial would re-resolve the whole subtree through the typeclass companion (the path
+        * resets to "" there, so divergence checking never cuts it off).
+        */
+      given LeafAtPath: [Path <: String, T]
+        => NotGiven[T <:< NamedTuple.AnyNamedTuple]
+        => (tc: TC[T])
+        => AtPath[Path, T] =
+        liftAtPath[Path, T](tc)
 
     trait AtPathStructuralPriority extends AtPathDefaultLowPriority:
       import compiletime.ops.string.+
